@@ -13,7 +13,8 @@ buildNpmPackage (finalAttrs: {
     owner = "zotero";
     repo = "translation-server";
     rev = "2fce0493723f3523094dead78e7e897e14a070c6";
-    hash = "sha256-BN3rhScI6bYz7un+ESVKCY2niXgw2JzYTpDVYIG1JA0=";
+    hash = "sha256-FiX6ZfQQkFBihI+DAbzhE2I+4xrtD+OSmN9NUa7zKjc=";
+    fetchSubmodules = true;
   };
 
   npmDepsFetcherVersion = 2;

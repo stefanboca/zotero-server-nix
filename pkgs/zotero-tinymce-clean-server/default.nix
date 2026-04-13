@@ -37,6 +37,5 @@ buildNpmPackage (finalAttrs: {
     description = "Node.js HTTP server to clean HTML using TinyMCE parsing/filtering logic";
     homepage = finalAttrs.src.url;
     mainProgram = finalAttrs.pname;
-    license = lib.licenses.agpl3Only;
   };
 })
