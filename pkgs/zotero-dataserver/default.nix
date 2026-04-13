@@ -12,7 +12,7 @@ php.buildComposerProject2 (finalAttrs: {
     owner = "zotero";
     repo = "dataserver";
     rev = "62bac4504da9d264458809f812c27a9837ada1a2";
-    hash = "";
+    hash = "sha256-v4yOWNq/SlXaM++XhItZqVy+IC+CRESl8uAiqlJxT4s=";
     fetchSubmodules = true;
   };
 
