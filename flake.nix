@@ -20,7 +20,9 @@
     nixpkgsFor = forAllSystems (system: nixpkgs.legacyPackages.${system});
     treefmtFor = forAllSystems (system: treefmt-nix.lib.evalModule nixpkgsFor.${system} ./treefmt.nix);
   in {
-    packages = forAllSystems (_: {});
+    packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
+
+    nixosModules = import ./modules/nixos;
 
     devShells = forAllSystems (system: let
       pkgs = nixpkgsFor.${system};
