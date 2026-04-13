@@ -25,19 +25,12 @@
 
     nixosModules.default = import ./modules/nixos;
 
-    devShells = forAllSystems (system: let
-      pkgs = nixpkgsFor.${system};
-    in {
-      default = pkgs.mkShellNoCC {};
-    });
-
     formatter = forAllSystems (system: treefmtFor.${system}.config.build.wrapper);
 
     checks = forAllSystems (system: let
       packages = mapAttrs' (n: nameValuePair "package-${n}") self.packages.${system};
-      devShells = mapAttrs' (n: nameValuePair "devShell-${n}") self.devShells.${system};
       formatting = {formatting = treefmtFor.${system}.config.build.check self;};
     in
-      packages // devShells // formatting);
+      packages // formatting);
   };
 }

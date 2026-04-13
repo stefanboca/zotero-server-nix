@@ -35,7 +35,7 @@ in {
       settings = mkOption {
         inherit (json) type;
         default = {
-          port = 8085;
+          port = 8085; # TOOD: do this better with submodule and freeformtype (see services.garage.settings for reference)
         };
       };
     };
@@ -81,9 +81,19 @@ in {
     users.groups.zotero-dataserver = {};
     users.users.zotero-dataserver = {group = "zotero-dataserver";};
 
-    services.services.pools.zotero-dataserver = {
-      phpPackage = cfg.package.php;
-      settings = cfg.phpfpm.settings;
+    services = {
+      # TODO: configure these
+      memcached = {enable = true;};
+      redis = {enable = true;};
+      garage = {enable = true;}; # TODO: use varsity instead?
+      elasticsearch = {enable = true;};
+
+      phpfpm.pools.zotero-dataserver = {
+        user = "zotero-dataserver";
+        group = "zotero-dataserver";
+        phpPackage = cfg.package.php;
+        settings = cfg.phpfpm.settings;
+      };
     };
 
     environment.etc = {
