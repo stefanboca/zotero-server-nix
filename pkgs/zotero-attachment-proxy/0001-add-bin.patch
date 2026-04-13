@@ -1,0 +1,11 @@
+diff --git a/package.json b/package.json
+index d5f97044d2..af060ba65d 100644
+--- a/package.json
++++ b/package.json
+@@ -1,5 +1,6 @@
+ {
+   "name": "attachment-proxy",
++  "bin": "index.js",
+   "version": "0.1.2",
+   "description": "",
+   "scripts": {
