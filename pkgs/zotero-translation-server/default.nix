@@ -2,7 +2,6 @@
   buildNpmPackage,
   fetchFromGitHub,
   lib,
-  nodejs,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -17,24 +16,17 @@ buildNpmPackage (finalAttrs: {
     fetchSubmodules = true;
   };
 
+  patches = [./0001-add-bin.patch];
+
   npmDepsFetcherVersion = 2;
   npmDepsHash = "sha256-pU7CZ4Cx9fu/Z/cBCCwewLQZDne+LPooZCsJIDXP6bI=";
 
-  dontBuild = true;
-
-  postInstall = ''
-    mkdir -p $out/bin
-    cat > $out/bin/${finalAttrs.meta.mainProgram} <<EOF
-    #!${nodejs}/bin/node
-    require("$out/lib/node_modules/translation-server/src/server.js")
-    EOF
-    chmod +x $out/bin/${finalAttrs.meta.mainProgram}
-  '';
+  dontNpmBuild = true;
 
   meta = {
     description = "A Node.js-based server to run Zotero translators";
     homepage = finalAttrs.src.url;
-    mainProgram = finalAttrs.pname;
+    mainProgram = "translation-server";
     license = lib.licenses.agpl3Only;
   };
 })

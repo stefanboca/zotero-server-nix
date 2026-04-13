@@ -2,7 +2,6 @@
   buildNpmPackage,
   fetchFromGitHub,
   lib,
-  nodejs,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -17,23 +16,16 @@ buildNpmPackage (finalAttrs: {
     fetchSubmodules = true;
   };
 
+  patches = [./0001-add-bin.patch];
+
   npmDepsHash = "sha256-j4ePfSOaG1eO/2KovH2Z4cd/7G8t6TnoP43zBtftOU0=";
 
-  dontBuild = true;
-
-  postInstall = ''
-    mkdir -p $out/bin
-    cat > $out/bin/${finalAttrs.meta.mainProgram} <<EOF
-    #!${nodejs}/bin/node
-    require("$out/lib/node_modules/citeproc-js-server/lib/citeServer.js")
-    EOF
-    chmod +x $out/bin/${finalAttrs.meta.mainProgram}
-  '';
+  dontNpmBuild = true;
 
   meta = {
     description = "Web service to generate citations and bibliographies using citeproc-js";
     homepage = finalAttrs.src.url;
-    mainProgram = finalAttrs.pname;
+    mainProgram = "citeproc-js-server";
     license = lib.licenses.agpl3Only;
   };
 })

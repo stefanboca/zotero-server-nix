@@ -112,7 +112,7 @@ in {
           RestartSec = 5;
           Environment = [
             "NODE_ENV=citeproc-js-server"
-            "NODE_CONFIG_DIR=/etc/zotero-dataserver:${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/config"
+            "NODE_CONFIG_DIR=/etc/zotero-dataserver:${cfg.citeproc-js-server.package}/lib/node_modules/${cfg.citeproc-js-server.package.mainProgram}/config"
           ];
         };
       };
@@ -125,7 +125,7 @@ in {
           RestartSec = 5;
           Environment = [
             "NODE_ENV=stream-server"
-            "NODE_CONFIG_DIR=/etc/zotero-dataserver:${cfg.stream-server.package}/lib/node_modules/zotero-stream-server/config"
+            "NODE_CONFIG_DIR=/etc/zotero-dataserver:${cfg.stream-server.package}/lib/node_modules/${cfg.stream-server.package.mainProgram}/config"
           ];
         };
       };
@@ -153,7 +153,7 @@ in {
           RestartSec = 5;
           Environment = [
             "NODE_ENV=translation-server"
-            "NODE_CONFIG_DIR=/etc/zotero-dataserver:${cfg.stream-server.package}/lib/node_modules/translation-server/config"
+            "NODE_CONFIG_DIR=/etc/zotero-dataserver:${cfg.stream-server.package}/lib/node_modules/${cfg.translation-server-server.package.mainProgram}/config"
           ];
         };
       };

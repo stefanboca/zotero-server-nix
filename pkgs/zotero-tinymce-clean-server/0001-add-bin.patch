@@ -1,0 +1,11 @@
+diff --git a/package.json b/package.json
+index f98a374b52..ddaabfd317 100644
+--- a/package.json
++++ b/package.json
+@@ -1,5 +1,6 @@
+ {
+   "name": "tinymce-clean-server",
++  "bin": "server.js",
+   "version": "1.0.0",
+   "description": "",
+   "main": "server.js",

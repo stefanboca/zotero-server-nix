@@ -1,0 +1,11 @@
+diff --git a/package.json b/package.json
+index 59e6357752..03a8492b27 100644
+--- a/package.json
++++ b/package.json
+@@ -1,5 +1,6 @@
+ {
+ 	"name": "zotero-stream-server",
++	"bin": "index.js",
+ 	"version": "0.1.0",
+ 	"description": "A streaming API server that provides push notifications for Zotero changes",
+ 	"author": "Dan Stillman <dstillman@zotero.org>",

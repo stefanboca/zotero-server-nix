@@ -2,7 +2,6 @@
   buildNpmPackage,
   fetchFromGitHub,
   lib,
-  nodejs,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -16,23 +15,16 @@ buildNpmPackage (finalAttrs: {
     hash = "sha256-hVDdCwJaOrlpdD43ZXvpqk1NCOjD0dV6FpgbOUnA0Xw=";
   };
 
+  patches = [./0001-add-bin.patch];
+
   npmDepsHash = "sha256-sIasdXvj+vZidDDaVdb+sdhE58dW2p36MUoyIs7/lMY=";
 
-  dontBuild = true;
-
-  postInstall = ''
-    mkdir -p $out/bin
-    cat > $out/bin/${finalAttrs.meta.mainProgram} <<EOF
-    #!${nodejs}/bin/node
-    require("$out/lib/node_modules/zotero-stream-server/index.js")
-    EOF
-    chmod +x $out/bin/${finalAttrs.meta.mainProgram}
-  '';
+  dontNpmBuild = true;
 
   meta = {
     description = "Zotero Streaming API Server";
     homepage = finalAttrs.src.url;
-    mainProgram = finalAttrs.pname;
+    mainProgram = "zotero-stream-server";
     license = lib.licenses.agpl3Only;
   };
 })

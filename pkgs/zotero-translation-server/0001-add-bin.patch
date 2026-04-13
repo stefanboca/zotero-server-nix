@@ -1,0 +1,11 @@
+diff --git a/package.json b/package.json
+index 35585b6da7..10323393d1 100644
+--- a/package.json
++++ b/package.json
+@@ -1,5 +1,6 @@
+ {
+ 	"name": "translation-server",
++	"bin": "src/server/js",
+ 	"version": "2.0.5",
+ 	"description": "Zotero translation server",
+ 	"license": "AGPL-3.0-only",

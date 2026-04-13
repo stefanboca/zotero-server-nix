@@ -1,7 +1,6 @@
 {
   buildNpmPackage,
   fetchFromGitHub,
-  nodejs,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -15,26 +14,15 @@ buildNpmPackage (finalAttrs: {
     hash = "sha256-EX466/T8OBFf3tw3SYhWdyA4D6W7hn90M7ZwaPvI30M=";
   };
 
+  patches = [./0001-add-bin.patch ./0002-package-lock.json.patch];
+
   npmDepsHash = "sha256-j1mu81uwqCJZ3VWFd4uOOuG2M1ziIE4KFDM8cqQEqQg=";
 
-  dontBuild = true;
-
-  postPatch = ''
-    cp ${./package-lock.json} package-lock.json
-  '';
-
-  postInstall = ''
-    mkdir -p $out/bin
-    cat > $out/bin/${finalAttrs.meta.mainProgram} <<EOF
-    #!${nodejs}/bin/node
-    require("$out/lib/node_modules/tinymce-clean-server/server.js")
-    EOF
-    chmod +x $out/bin/${finalAttrs.meta.mainProgram}
-  '';
+  dontNpmBuild = true;
 
   meta = {
     description = "Node.js HTTP server to clean HTML using TinyMCE parsing/filtering logic";
     homepage = finalAttrs.src.url;
-    mainProgram = finalAttrs.pname;
+    mainProgram = "tinymce-clean-server";
   };
 })

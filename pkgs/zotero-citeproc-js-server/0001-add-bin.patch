@@ -1,0 +1,12 @@
+diff --git a/package.json b/package.json
+index ac1ce9f0ca..10374fb73a 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,7 @@
+ {
+   "author": "fcheslack",
+   "name": "citeproc-js-server",
++  "bin": "lib/citeServer.js",
+   "description": "Web service to generate citations and bibliographies using citeproc-js",
+   "version": "v2.0.0",
+   "repository": {
