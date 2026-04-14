@@ -32,6 +32,7 @@
       system = "x86_64-linux";
       modules = [
         self.nixosModules.default
+        self.nixosModules.versitygw
         ({modulesPath, ...}: {imports = [(modulesPath + "/virtualisation/qemu-vm.nix")];})
         ({pkgs, ...}: {
           virtualisation.qemu.options = ["-nographic" "-serial" "mon:stdio"];
@@ -42,6 +43,11 @@
               from = "host";
               host.port = 8080;
               guest.port = 80;
+            }
+            {
+              from = "host";
+              host.port = 8443;
+              guest.port = 443;
             }
           ];
           services.qemuGuest.enable = true;
@@ -66,7 +72,26 @@
             shell = pkgs.fish;
           };
 
-          services.zotero-dataserver.enable = true;
+          services.versitygw = {
+            enable = true;
+          };
+          # services.zotero-dataserver = {
+          #   enable = true;
+          #   virtualHost = "localhost";
+          # };
+          services.caddy = {
+            openFirewall = true;
+            logFormat = lib.mkForce ''
+              level DEBUG
+              format console
+            '';
+            globalConfig = ''
+              auto_https disable_redirects
+              local_certs
+              skip_install_trust
+            '';
+            virtualHosts."localhost".serverAliases = ["localhost:80"];
+          };
         })
       ];
     };

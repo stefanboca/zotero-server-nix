@@ -12,11 +12,150 @@
 
   json = pkgs.formats.json {};
 
+  redisPort = toString config.services.redis.servers.zotero-dataserver.port;
+
+  package = cfg.package.withConfig {
+    config = ''
+      <?
+      class Z_CONFIG {
+        public static $API_ENABLED = true;
+        public static $READ_ONLY = false;
+        public static $MAINTENANCE_MESSAGE = 'Server updates in progress. Please try again in a few minutes.';
+        public static $BACKOFF = 0;
+
+        public static $TESTING_SITE = false;
+        public static $DEV_SITE = false;
+
+        public static $DEBUG_LOG = true;
+
+        public static $BASE_URI = "";
+        public static $API_BASE_URI = 'https://api.example.com/';
+        public static $WWW_BASE_URI = 'https://www.example.com/';
+
+        public static $AUTH_SALT = "";
+        public static $API_SUPER_USERNAME = "";
+        public static $API_SUPER_PASSWORD = "";
+
+        public static $AWS_REGION = 'us-east-1';
+        public static $AWS_ACCESS_KEY = ""; // leave credentials empty to use IAM role
+        public static $AWS_SECRET_KEY = "";
+        public static $S3_BUCKET = "";
+        public static $S3_BUCKET_CACHE = "";
+        public static $S3_BUCKET_FULLTEXT = "";
+        public static $S3_BUCKET_ERRORS = "";
+        public static $SNS_ALERT_TOPIC = "";
+
+        public static $REDIS_HOSTS = [
+        	'default' => [
+        		'host' => 'localhost:${redisPort}'
+        	],
+        	'request-limiter' => [
+        		'host' => 'localhost:${redisPort}'
+        	],
+        	'notifications' => [
+        		'host' => 'localhost:${redisPort}'
+        	],
+        	'fulltext-migration' => [
+        		'host' => 'localhost:${redisPort}',
+        	]
+        ];
+
+        public static $REDIS_PREFIX = "dataserver";
+
+        public static $MEMCACHED_ENABLED = true;
+        public static $MEMCACHED_SERVERS = [
+          "localhost:${toString config.services.memcached.port}"
+        ];
+
+        public static $TRANSLATION_SERVERS = [
+        	"localhost:${toString cfg.translation-server.settings.port}"
+        ];
+
+        public static $CITATION_SERVERS = [
+        	"localhsot:${toString cfg.citeproc-js-server.settings.port}"
+        ];
+
+        public static $SEARCH_HOSTS = [
+          "localhost:${toString config.services.elasticsearch.port}"
+        ];
+
+        public static $GLOBAL_ITEMS_URL = "";
+
+        public static $ATTACHMENT_PROXY_URL = "localhost:${toString cfg.attachment-proxy.settings.port}";
+        public static $ATTACHMENT_PROXY_SECRET = "";
+
+        public static $TTS_TABLE = "TTS";
+        public static $S3_BUCKET_TTS = 'tts-cache';
+        public static $TTS_AUDIO_DOMAIN = "";
+        public static $TTS_CREDIT_LIMITS = [
+        	'standard' => ['free' => 240, 'personal' => 999999, 'institutional' => 999999],
+        	'premium' => ['free' => 150, 'personal' => 3000, 'institutional' => 300],
+        ];
+        public static $TTS_DAILY_LIMIT_MINUTES = 480; // 8 hours -- safety valve for runaway tabs
+
+        public static $STATSD_ENABLED = false;
+        public static $STATSD_PREFIX = "";
+        public static $STATSD_HOST = "";
+        public static $STATSD_PORT = 0;
+
+        public static $LOG_TO_SCRIBE = false;
+        public static $LOG_ADDRESS = "";
+        public static $LOG_PORT = 0;
+        public static $LOG_TIMEZONE = 'US/Eastern';
+        public static $LOG_TARGET_DEFAULT = 'errors';
+
+        public static $HTMLCLEAN_SERVER_URL = 'localhost:${toString cfg.tinymce-clean-server.settings.port}';
+
+        // Set some things manually for running via command line
+        public static $CLI_PHP_PATH = '${getExe package.php}';
+
+        // Alternative to S3_BUCKET_ERRORS
+        //public static $ERROR_PATH = '/var/log/httpd/errors/';
+
+        public static $CACHE_VERSION_ATOM_ENTRY = 1;
+        public static $CACHE_VERSION_BIB = 1;
+        public static $CACHE_VERSION_RESPONSE_JSON_COLLECTION = 1;
+        public static $CACHE_VERSION_RESPONSE_JSON_ITEM = 1;
+        public static $CACHE_ENABLED_ITEM_RESPONSE_JSON = true;
+      }
+      ?>
+    '';
+
+    dbconnect = ''
+      <?
+      function Zotero_DBConnectAuth($db) {
+        $db = [
+          "master" => "zotero-master",
+          "shard" => "zotero-shard",
+          "id1" => "zotero-ids",
+          "id2" => "zotero-ids",
+          "www1" => "zotero-www",
+          "www2" => "zotero-www",
+        ][$db];
+        return [
+          "host" => "localhost",
+          "replicas" => [],
+          "port" => ${toString config.services.mysql.settings.mysqld.port},
+          "db" => $db,
+          "user" => "zotero-dataserver",
+          "pass" => "zotero-dataserver",
+          "charset" => "",
+          "state" => "up",
+        ];
+      }
+      ?>
+    '';
+  };
+
   cfg = config.services.zotero-dataserver;
 in {
   options.services.zotero-dataserver = {
     enable = mkEnableOption "zotero-dataserver";
     package = mkPackageOption pkgs "zotero-dataserver" {};
+
+    virtualHost = mkOption {
+      type = str;
+    };
 
     phpfpm.settings = mkOption {
       type = attrsOf (oneOf [str int bool]);
@@ -27,6 +166,7 @@ in {
         "pm.min_spare_servers" = 2;
         "pm.max_spare_servers" = 4;
         "pm.max_requests" = 500;
+        "catch_workers_output" = true;
       };
     };
 
@@ -160,14 +300,6 @@ in {
           type = int;
           default = 10;
         };
-        redis.host = mkOption {
-          type = str;
-          default = "";
-        };
-        redis.prefix = mkOption {
-          type = str;
-          default = "";
-        };
         apiURL = mkOption {
           type = str;
           default = "";
@@ -258,10 +390,6 @@ in {
           type = int;
           default = 5;
         };
-        translators.CrossrefREST.email = mkOption {
-          type = str;
-          default = "";
-        };
         trustProxyHeaders = mkOption {
           type = bool;
           default = false;
@@ -269,10 +397,6 @@ in {
         userAgent = mkOption {
           type = str;
           default = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36";
-        };
-        translatorsDirectory = mkOption {
-          type = str;
-          default = "./modules/translators";
         };
       };
     };
@@ -293,12 +417,43 @@ in {
       };
       # garage.enable = true; # TODO: use varsity instead?
       elasticsearch.enable = true;
+      mysql = {
+        enable = true;
+        package = pkgs.mariadb;
+        ensureUsers = [{name = "zotero-dataserver";}];
+        settings.mysqld = {
+          bind-address = "127.0.0.1";
+          port = 3336;
+        };
+      };
 
       phpfpm.pools.zotero-dataserver = {
         user = "zotero-dataserver";
         group = "zotero-dataserver";
-        phpPackage = cfg.package.php;
-        settings = cfg.phpfpm.settings;
+        phpPackage = package.php;
+        phpOptions = ''
+          log_errors = on
+          short_open_tag = on
+        '';
+        settings =
+          cfg.phpfpm.settings
+          // {
+            "listen.owner" = "caddy";
+            "listen.group" = "caddy";
+          };
+      };
+
+      caddy = {
+        enable = true;
+        virtualHosts.${cfg.virtualHost} = {
+          extraConfig = ''
+            root * ${package}/share/php/zotero-dataserver/htdocs
+            php_fastcgi unix/${config.services.phpfpm.pools.zotero-dataserver.socket} {
+              capture_stderr
+            }
+            file_server
+          '';
+        };
       };
     };
 
@@ -311,8 +466,17 @@ in {
           renamedStylesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/renamed-styles.json";
           cslDependentPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/dependent";
         });
-      "zotero-dataserver/stream-server.json".source = json.generate "stream-server-config.json" cfg.stream-server.settings;
-      "zotero-dataserver/translation-server.json".source = json.generate "translation-server-config.json" cfg.translation-server.settings;
+      "zotero-dataserver/stream-server.json".source = json.generate "stream-server-config.json" (cfg.stream-server.settings
+        // {
+          redis = {
+            host = "127.0.0.1:${toString config.services.redis.servers.zotero-dataserver.port}";
+            prefix = "stream-server";
+          };
+        });
+      "zotero-dataserver/translation-server.json".source = json.generate "translation-server-config.json" (cfg.translation-server.settings
+        // {
+          translatorsDirectory = "./modules/translators";
+        });
     };
 
     systemd.services = {
