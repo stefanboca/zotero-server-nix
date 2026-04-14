@@ -23,7 +23,10 @@
     packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
     overlays.default = _: import ./pkgs;
 
-    nixosModules.default = import ./modules/nixos;
+    nixosModules = {
+      default = import ./modules/nixos;
+      versitygw = import ./modules/nixos/versitygw.nix;
+    };
 
     nixosConfigurations.vm = lib.nixosSystem {
       system = "x86_64-linux";
