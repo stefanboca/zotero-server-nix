@@ -1,7 +1,7 @@
 {
   imports = [
     ./services/versitygw.nix
-    ./services/zotero-dataserver.nix
+    ./services/zotero-dataserver
   ];
 
   _class = "nixos";

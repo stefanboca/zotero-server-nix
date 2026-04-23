@@ -125,12 +125,13 @@
       <?
       function Zotero_DBConnectAuth($db) {
         $db = [
-          "master" => "zotero-master",
-          "shard" => "zotero-shard",
-          "id1" => "zotero-ids",
-          "id2" => "zotero-ids",
-          "www1" => "zotero-www",
-          "www2" => "zotero-www",
+          "admin" => "zotero.admin",
+          "master" => "zotero.master",
+          "shard" => "zotero.shard",
+          "id1" => "zotero.ids",
+          "id2" => "zotero.ids",
+          "www1" => "zotero.www",
+          "www2" => "zotero.www",
         ][$db];
         return [
           "host" => "localhost",
@@ -138,7 +139,7 @@
           "port" => ${toString config.services.mysql.settings.mysqld.port},
           "db" => $db,
           "user" => "zotero-dataserver",
-          "pass" => "zotero-dataserver",
+          "pass" => "",
           "charset" => "",
           "state" => "up",
         ];
@@ -420,7 +421,33 @@ in {
       mysql = {
         enable = true;
         package = mkDefault pkgs.mariadb;
-        ensureUsers = [{name = "zotero-dataserver";}];
+        ensureUsers = [
+          {
+            name = "zotero-dataserver";
+            ensurePermissions."zotero.*" = "ALL PRIVILIGES";
+          }
+        ];
+        initialDatabases = [
+          {name = "zotero.admin";}
+          {
+            name = "zotero.master";
+            schema = "${cfg.package}/share/php/zotero-dataserver/misc/master.sql";
+            # schema = "${cfg.package}/share/php/zotero-dataserver/misc/coredata.sql";
+          }
+          {
+            name = "zotero.shard";
+            schema = "${cfg.package}/share/php/zotero-dataserver/misc/shard.sql";
+            # schema = "${cfg.package}/share/php/zotero-dataserver/misc/triggers.sql";
+          }
+          {
+            name = "zotero.ids";
+            schema = "${cfg.package}/share/php/zotero-dataserver/misc/ids.sql";
+          }
+          {
+            name = "zotero.www";
+            # schema = ???
+          }
+        ];
         settings.mysqld = {
           bind-address = "127.0.0.1";
           port = 3336;
