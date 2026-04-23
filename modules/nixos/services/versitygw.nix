@@ -39,4 +39,7 @@ in {
       };
     };
   };
+
+  _class = "nixos";
+  _file = ./versitygw.nix;
 }

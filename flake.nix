@@ -25,14 +25,12 @@
 
     nixosModules = {
       default = import ./modules/nixos;
-      versitygw = import ./modules/nixos/versitygw.nix;
     };
 
     nixosConfigurations.vm = lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
         self.nixosModules.default
-        self.nixosModules.versitygw
         ({modulesPath, ...}: {imports = [(modulesPath + "/virtualisation/qemu-vm.nix")];})
         ({pkgs, ...}: {
           virtualisation.qemu.options = ["-nographic" "-serial" "mon:stdio"];
@@ -75,10 +73,10 @@
           services.versitygw = {
             enable = true;
           };
-          # services.zotero-dataserver = {
-          #   enable = true;
-          #   virtualHost = "localhost";
-          # };
+          services.zotero-dataserver = {
+            enable = true;
+            virtualHost = "localhost";
+          };
           services.caddy = {
             openFirewall = true;
             logFormat = lib.mkForce ''
@@ -90,7 +88,7 @@
               local_certs
               skip_install_trust
             '';
-            virtualHosts."localhost".serverAliases = ["localhost:80"];
+            virtualHosts."localhost".serverAliases = ["http://localhost"];
           };
         })
       ];
