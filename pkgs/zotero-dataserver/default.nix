@@ -82,13 +82,13 @@
 in
   php.buildComposerProject2 (finalAttrs: {
     pname = "zotero-dataserver";
-    version = "2026-04-10";
+    version = "2026-05-04";
 
     src = fetchFromGitHub {
       owner = "zotero";
       repo = "dataserver";
-      rev = "62bac4504da9d264458809f812c27a9837ada1a2";
-      hash = "sha256-v4yOWNq/SlXaM++XhItZqVy+IC+CRESl8uAiqlJxT4s=";
+      rev = "f95398d2e9b56751165c97b3d7c8980fd2f0024e";
+      hash = "sha256-arF6LAiCNTMieHXRJiISWUhRuVlUq90VqhthWWizGIc=";
       fetchSubmodules = true;
     };
 
@@ -112,7 +112,7 @@ in
     patches = [./0001-tmp-path.patch];
 
     composerStrictValidation = false;
-    vendorHash = "sha256-vpv7yqQ9AJCBlyjun1dfNpd+qz9cRJSIuzErOcjAG1U=";
+    vendorHash = "sha256-acWdOQ2UyaUFbMCgdy1dD7BIFFpBInK6FDeYStFm1Mc=";
 
     preBuild = ''
       cp -a $zf1/library/Zend/. ./include/Zend
@@ -123,14 +123,14 @@ in
         config,
         dbconnect,
       }:
-        finalAttrs.finalPackage.overrideAttrs (oldAttrs: {
+        finalAttrs.finalPackage.overrideAttrs {
           inherit config dbconnect;
           passAsFile = ["config" "dbconnect"];
           postPatch = ''
             cp $configPath include/config/config.inc.php
             cp $dbconnectPath include/config/dbconnect.inc.php
           '';
-        });
+        };
     };
 
     meta = {

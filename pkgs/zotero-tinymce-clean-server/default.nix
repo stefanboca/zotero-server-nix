@@ -5,7 +5,7 @@
 }:
 buildNpmPackage (finalAttrs: {
   pname = "zotero-tinymce-clean-server";
-  version = "1.0.0+date=2017-05-29";
+  version = "0-unstable-2017-06-29";
 
   src = fetchFromGitHub {
     owner = "zotero";

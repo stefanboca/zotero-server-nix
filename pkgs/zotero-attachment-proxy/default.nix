@@ -7,7 +7,7 @@
 }:
 buildNpmPackage (finalAttrs: {
   pname = "zotero-attachment-proxy";
-  version = "0.1.2+date=2025-05-21";
+  version = "0-unstable-2025-05-21";
 
   src = fetchFromGitHub {
     owner = "zotero";

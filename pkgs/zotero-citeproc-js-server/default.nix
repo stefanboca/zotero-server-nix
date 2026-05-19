@@ -6,7 +6,7 @@
 }:
 buildNpmPackage (finalAttrs: {
   pname = "zotero-citeproc-js-server";
-  version = "2.0.0+date=2026-02-14";
+  version = "0-unstable-2026-02-14";
 
   src = fetchFromGitHub {
     owner = "zotero";

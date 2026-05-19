@@ -6,7 +6,7 @@
 }:
 buildNpmPackage (finalAttrs: {
   pname = "zotero-stream-server";
-  version = "0.1.0+date=2026-03-24";
+  version = "0-unstable-2026-03-24";
 
   src = fetchFromGitHub {
     owner = "zotero";
