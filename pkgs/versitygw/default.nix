@@ -17,6 +17,8 @@ buildGoModule (finalAttrs: {
 
   vendorHash = "sha256-8WrGFLIoXmHQmyFGhOjBAFkaYZ1xhx0aldpyZULfAL4=";
 
+  patches = [./0001-disable-multipart-pre-parser.patch];
+
   subPackages = ["cmd/versitygw"];
 
   doCheck = false;

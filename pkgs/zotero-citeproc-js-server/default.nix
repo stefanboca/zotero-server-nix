@@ -16,7 +16,10 @@ buildNpmPackage (finalAttrs: {
     fetchSubmodules = true;
   };
 
-  patches = [./0001-add-bin.patch];
+  patches = [
+    ./0001-add-bin.patch
+    ./0002-configurable-listen-address.patch
+  ];
 
   npmDepsHash = "sha256-j4ePfSOaG1eO/2KovH2Z4cd/7G8t6TnoP43zBtftOU0=";
 

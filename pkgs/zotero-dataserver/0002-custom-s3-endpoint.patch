@@ -1,0 +1,53 @@
+diff --git a/include/header.inc.php b/include/header.inc.php
+index b526dbb..9e6c01e 100644
+--- a/include/header.inc.php
++++ b/include/header.inc.php
+@@ -225,6 +225,12 @@ $awsConfig = [
+ 	],
+ 	'retries' => 2
+ ];
++if (!empty(Z_CONFIG::$S3_ENDPOINT)) {
++	$awsConfig['S3'] = [
++		'endpoint' => Z_CONFIG::$S3_ENDPOINT,
++		'use_path_style_endpoint' => Z_CONFIG::$S3_FORCE_PATH_STYLE,
++	];
++}
+ // IAM role authentication
+ if (empty(Z_CONFIG::$AWS_ACCESS_KEY)) {
+ 	// If APC cache is available, use that to cache temporary credentials
+diff --git a/model/Storage.inc.php b/model/Storage.inc.php
+index e70cdb8..9104382 100644
+--- a/model/Storage.inc.php
++++ b/model/Storage.inc.php
+@@ -260,3 +260,6 @@ class Zotero_Storage {
+ 	public static function getUploadBaseURL() {
++		if (!empty(Z_CONFIG::$S3_UPLOAD_BASE_URL)) {
++			return rtrim(Z_CONFIG::$S3_UPLOAD_BASE_URL, '/') . '/';
++		}
+ 		return "https://" . Z_CONFIG::$S3_BUCKET . ".s3.amazonaws.com/";
+ 	}
+@@ -653 +656 @@ class Zotero_Storage {
+-		$attachmentProxy = false;
++		$attachmentProxy = Z_CONFIG::$ATTACHMENT_PROXY_ALWAYS;
+diff --git a/controllers/ItemsController.php b/controllers/ItemsController.php
+index d6fe66c..7439128 100644
+--- a/controllers/ItemsController.php
++++ b/controllers/ItemsController.php
+@@ -843,7 +843,7 @@ class ItemsController extends ApiController {
+ 			StatsD::increment("storage.download", 1);
+ 			
+ 			// TODO: Move to config shared with Storage.inc.php
+-			$attachmentProxy = false;
++			$attachmentProxy = Z_CONFIG::$ATTACHMENT_PROXY_ALWAYS;
+ 			try {
+ 				$db = Z_ENV_BASE_PATH . 'misc/GeoLite2-City.mmdb';
+ 				if (file_exists($db)) {
+@@ -1093,7 +1093,7 @@ class ItemsController extends ApiController {
+ 				
+ 				if (!empty($_REQUEST['params']) && $_REQUEST['params'] == "1") {
+ 					// TODO: Move to config shared with Storage.inc.php
+-					$attachmentProxy = false;
++					$attachmentProxy = Z_CONFIG::$ATTACHMENT_PROXY_ALWAYS;
+ 					try {
+ 						$db = Z_ENV_BASE_PATH . 'misc/GeoLite2-City.mmdb';
+ 						if (file_exists($db)) {

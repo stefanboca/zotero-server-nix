@@ -15,7 +15,10 @@ buildNpmPackage (finalAttrs: {
     hash = "sha256-hVDdCwJaOrlpdD43ZXvpqk1NCOjD0dV6FpgbOUnA0Xw=";
   };
 
-  patches = [./0001-add-bin.patch];
+  patches = [
+    ./0001-add-bin.patch
+    ./0002-configurable-listen-address.patch
+  ];
 
   npmDepsHash = "sha256-sIasdXvj+vZidDDaVdb+sdhE58dW2p36MUoyIs7/lMY=";
 

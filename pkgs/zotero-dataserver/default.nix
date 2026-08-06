@@ -1,50 +1,26 @@
 {
-  cyrus_sasl,
   fetchFromGitHub,
   lib,
-  libmemcached,
   php,
-  rsync,
-  zlib,
   ...
 }: let
   # TODO: find a better way to do this and/or upstream it
-  igbinary = php.buildPecl {
-    pname = "igbinary";
-    version = "3.2.14";
-    sha256 = "sha256-YzcUek+4iAclZmdIN72pko7gbufwEUtDOLhsgWIykl0=";
+  igbinary = let
+    prev = php.extensions.igbinary;
+  in
+    php.buildPecl {
+      inherit (prev) pname version sha256 configureFlags makeFlags outputs meta;
 
-    configureFlags = ["--enable-igbinary"];
-    makeFlags = ["phpincludedir=$(dev)/include"];
-    outputs = [
-      "out"
-      "dev"
-    ];
+      # override install phase in order to install headers to the correct directory
+      installPhase = ''
+        runHook preInstall
 
-    # override install phase in order to install headers to the correct directory
-    installPhase = ''
-      runHook preInstall
+        install -Dm644 modules/igbinary.so -t $out/lib/php/extensions
+        find . -type f -name '*.h' -exec install -Dm644 {} "$dev/include/{}" \;
 
-      mkdir -p $out/lib/php/extensions
-      cp modules/igbinary.so $out/lib/php/extensions/igbinary.so
-      mkdir -p $dev/include
-      ${rsync}/bin/rsync -r --filter="+ */" \
-                            --filter="+ *.h" \
-                            --filter="- *" \
-                            --prune-empty-dirs \
-                            . $dev/include/
-
-      runHook postInstall
-    '';
-
-    meta = {
-      description = "Binary serialization for PHP";
-      homepage = "https://github.com/igbinary/igbinary/";
-      license = lib.licenses.bsd3;
-      teams = [lib.teams.php];
-      broken = lib.versionAtLeast php.version "8.5";
+        runHook postInstall
+      '';
     };
-  };
   # upstream memcached doesn't support igbinary
   memcached = let
     prev = php.extensions.memcached;
@@ -84,7 +60,11 @@ in
         all.redis
       ]);
 
-    patches = [./0001-tmp-path.patch];
+    patches = [
+      ./0001-tmp-path.patch
+      ./0002-custom-s3-endpoint.patch
+      ./0003-mariadb-upsert.patch
+    ];
 
     composerStrictValidation = false;
     vendorHash = "sha256-IZtXmv2xKEpfjHFi6rp+lZvzHAsMN1vWOWqb/DH5ViY=";

@@ -1,0 +1,27 @@
+diff --git a/config/default.js b/config/default.js
+index 1d8f239..114f2ef 100644
+--- a/config/default.js
++++ b/config/default.js
+@@ -5,6 +5,7 @@ var config = {
+ 	dev: false,
+ 	logLevel: 'info',
+ 	hostname: os.hostname().split('.')[0],
++	listenAddress: '0.0.0.0',
+ 	httpPort: 8080,
+ 	proxyProtocol: false,
+ 	https: false,
+diff --git a/server.js b/server.js
+index 5483a66..10b5061 100644
+--- a/server.js
++++ b/server.js
+@@ -613,7 +613,10 @@ async function init() {
+		});
+		
+-		await util.promisify(server.listen.bind(server))(config.get('httpPort'), '0.0.0.0');
++		await util.promisify(server.listen.bind(server))(
++			config.get('httpPort'),
++			config.get('listenAddress')
++		);
+		
+		log.info("Listening on port " + config.get('httpPort'));
+		

@@ -1,0 +1,59 @@
+diff --git a/server.js b/server.js
+index 404ddf1..0c122e6 100644
+--- a/server.js
++++ b/server.js
+@@ -39,9 +39,11 @@ const Storage = require('./storage');
+ const app = new Koa();
+ const router = new Router();
+ const storage = new Storage({
+-	tmpDir: config.get('tmpDir'),
++	tmpDir: process.env.CACHE_DIRECTORY || config.get('tmpDir'),
+ 	config: config.get('s3')
+ });
++const secret = fs.readFileSync(process.env.CREDENTIALS_DIRECTORY + '/attachment-proxy-secret', 'utf8').trim();
++
+ // Configure CORS for the web library PDF reader
+ app.use(cors({
+ 	origin: (ctx) => {
+@@ -187,7 +189,7 @@ router.get('/:payload/:signature/:filename', async function (ctx) {
+ 	}
+ 	
+ 	// Compare signatures
+-	let computedSignature = crypto.createHmac("sha256", config.get('secret')).update(payload).digest("hex");
++	let computedSignature = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+ 	if (signature !== computedSignature) {
+ 		ctx.throw(400);
+ 	}
+@@ -258,7 +260,7 @@ router.post('/:payload/:signature/:filename', async ctx => {
+ 	let { payload, signature } = ctx.params;
+ 	
+ 	// Compare signatures
+-	let computedSignature = crypto.createHmac("sha256", config.get('secret')).update(payload).digest("hex");
++	let computedSignature = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+ 	if (signature !== computedSignature) {
+ 		ctx.throw(400);
+ 	}
+@@ -388,7 +390,7 @@ app.on('error', function (err, ctx) {
+ module.exports = function () {
+ 	log.info("Starting attachment-proxy [pid: " + process.pid + "] on port " + config.get('port'));
+ 	new Promise(resolve => {
+-		let server = app.listen(config.get('port'), resolve);
++		let server = app.listen(config.get('port'), config.get('host'), resolve);
+ 		// Set a timeout for disconnecting inactive clients
+ 		server.setTimeout(config.get('connectionTimeout') * 1000);
+     });
+diff --git a/storage.js b/storage.js
+index c5bdd9e..ac12994 100644
+--- a/storage.js
++++ b/storage.js
+@@ -35,7 +35,9 @@ const Storage = function (options) {
+ 	
+ 	this.bucket = options.config.bucket;
+ 	this.s3Client = new S3Client({
+-		region: options.config.region
++		region: options.config.region,
++		endpoint: options.config.endpoint || undefined,
++		forcePathStyle: options.config.forcePathStyle || false,
+ 	});
+ };
+ 

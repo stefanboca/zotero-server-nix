@@ -1,0 +1,16 @@
+diff --git a/model/Storage.inc.php b/model/Storage.inc.php
+index e70cdb8..f648ae6 100644
+--- a/model/Storage.inc.php
++++ b/model/Storage.inc.php
+@@ -571,8 +571,9 @@ class Zotero_Storage {
+ 		$item->save();
+ 		
+ 		// Note: We set the size on the shard so that usage queries are instantaneous
+-		$sql = "INSERT INTO storageFileItems (storageFileID, itemID, mtime, size) VALUES (?,?,?,?) AS new
+-				ON DUPLICATE KEY UPDATE storageFileID=new.storageFileID, mtime=new.mtime, size=new.size";
++		// MariaDB does not support MySQL's row alias after the VALUES clause.
++		$sql = "INSERT INTO storageFileItems (storageFileID, itemID, mtime, size) VALUES (?,?,?,?)
++				ON DUPLICATE KEY UPDATE storageFileID=VALUES(storageFileID), mtime=VALUES(mtime), size=VALUES(size)";
+ 		Zotero_DB::query(
+ 			$sql,
+ 			[

@@ -16,7 +16,10 @@ buildNpmPackage (finalAttrs: {
     hash = "sha256-AMQPEPpdbZgtNrCMKWGXhh0YB+n1huhk34bf/gKT6Sg=";
   };
 
-  patches = [./0001-add-bin.patch];
+  patches = [
+    ./0001-add-bin.patch
+    ./0002-custom-s3-endpoint.patch
+  ];
 
   npmDepsHash = "sha256-auGS3ssa3QgO3J7Q54rj15itFjcnvjCs5KPSu8GkrkU=";
 
@@ -25,7 +28,7 @@ buildNpmPackage (finalAttrs: {
   dontNpmBuild = true;
 
   meta = {
-    description = "Web service to generate citations and bibliographies using citeproc-js";
+    description = "Proxy for Zotero attachment uploads and downloads";
     homepage = finalAttrs.src.url;
     mainProgram = "attachment-proxy";
     license = lib.licenses.agpl3Only;

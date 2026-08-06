@@ -1,0 +1,22 @@
+diff --git a/config/default.json b/config/default.json
+index 800d0d4..7c9e4b3 100644
+--- a/config/default.json
++++ b/config/default.json
+@@ -1,4 +1,5 @@
+ {
++    "host" : "0.0.0.0",
+     "port" : 8085,
+     "logLevel" : "info",
+     "localesPath" : "./csl-locales",
+diff --git a/lib/citeServer.js b/lib/citeServer.js
+index 27b7d66..d1ab27e 100644
+--- a/lib/citeServer.js
++++ b/lib/citeServer.js
+@@ -337,6 +337,6 @@ let server = http.createServer(async function (request, response) {
+         });
+     });
+-}).listen(config.port);
++}).listen(config.port, config.host);
+
+-log.info('Server running at http://127.0.0.1:' + config.port);
++log.info('Server running at http://' + config.host + ':' + config.port);
