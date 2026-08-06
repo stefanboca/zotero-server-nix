@@ -6,16 +6,16 @@
 }:
 buildGoModule (finalAttrs: {
   pname = "versitygw";
-  version = "1.4.1";
+  version = "1.7.0";
 
   src = fetchFromGitHub {
     owner = "versity";
     repo = "versitygw";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-UW6/OfGqX3Y1ddWVQ6w+pdFeOIuE4j5p9JkuZ05HN1o=";
+    hash = "sha256-O3rXqg0wSAb4YXxgXqf42oo9sJinZhZ1U6e5WCnvo9I=";
   };
 
-  vendorHash = "sha256-0AgO5A6kdcQluw8NVHsKVuhuOinwGURHUGbKcpbaIPw=";
+  vendorHash = "sha256-8WrGFLIoXmHQmyFGhOjBAFkaYZ1xhx0aldpyZULfAL4=";
 
   subPackages = ["cmd/versitygw"];
 

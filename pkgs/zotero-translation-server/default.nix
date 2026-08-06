@@ -6,13 +6,13 @@
 }:
 buildNpmPackage (finalAttrs: {
   pname = "zotero-translation-server";
-  version = "2.0.3-unstable-2026-04-28";
+  version = "2.0.3-unstable-2026-07-31";
 
   src = fetchFromGitHub {
     owner = "zotero";
     repo = "translation-server";
-    rev = "d88a8d5384456439962edfef129b14841b09af6d";
-    hash = "sha256-2W4tg0eP6kI0rWtn8CQ7gyfVHty6VdQje2UUvsnqEdQ=";
+    rev = "3a9d17614896fc1fea73d7b880ea79273b605275";
+    hash = "sha256-3gcWNl3IivSuMcySD4GoGBnLEepbw2XKTiOHAiMyzwk=";
     fetchSubmodules = true;
   };
 

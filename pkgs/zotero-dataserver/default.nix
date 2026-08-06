@@ -4,7 +4,6 @@
   lib,
   libmemcached,
   php,
-  pkg-config,
   rsync,
   zlib,
   ...
@@ -47,48 +46,24 @@
     };
   };
   # upstream memcached doesn't support igbinary
-  memcached = php.buildPecl rec {
-    pname = "memcached";
-    version = "3.4.0";
-
-    src = fetchFromGitHub {
-      owner = "php-memcached-dev";
-      repo = "php-memcached";
-      rev = "v${version}";
-      sha256 = "sha256-sweEM4TVId+6ySffulmebZpz390dZXb+G3zFZvc45L8=";
+  memcached = let
+    prev = php.extensions.memcached;
+  in
+    php.buildPecl {
+      inherit (prev) pname version src nativeBuildInputs buildInputs meta;
+      internalDeps = prev.internalDeps ++ [igbinary];
+      configureFlags = prev.configureFlags ++ ["--enable-memcached-igbinary"];
     };
-
-    internalDeps = [php.extensions.session igbinary];
-
-    configureFlags = [
-      "--with-zlib-dir=${zlib.dev}"
-      "--with-libmemcached-dir=${libmemcached}"
-      "--enable-memcached-igbinary"
-    ];
-
-    nativeBuildInputs = [pkg-config];
-    buildInputs = [
-      cyrus_sasl
-      zlib
-    ];
-
-    meta = {
-      description = "PHP extension for interfacing with memcached via libmemcached library";
-      license = lib.licenses.php301;
-      homepage = "https://github.com/php-memcached-dev/php-memcached";
-      teams = [lib.teams.php];
-    };
-  };
 in
   php.buildComposerProject2 (finalAttrs: {
     pname = "zotero-dataserver";
-    version = "2026-05-04";
+    version = "2026-08-02";
 
     src = fetchFromGitHub {
       owner = "zotero";
       repo = "dataserver";
-      rev = "f95398d2e9b56751165c97b3d7c8980fd2f0024e";
-      hash = "sha256-arF6LAiCNTMieHXRJiISWUhRuVlUq90VqhthWWizGIc=";
+      rev = "5cf550f3166e848981a8ec60696ae3a6a5d82bc7";
+      hash = "sha256-20vNlTrc915lnIwUpm/CwbW50Xw2/RrwBCRhvqXl4aU=";
       fetchSubmodules = true;
     };
 
@@ -112,7 +87,7 @@ in
     patches = [./0001-tmp-path.patch];
 
     composerStrictValidation = false;
-    vendorHash = "sha256-acWdOQ2UyaUFbMCgdy1dD7BIFFpBInK6FDeYStFm1Mc=";
+    vendorHash = "sha256-IZtXmv2xKEpfjHFi6rp+lZvzHAsMN1vWOWqb/DH5ViY=";
 
     preBuild = ''
       cp -a $zf1/library/Zend/. ./include/Zend
