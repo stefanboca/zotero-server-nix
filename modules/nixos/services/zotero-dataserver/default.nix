@@ -4,7 +4,7 @@
   pkgs,
   ...
 }: let
-  inherit (lib.attrsets) mapAttrsToList;
+  inherit (lib.attrsets) mapAttrsToList optionalAttrs;
   inherit (lib.meta) getExe;
   inherit (lib.lists) optional unique;
   inherit (lib.modules) mkDefault mkIf;
@@ -884,6 +884,10 @@ in {
         wantedBy = ["phpfpm-zotero-dataserver.service"];
         requires = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
         after = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
+        environment = {
+          NODE_ENV = "attachment-proxy";
+          NODE_CONFIG_DIR = "/etc/zotero-dataserver";
+        };
         script = ''
           export AWS_ACCESS_KEY_ID="$(< "$CREDENTIALS_DIRECTORY/s3-access-key-id")"
           export AWS_SECRET_ACCESS_KEY="$(< "$CREDENTIALS_DIRECTORY/s3-secret-access-key")"
@@ -899,24 +903,20 @@ in {
           RestartSec = 5;
           DynamicUser = true;
           CacheDirectory = "zotero-attachment-proxy";
-          Environment = [
-            "NODE_ENV=attachment-proxy"
-            "NODE_CONFIG_DIR=/etc/zotero-dataserver"
-          ];
         };
       };
       zotero-citeproc-js-server = {
         description = "Zotero citeproc-js-server";
         wantedBy = ["phpfpm-zotero-dataserver.service"];
+        environment = {
+          NODE_ENV = "citeproc-js-server";
+          NODE_CONFIG_DIR = "/etc/zotero-dataserver";
+        };
         serviceConfig = {
           ExecStart = "${getExe cfg.citeproc-js-server.package}";
           Restart = "always";
           RestartSec = 5;
           DynamicUser = true;
-          Environment = [
-            "NODE_ENV=citeproc-js-server"
-            "NODE_CONFIG_DIR=/etc/zotero-dataserver"
-          ];
         };
       };
       zotero-stream-server = {
@@ -924,30 +924,32 @@ in {
         wantedBy = ["phpfpm-zotero-dataserver.service"];
         requires = ["redis-zotero-dataserver.service"];
         after = ["redis-zotero-dataserver.service"];
+        environment = {
+          NODE_ENV = "stream-server";
+          NODE_CONFIG_DIR = "/etc/zotero-dataserver";
+        };
         serviceConfig = {
           ExecStart = "${getExe cfg.stream-server.package}";
           Restart = "always";
           RestartSec = 5;
           DynamicUser = true;
-          Environment = [
-            "NODE_ENV=stream-server"
-            "NODE_CONFIG_DIR=/etc/zotero-dataserver"
-          ];
         };
       };
       zotero-tinymce-clean-server = {
         description = "Zotero tinymce-clean-server";
         wantedBy = ["phpfpm-zotero-dataserver.service"];
+        environment = let
+          cfg' = cfg.tinymce-clean-server.settings;
+        in
+          {
+            TINYMCE_CLEAN_PORT = toString cfg'.port;
+            TINYMCE_CLEAN_HOST = "127.0.0.1";
+          }
+          // optionalAttrs cfg'.log {TINYMCE_CLEAN_LOG = "1";};
         serviceConfig = {
           ExecStart = "${getExe cfg.tinymce-clean-server.package}";
           Restart = "always";
           RestartSec = 5;
-          Environment = let
-            cfg' = cfg.tinymce-clean-server.settings;
-          in
-            ["TINYMCE_CLEAN_PORT=${toString cfg'.port}"]
-            ++ optional (cfg'.log == true) "TINYMCE_CLEAN_LOG=1"
-            ++ ["TINYMCE_CLEAN_HOST=127.0.0.1"];
           DynamicUser = true;
         };
       };
@@ -956,15 +958,15 @@ in {
         wantedBy = ["phpfpm-zotero-dataserver.service"];
         wants = ["network-online.target"];
         after = ["network-online.target"];
+        environment = {
+          NODE_ENV = "translation-server";
+          NODE_CONFIG_DIR = "/etc/zotero-dataserver";
+        };
         serviceConfig = {
           ExecStart = "${getExe cfg.translation-server.package}";
           Restart = "always";
           RestartSec = 5;
           DynamicUser = true;
-          Environment = [
-            "NODE_ENV=translation-server"
-            "NODE_CONFIG_DIR=/etc/zotero-dataserver"
-          ];
         };
       };
     };
