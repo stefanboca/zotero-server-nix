@@ -1,6 +1,7 @@
 pkgs: {
   # keep-sorted start
   versitygw = pkgs.callPackage ./versitygw {};
+  zotero = pkgs.callPackage ./zotero {zotero = pkgs.zotero;};
   zotero-attachment-proxy = pkgs.callPackage ./zotero-attachment-proxy {};
   zotero-auth = pkgs.callPackage ./zotero-auth {};
   zotero-citeproc-js-server = pkgs.callPackage ./zotero-citeproc-js-server {};

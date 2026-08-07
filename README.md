@@ -134,8 +134,28 @@ for the current client syntax. Role sync is not required and is not supported.
 
 ## Desktop client
 
-Open the Config Editor in the Zotero advanced settings. Set these two hidden
-preferences:
+Use this flake's overlay to build a client that uses the private server:
+
+```nix
+{pkgs, ...}: {
+  nixpkgs.overlays = [zotero-server.overlays.default];
+
+  environment.systemPackages = [
+    (pkgs.zotero.withConfig {
+      apiBaseUri = "https://zotero.example.com/";
+    })
+  ];
+}
+```
+
+`apiBaseUri` is required. By default, the package uses it for the canonical
+object URI, website URL, API URL, and domain name. It changes `https` to `wss`
+and adds `/stream/` for the stream URL. You can override `baseUri`,
+`wwwBaseUrl`, `domainName`, or `streamingUrl` if the deployment uses different
+URLs.
+
+For an unmodified Zotero package, open the Config Editor in the advanced
+settings. Set these two hidden preferences:
 
 ```text
 extensions.zotero.api.url = https://zotero.example.com/
