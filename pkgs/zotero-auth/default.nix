@@ -4,6 +4,8 @@
   rust-bin,
   rustPlatform,
   rustc,
+  tailwindcss_4,
+  topcoat-cli,
 }: let
   toolchain = rust-bin.beta.latest.default;
   buildRustPlatform =
@@ -25,6 +27,17 @@ in
     src = lib.cleanSource ./.;
 
     cargoLock.lockFile = ./Cargo.lock;
+    nativeBuildInputs = [tailwindcss_4 topcoat-cli];
+    TAILWIND_CLI = lib.getExe tailwindcss_4;
+
+    postBuild = ''
+      topcoat asset bundle --release --bin zotero-auth --out target/assets
+    '';
+
+    postInstall = ''
+      mkdir -p $out/bin/assets
+      cp -r target/assets/. $out/bin/assets/
+    '';
 
     meta = {
       description = "OIDC login portal for Zotero Dataserver";

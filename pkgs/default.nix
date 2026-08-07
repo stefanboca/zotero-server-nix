@@ -1,9 +1,12 @@
-pkgs: {
+pkgs: let
+  topcoat-cli = pkgs.callPackage ./topcoat-cli {};
+in {
   # keep-sorted start
+  inherit topcoat-cli;
   versitygw = pkgs.callPackage ./versitygw {};
   zotero = pkgs.callPackage ./zotero {zotero = pkgs.zotero;};
   zotero-attachment-proxy = pkgs.callPackage ./zotero-attachment-proxy {};
-  zotero-auth = pkgs.callPackage ./zotero-auth {};
+  zotero-auth = pkgs.callPackage ./zotero-auth {inherit topcoat-cli;};
   zotero-citeproc-js-server = pkgs.callPackage ./zotero-citeproc-js-server {};
   zotero-dataserver = pkgs.callPackage ./zotero-dataserver {};
   zotero-stream-server = pkgs.callPackage ./zotero-stream-server {};

@@ -79,6 +79,7 @@
     if hasPrefix "http://" cfg.virtualHost || hasPrefix "https://" cfg.virtualHost
     then cfg.virtualHost
     else "https://${cfg.virtualHost}";
+  publicBaseUri = normalizeUri virtualHostUri;
 
   defaultConfig = ''
     <?
@@ -94,8 +95,8 @@
       public static $DEBUG_LOG = ${phpBool cfg.php.settings.debugLog};
 
       public static $BASE_URI = ${phpString cfg.php.settings.baseUri};
-      public static $API_BASE_URI = ${phpString cfg.apiBaseUri};
-      public static $WWW_BASE_URI = ${phpString cfg.wwwBaseUri};
+      public static $API_BASE_URI = ${phpString publicBaseUri};
+      public static $WWW_BASE_URI = ${phpString publicBaseUri};
       public static $REPROXY_MAP = ${phpStringListAttrs cfg.php.settings.reproxyMap};
       public static $URI_PREFIX_DOMAIN_MAP = ${phpStringAttrs cfg.php.settings.uriPrefixDomainMap};
 
@@ -255,21 +256,7 @@ in {
 
     virtualHost = mkOption {
       type = str;
-      description = "Caddy virtual host for the Zotero API, file proxy, stream service, and login portal.";
-    };
-
-    apiBaseUri = mkOption {
-      type = str;
-      default = virtualHostUri;
-      apply = normalizeUri;
-      description = "Public base URI of the Zotero API.";
-    };
-
-    wwwBaseUri = mkOption {
-      type = str;
-      default = cfg.apiBaseUri;
-      apply = normalizeUri;
-      description = "Public base URI of the Zotero website.";
+      description = "Caddy virtual host and public base URI for the Zotero API, file proxy, stream service, and login portal. A host name uses HTTPS; include an explicit scheme to override it.";
     };
 
     php = {
@@ -293,7 +280,7 @@ in {
         testingSite = settingOption bool false "Enable Dataserver's testing-site behavior.";
         devSite = settingOption bool false "Enable development behavior on a testing site.";
         debugLog = settingOption bool false "Enable verbose Dataserver logging.";
-        baseUri = settingOption str cfg.apiBaseUri "Canonical URI prefix used for Zotero objects and streaming topics.";
+        baseUri = settingOption str publicBaseUri "Canonical URI prefix used for Zotero objects and streaming topics.";
         reproxyMap = settingOption (attrsOf (listOf str)) {} "Legacy URI regular expressions and upstream server lists used to emit X-REPROXY-URL responses.";
         uriPrefixDomainMap = settingOption (attrsOf str) {} "URI prefixes and virtual domains used for legacy same-host API routes.";
         snsAlertTopic = settingOption str "" "Optional AWS SNS topic for operational alerts.";
@@ -365,18 +352,11 @@ in {
         default = null;
         description = "File containing the OIDC client secret.";
       };
-      redirectUri = mkOption {
-        type = str;
-        default = "${cfg.wwwBaseUri}auth/callback";
-        apply = removeSuffix "/";
-        description = "OIDC callback URI, which must exactly match the provider's client registration.";
-      };
       scopes = settingOption (listOf str) ["profile" "email"] "OIDC scopes requested in addition to the mandatory openid scope.";
       usernameClaim = settingOption str "preferred_username" "OIDC claim used as the initial Zotero username; dotted paths address nested claims.";
       realNameClaim = settingOption str "name" "OIDC claim synchronized to the Zotero profile real name; dotted paths address nested claims.";
       requireVerifiedEmail = settingOption bool true "Reject identities whose OIDC email_verified claim is not true.";
       databaseMaxConnections = settingOption int 5 "Maximum MariaDB connections used by the login portal.";
-      internalApiPort = settingOption port 16213 "Loopback-only Caddy port used by the login portal to complete Dataserver login sessions.";
     };
 
     phpfpm.settings = mkOption {
@@ -403,7 +383,7 @@ in {
       };
       url = mkOption {
         type = str;
-        default = "${removeSuffix "/" cfg.apiBaseUri}${cfg.attachment-proxy.path}";
+        default = "${removeSuffix "/" publicBaseUri}${cfg.attachment-proxy.path}";
         apply = normalizeUri;
         description = "Public base URI of the attachment proxy.";
       };
@@ -463,7 +443,7 @@ in {
       };
       publicUri = mkOption {
         type = str;
-        default = "${replaceStrings ["https://" "http://"] ["wss://" "ws://"] (removeSuffix "/" cfg.apiBaseUri)}${cfg.stream-server.path}";
+        default = "${replaceStrings ["https://" "http://"] ["wss://" "ws://"] (removeSuffix "/" publicBaseUri)}${cfg.stream-server.path}";
         apply = normalizeUri;
         description = "Public WebSocket URI to use as STREAMING_URL in a self-hosted Zotero client build.";
       };
@@ -658,6 +638,10 @@ in {
               handle /auth/* {
                 reverse_proxy unix//run/zotero-auth/zotero-auth.sock
               }
+
+              handle /_topcoat/assets/* {
+                reverse_proxy unix//run/zotero-auth/zotero-auth.sock
+              }
             ''}
 
             handle_path ${removeSuffix "/" cfg.attachment-proxy.path}/* {
@@ -675,18 +659,6 @@ in {
             file_server
           '';
         };
-        virtualHosts."http://127.0.0.1:${toString cfg.auth.internalApiPort}" = mkIf cfg.auth.enable {
-          extraConfig = ''
-            handle /keys/sessions/* {
-              root * ${package}/share/php/zotero-dataserver/htdocs
-              php_fastcgi unix/${config.services.phpfpm.pools.zotero-dataserver.socket} {
-                capture_stderr
-              }
-            }
-
-            respond 404
-          '';
-        };
       };
     };
 
@@ -694,6 +666,7 @@ in {
       "zotero-dataserver/auth.toml".source = toml.generate "zotero-auth.toml" {
         server = {
           socket = "/run/zotero-auth/zotero-auth.sock";
+          base_uri = cfg.virtualHost;
         };
         database = {
           socket = toString config.services.mysql.settings.mysqld.socket;
@@ -710,7 +683,6 @@ in {
             if cfg.auth.clientId == null
             then ""
             else cfg.auth.clientId;
-          redirect_uri = cfg.auth.redirectUri;
           scopes = cfg.auth.scopes;
         };
         identity = {
@@ -718,7 +690,7 @@ in {
           real_name_claim = cfg.auth.realNameClaim;
           require_verified_email = cfg.auth.requireVerifiedEmail;
         };
-        dataserver.url = "http://127.0.0.1:${toString cfg.auth.internalApiPort}";
+        dataserver.url = publicBaseUri;
       };
       "zotero-dataserver/attachment-proxy.json".source = json.generate "attachment-proxy.json" (cfg.attachment-proxy.settings
         // {
@@ -748,7 +720,7 @@ in {
           proxyProtocol = false;
           https = false;
           trustedProxies = ["127.0.0.1"];
-          apiURL = cfg.apiBaseUri;
+          apiURL = publicBaseUri;
           apiVersion = 3;
           apiRequestHeaders = {};
           redis = {

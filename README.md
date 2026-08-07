@@ -62,6 +62,10 @@ Caddy gets a TLS certificate for the virtual host. The managed S3 service
 listens only on the loopback interface. Clients use the public attachment
 proxy and do not need S3 credentials.
 
+`virtualHost` is also the public base URI for all server endpoints. A bare
+host name uses HTTPS. Use an explicit `http://` URI only for a trusted local
+deployment.
+
 ## OIDC login
 
 Enable the OIDC portal if you do not have the Zotero website:
@@ -75,8 +79,8 @@ services.zotero-dataserver.auth = {
 };
 ```
 
-The callback URI is `https://zotero.example.com/auth/callback` by default. It
-must use HTTPS because the portal uses a secure `__Host-session` cookie.
+The callback URI is `https://zotero.example.com/auth/oidc/callback`. It must use
+HTTPS because the portal uses a secure `__Host-session` cookie.
 
 The portal uses OIDC discovery, Authorization Code flow, PKCE S256, state, and
 nonce checks. It creates a Zotero user after the first successful login. It
@@ -109,7 +113,7 @@ identity_providers:
         require_pkce: true
         pkce_challenge_method: S256
         redirect_uris:
-          - https://zotero.example.com/auth/callback
+          - https://zotero.example.com/auth/oidc/callback
         scopes:
           - openid
           - profile
@@ -209,6 +213,19 @@ services.zotero-dataserver.storage = {
 
 Create the configured buckets in the external service. The managed backend
 creates them automatically.
+
+## Auth UI development
+
+Run the Topcoat development server from the auth package directory:
+
+```console
+cd pkgs/zotero-auth
+nix develop ../.. -c topcoat dev
+```
+
+Open `http://127.0.0.1:3000`. Preview mode does not read the TOML file,
+credentials, or database. It shows the login-complete page and reloads it after
+source changes.
 
 ## Checks
 

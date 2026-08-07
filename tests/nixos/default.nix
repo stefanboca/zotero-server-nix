@@ -10,6 +10,8 @@
   zotero-tinymce-clean-server,
   zotero-translation-server,
 }: let
+  testCertificates = import "${pkgs.path}/nixos/tests/common/acme/server/snakeoil-certs.nix";
+  testDomain = testCertificates.domain;
   testPython = pkgs.python3.withPackages (pythonPackages: [
     pythonPackages.cryptography
     pythonPackages.pyjwt
@@ -30,9 +32,7 @@ in {
       services.zotero-dataserver = {
         enable = true;
         package = zotero-dataserver;
-        virtualHost = "localhost";
-        apiBaseUri = "http://localhost";
-        wwwBaseUri = "https://localhost";
+        virtualHost = testDomain;
 
         attachment-proxy = {
           package = zotero-attachment-proxy;
@@ -65,8 +65,11 @@ in {
 
       services = {
         caddy = {
-          globalConfig = "local_certs";
-          virtualHosts.localhost.serverAliases = ["http://localhost"];
+          virtualHosts.${testDomain} = {
+            extraConfig = ''
+              tls ${testCertificates.${testDomain}.cert} ${testCertificates.${testDomain}.key}
+            '';
+          };
         };
         memcached.port = 11212;
         mysql.settings.mysqld.port = 13336;
@@ -92,7 +95,11 @@ in {
           requires = ["oidc-mock.service"];
           after = ["oidc-mock.service"];
         };
+        zotero-stream-server.environment.NODE_EXTRA_CA_CERTS = toString testCertificates.ca.cert;
       };
+
+      networking.hosts."127.0.0.1" = [testDomain];
+      security.pki.certificateFiles = [testCertificates.ca.cert];
     };
 
     testScript = ''
@@ -100,11 +107,13 @@ in {
       import hashlib
       import hmac
       import json
+      import re
       import shlex
       import time
       import urllib.parse
 
       start_all()
+      public_url = "https://${testDomain}"
 
       for unit in [
           "zotero-dataserver-credentials.service",
@@ -126,7 +135,6 @@ in {
           machine.wait_for_unit(unit)
 
       for port in [
-          80,
           443,
           11000,
           11212,
@@ -222,7 +230,7 @@ in {
                   "curl --silent --show-error --fail-with-body "
                   "--request POST --header "
                   "'User-Agent: Mozilla/5.0 (Linux) Zotero/7.0' "
-                  "http://localhost/keys/sessions"
+                  + shlex.quote(public_url + "/keys/sessions")
               )
           )
 
@@ -230,19 +238,37 @@ in {
           return json.loads(
               machine.succeed(
                   "curl --silent --show-error --fail-with-body "
-                  + shlex.quote(f"http://localhost/keys/sessions/{token}")
+                  + shlex.quote(f"{public_url}/keys/sessions/{token}")
               )
           )
+
+      def oidc_start_url(session):
+          return (
+              public_url + "/auth/oidc/start?"
+              + urllib.parse.urlencode({"session": session["sessionToken"]})
+          )
+
+      login_page_session = create_login_session()
+      login_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body "
+          + shlex.quote(login_page_session["loginURL"])
+      )
+      assert "Sign in to Zotero" in login_page, login_page
+      assert "Continue with OpenID Connect" in login_page, login_page
+      assert (
+          f'action="/auth/oidc/start?session={login_page_session["sessionToken"]}"'
+          in login_page
+      ), login_page
 
       parallel_sessions = [create_login_session(), create_login_session()]
       parallel_commands = []
       for index, session in enumerate(parallel_sessions):
           parallel_commands.append(
-              "curl --insecure --silent --show-error --fail-with-body "
-              "--location --cookie-jar "
+              "curl --silent --show-error --fail-with-body "
+              "--data= --location --cookie-jar "
               + shlex.quote(f"/tmp/oidc-parallel-{index}.cookies")
               + " "
-              + shlex.quote(session["loginURL"])
+              + shlex.quote(oidc_start_url(session))
               + " >"
               + shlex.quote(f"/tmp/oidc-parallel-{index}.html")
           )
@@ -283,11 +309,11 @@ in {
       repeated_session = create_login_session()
       cookie_file = "/tmp/oidc-repeated.cookies"
       first_headers = machine.succeed(
-          "curl --insecure --silent --show-error --dump-header - "
-          "--output /dev/null --cookie-jar "
+          "curl --silent --show-error --dump-header - "
+          "--data= --output /dev/null --cookie-jar "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(repeated_session["loginURL"])
+          + shlex.quote(oidc_start_url(repeated_session))
       )
       first_location = next(
           line.split(":", 1)[1].strip()
@@ -295,13 +321,13 @@ in {
           if line.lower().startswith("location:")
       )
       second_headers = machine.succeed(
-          "curl --insecure --silent --show-error --dump-header - "
-          "--output /dev/null --cookie "
+          "curl --silent --show-error --dump-header - "
+          "--data= --output /dev/null --cookie "
           + shlex.quote(cookie_file)
           + " --cookie-jar "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(repeated_session["loginURL"])
+          + shlex.quote(oidc_start_url(repeated_session))
       )
       second_location = next(
           line.split(":", 1)[1].strip()
@@ -310,7 +336,7 @@ in {
       )
       assert first_location != second_location, (first_location, second_location)
       repeated_result = machine.succeed(
-          "curl --insecure --silent --show-error --fail-with-body "
+          "curl --silent --show-error --fail-with-body "
           "--location --cookie "
           + shlex.quote(cookie_file)
           + " --cookie-jar "
@@ -319,6 +345,15 @@ in {
           + shlex.quote(second_location)
       )
       assert "Login complete" in repeated_result, repeated_result
+      stylesheet = re.search(
+          r'href="(/_topcoat/assets/[^"]+)"', repeated_result
+      )
+      assert stylesheet is not None, repeated_result
+      stylesheet_body = machine.succeed(
+          "curl --silent --show-error --fail-with-body "
+          + shlex.quote(public_url + stylesheet.group(1))
+      )
+      assert len(stylesheet_body) > 1000, len(stylesheet_body)
       assert login_session_status(repeated_session["sessionToken"])["status"] == "completed"
       assert machine.succeed(
           "mariadb --batch --skip-column-names zotero_www "
@@ -333,10 +368,10 @@ in {
       )
       banned_session = create_login_session()
       banned_status = machine.succeed(
-          "curl --insecure --silent --show-error --location "
-          "--output /tmp/oidc-banned.html --write-out='%{http_code}' "
+          "curl --silent --show-error --location "
+          "--data= --output /tmp/oidc-banned.html --write-out='%{http_code}' "
           "--cookie-jar /tmp/oidc-banned.cookies "
-          + shlex.quote(banned_session["loginURL"])
+          + shlex.quote(oidc_start_url(banned_session))
       ).strip()
       assert banned_status == "403", banned_status
       assert login_session_status(banned_session["sessionToken"])["status"] == "pending"
@@ -355,10 +390,10 @@ in {
       )
       deleted_session = create_login_session()
       deleted_status = machine.succeed(
-          "curl --insecure --silent --show-error --location "
-          "--output /tmp/oidc-deleted.html --write-out='%{http_code}' "
+          "curl --silent --show-error --location "
+          "--data= --output /tmp/oidc-deleted.html --write-out='%{http_code}' "
           "--cookie-jar /tmp/oidc-deleted.cookies "
-          + shlex.quote(deleted_session["loginURL"])
+          + shlex.quote(oidc_start_url(deleted_session))
       ).strip()
       assert deleted_status == "403", deleted_status
       assert login_session_status(deleted_session["sessionToken"])["status"] == "pending"
@@ -380,7 +415,7 @@ in {
               "\"access\":{\"user\":{\"library\":true,"
               "\"notes\":true,\"write\":true},\"groups\":{\"all\":{"
               "\"library\":true,\"write\":true}}}}' "
-              "http://localhost/keys"
+              + shlex.quote(public_url + "/keys")
           )
       )
       assert key["userID"] == 1, key
@@ -415,14 +450,18 @@ in {
           "url": "redis://127.0.0.1:16389",
           "prefix": "zotero:",
       }, stream_server
-      assert stream_server["apiURL"] == "http://localhost/", stream_server
+      assert stream_server["apiURL"] == public_url + "/", stream_server
 
       stream_client = """
       import json
       from pathlib import Path
       import websocket
 
-      connection = websocket.create_connection("ws://localhost/stream/", timeout=30)
+      connection = websocket.create_connection(
+          "wss://${testDomain}/stream/",
+          timeout=30,
+          sslopt={"ca_certs": "${testCertificates.ca.cert}"},
+      )
       connection.send(json.dumps({
           "action": "createSubscriptions",
           "subscriptions": [{
@@ -504,7 +543,7 @@ in {
           proxy_secret.encode(), payload.encode(), hashlib.sha256
       ).hexdigest()
       attachment_url = (
-          "http://localhost/files/"
+          public_url + "/files/"
           + urllib.parse.quote(payload, safe="")
           + "/"
           + signature
@@ -518,8 +557,10 @@ in {
       attachment_template = json.loads(
           machine.succeed(
               "curl --silent --show-error --fail-with-body "
-              "'http://localhost/items/new?itemType=attachment&"
-              "linkMode=imported_file'"
+              + shlex.quote(
+                  public_url
+                  + "/items/new?itemType=attachment&linkMode=imported_file"
+              )
           )
       )
       created = json.loads(
@@ -530,7 +571,8 @@ in {
               + shlex.quote(f"Zotero-API-Key: {key['key']}")
               + " --data "
               + shlex.quote(json.dumps([attachment_template]))
-              + " http://localhost/users/1/items"
+              + " "
+              + shlex.quote(public_url + "/users/1/items")
           )
       )
       success = created["success"]
@@ -559,7 +601,10 @@ in {
               + shlex.quote(f"Zotero-API-Key: {key['key']}")
               + " --data "
               + shlex.quote(file_parameters)
-              + f" http://localhost/users/1/items/{attachment_key}/file"
+              + " "
+              + shlex.quote(
+                  f"{public_url}/users/1/items/{attachment_key}/file"
+              )
           )
       )
       upload_body = base64.b64encode(
@@ -590,14 +635,16 @@ in {
           + shlex.quote(f"Zotero-API-Key: {key['key']}")
           + " --data "
           + shlex.quote(f"upload={authorization['uploadKey']}")
-          + f" http://localhost/users/1/items/{attachment_key}/file"
+          + " "
+          + shlex.quote(f"{public_url}/users/1/items/{attachment_key}/file")
       ).strip()
       assert registration_status == "204", registration_status
 
       downloaded = machine.succeed(
           "curl --silent --show-error --fail-with-body --location --header "
           + shlex.quote(f"Zotero-API-Key: {key['key']}")
-          + f" http://localhost/users/1/items/{attachment_key}/file"
+          + " "
+          + shlex.quote(f"{public_url}/users/1/items/{attachment_key}/file")
       )
       assert downloaded == client_file, downloaded
 
@@ -615,19 +662,20 @@ in {
 
       response = machine.succeed(
           "curl --silent --show-error --output /dev/null "
-          "--write-out='%{http_code}' http://localhost/"
+          "--write-out='%{http_code}' " + shlex.quote(public_url + "/")
       ).strip()
       assert response == "200", response
 
       attachment_proxy_response = machine.succeed(
           "curl --silent --show-error --output /dev/null "
-          "--write-out='%{http_code}' http://localhost/files/"
+          "--write-out='%{http_code}' " + shlex.quote(public_url + "/files/")
       ).strip()
       assert attachment_proxy_response == "200", attachment_proxy_response
 
       stream_response = machine.succeed(
           "curl --silent --show-error --output /dev/null "
-          "--write-out='%{http_code}' http://localhost/stream/health"
+          "--write-out='%{http_code}' "
+          + shlex.quote(public_url + "/stream/health")
       ).strip()
       assert stream_response == "200", stream_response
 
