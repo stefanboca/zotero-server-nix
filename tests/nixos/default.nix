@@ -243,7 +243,6 @@ in {
           "oidc_browser_sessions",
           "oidc_flows",
           "oidc_identities",
-          "oidc_user_search_limits",
           "sessions",
           "storage_institution_email",
           "storage_institutions",
@@ -297,6 +296,12 @@ in {
           )
 
       login_page_session = create_login_session()
+      register_headers = machine.succeed(
+          "curl --silent --show-error --dump-header - --output /dev/null "
+          + shlex.quote(public_url + "/user/register")
+      ).lower()
+      assert register_headers.startswith("http/2 307"), register_headers
+      assert "location: /user/login" in register_headers, register_headers
       login_page = machine.succeed(
           "curl --silent --show-error --fail-with-body "
           + shlex.quote(login_page_session["loginURL"])
@@ -486,6 +491,22 @@ in {
       assert 'action="/user/logout"' in account_page, account_page
       assert "Your groups" not in account_page, account_page
 
+      personal_library_headers = machine.succeed(
+          "curl --silent --show-error --dump-header - --output /dev/null --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + f"/users/{oidc_user_id}/items")
+      ).lower()
+      assert personal_library_headers.startswith("http/2 307"), personal_library_headers
+      assert "location: /" in personal_library_headers, personal_library_headers
+      other_library_status = machine.succeed(
+          "curl --silent --show-error --output /dev/null --write-out '%{http_code}' --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/users/1/items")
+      ).strip()
+      assert other_library_status == "404", other_library_status
+
       trailing_group_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null --cookie "
           + shlex.quote(cookie_file)
@@ -539,8 +560,8 @@ in {
       assert "Your groups" in groups_page, groups_page
       assert group_name in groups_page, groups_page
       assert f'href="/groups/{group_id}"' in groups_page, groups_page
-      assert "You are the group owner" in groups_page, groups_page
-      assert "1 person total" in groups_page, groups_page
+      assert "You are the owner" in groups_page, groups_page
+      assert "1 member" in groups_page, groups_page
 
       machine.succeed(
           "mariadb zotero_www --execute="
@@ -574,31 +595,52 @@ in {
       assert 'data-member-search=""' in group_management, group_management
       assert 'name="user_id"' not in group_management, group_management
       assert "Zotero user ID" not in group_management, group_management
-      search_status = machine.succeed(
-          "curl --silent --show-error --output /tmp/removed-search.html "
-          "--write-out='%{http_code}' --cookie "
+      search_region = group_management.split(
+          'data-member-search-results=""', 1
+      )[1]
+      search_shard_match = re.search(
+          r'/_topcoat/shards/([0-9a-f-]+)', search_region
+      )
+      assert search_shard_match is not None, search_region
+      search_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
+          + " --request POST --header 'Content-Type: application/json' --data "
+          + shlex.quote('["new-owner"]')
           + " "
-          + shlex.quote(f"{public_url}/users/search?q=new-owner")
-      ).strip()
-      assert search_status == "200", search_status
-      search_page = machine.succeed("cat /tmp/removed-search.html")
+          + shlex.quote(
+              public_url
+              + "/_topcoat/shards/"
+              + search_shard_match.group(1)
+          )
+      )
       assert "New Group Owner" in search_page, search_page
       assert "new-owner" in search_page, search_page
       assert "@new-owner" not in search_page, search_page
       assert 'name="user_id"' not in search_page, search_page
       assert "Zotero user ID" not in search_page, search_page
 
-      add_member_headers = machine.succeed(
-          "curl --silent --show-error --dump-header - --output /dev/null "
-          "--cookie "
-          + shlex.quote(cookie_file)
-          + " --data operation=add --data role=member --data "
-          + shlex.quote("identifier=new-owner")
-          + " "
-          + shlex.quote(f"{public_url}/groups/{group_id}/members")
+      add_member_region = group_management.split('data-member-picker=""', 1)[1]
+      add_member_procedure_match = re.search(
+          r'&quot;t&quot;:&quot;Procedure&quot;,&quot;id&quot;:&quot;([0-9a-f-]+)&quot;',
+          add_member_region,
       )
-      assert add_member_headers.startswith("HTTP/2 303"), add_member_headers
+      assert add_member_procedure_match is not None, add_member_region
+      add_member_result = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " --request POST --header 'Content-Type: application/json' --data "
+          + shlex.quote(f'[{group_id}, "new-owner", "member"]')
+          + " "
+          + shlex.quote(
+              public_url
+              + "/_topcoat/procedures/"
+              + add_member_procedure_match.group(1)
+          )
+      )
+      assert add_member_result == (
+          '{"t":"Result","ok":"new-owner"}'
+      ), add_member_result
       assert machine.succeed(
           "mariadb --batch --skip-column-names zotero_master --execute="
           + shlex.quote(
@@ -607,18 +649,21 @@ in {
           )
       ).strip() == "member"
 
-      already_member_headers = machine.succeed(
-          "curl --silent --show-error --dump-header - --output /dev/null "
-          "--cookie "
+      already_member_result = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
-          + " --header 'X-Zotero-In-Place: members' "
-          "--data operation=add --data role=member --data "
-          + shlex.quote("identifier=new-owner")
+          + " --request POST --header 'Content-Type: application/json' --data "
+          + shlex.quote(f'[{group_id}, "new-owner", "member"]')
           + " "
-          + shlex.quote(f"{public_url}/groups/{group_id}/members")
+          + shlex.quote(
+              public_url
+              + "/_topcoat/procedures/"
+              + add_member_procedure_match.group(1)
+          )
       )
-      assert already_member_headers.startswith("HTTP/2 400"), already_member_headers
-      assert "x-zotero-outcome: already-member" in already_member_headers.lower(), already_member_headers
+      assert already_member_result == (
+          '{"t":"Result","err":"already-member"}'
+      ), already_member_result
 
       members_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
@@ -733,7 +778,7 @@ in {
           + " "
           + shlex.quote(f"{public_url}/groups/{group_id}")
       )
-      assert "You are a group administrator" in former_owner_page, former_owner_page
+      assert "You are an administrator" in former_owner_page, former_owner_page
       assert "Leave group" in former_owner_page, former_owner_page
       assert "Delete group" not in former_owner_page, former_owner_page
       assert 'value="demote-self"' in former_owner_page, former_owner_page
@@ -764,7 +809,7 @@ in {
           + " "
           + shlex.quote(f"{public_url}/groups/{group_id}")
       )
-      assert "You are a group member" in demoted_page, demoted_page
+      assert "You are a member" in demoted_page, demoted_page
       assert "Add a member" not in demoted_page, demoted_page
 
       account_page = machine.succeed(

@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -48,7 +48,6 @@ struct DevelopmentState {
     oidc_flows: HashMap<Vec<u8>, OidcFlow>,
     authorization_codes: HashMap<String, OidcProfile>,
     login_sessions: HashMap<String, LoginSessionInfo>,
-    search_limits: HashMap<UserId, (u64, u32)>,
 }
 
 struct DevelopmentBrowserSession {
@@ -104,15 +103,6 @@ impl Backend {
         }
     }
 
-    fn development_state(&self) -> anyhow::Result<MutexGuard<'_, DevelopmentState>> {
-        let BackendInner::Development(state) = &*self.inner else {
-            return Err(anyhow!("development backend operation used in production"));
-        };
-        state
-            .lock()
-            .map_err(|_| anyhow!("development backend state lock was poisoned"))
-    }
-
     pub async fn begin_oidc_authorization(&self) -> anyhow::Result<OidcAuthorization> {
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         match &*self.inner {
@@ -135,11 +125,11 @@ impl Backend {
                     pkce_verifier: verifier.secret().to_owned(),
                 })
             }
-            BackendInner::Development(_) => {
+            BackendInner::Development(development) => {
                 let state = CsrfToken::new_random();
                 let nonce = Nonce::new_random();
                 let code = CsrfToken::new_random();
-                self.development_state()?.authorization_codes.insert(
+                development.lock().unwrap().authorization_codes.insert(
                     code.secret().to_owned(),
                     DevelopmentState::researcher_profile(),
                 );
@@ -163,8 +153,9 @@ impl Backend {
         flow: &OidcFlow,
     ) -> anyhow::Result<Option<OidcProfile>> {
         match &*self.inner {
-            BackendInner::Development(_) => self
-                .development_state()?
+            BackendInner::Development(state) => state
+                .lock()
+                .unwrap()
                 .authorization_codes
                 .remove(code)
                 .map(Some)
@@ -246,8 +237,10 @@ impl Backend {
             BackendInner::Production(backend) => {
                 store::delete_expired_oidc_flows(&backend.database, now).await?;
             }
-            BackendInner::Development(_) => {
-                self.development_state()?
+            BackendInner::Development(state) => {
+                state
+                    .lock()
+                    .unwrap()
                     .oidc_flows
                     .retain(|_, flow| flow.expires >= now);
             }
@@ -285,8 +278,8 @@ impl Backend {
                     Err(error) => Err(error.into()),
                 }
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(development) => {
+                let mut backend = development.lock().unwrap();
                 if backend.oidc_flows.contains_key(token_hash) {
                     return Ok(false);
                 }
@@ -315,8 +308,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::consume_oidc_flow(&backend.database, token_hash, state).await?)
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(development) => {
+                let mut backend = development.lock().unwrap();
                 if backend
                     .oidc_flows
                     .get(token_hash)
@@ -335,8 +328,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::clear_oidc_flow(&backend.database, token_hash).await?)
             }
-            BackendInner::Development(_) => {
-                self.development_state()?.oidc_flows.remove(token_hash);
+            BackendInner::Development(state) => {
+                state.lock().unwrap().oidc_flows.remove(token_hash);
                 Ok(true)
             }
         }
@@ -347,8 +340,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 store::delete_oidc_flow(&backend.database, token_hash).await?;
             }
-            BackendInner::Development(_) => {
-                self.development_state()?.oidc_flows.remove(token_hash);
+            BackendInner::Development(state) => {
+                state.lock().unwrap().oidc_flows.remove(token_hash);
             }
         }
         Ok(())
@@ -359,8 +352,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 store::provision_user(&backend.database, profile).await
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let mut backend = state.lock().unwrap();
                 let identity = (profile.issuer.clone(), profile.subject.clone());
                 let user_id = backend
                     .identities
@@ -406,8 +399,9 @@ impl Backend {
                         .map(IdentityLock::Production),
                 )
             }
-            BackendInner::Development(_) => Ok((self
-                .development_state()?
+            BackendInner::Development(state) => Ok((state
+                .lock()
+                .unwrap()
                 .identities
                 .get(&(profile.issuer.clone(), profile.subject.clone()))
                 == Some(&user_id))
@@ -424,9 +418,9 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::refresh_browser_session(&backend.database, token_hash, expires).await?)
             }
-            BackendInner::Development(_) => {
+            BackendInner::Development(state) => {
                 let now = epoch_seconds()?;
-                let mut backend = self.development_state()?;
+                let mut backend = state.lock().unwrap();
                 backend
                     .browser_sessions
                     .retain(|_, browser_session| browser_session.expires_at > now);
@@ -458,9 +452,9 @@ impl Backend {
                 )
                 .await?
             }
-            BackendInner::Development(_) => {
+            BackendInner::Development(state) => {
                 let now = epoch_seconds()?;
-                let mut backend = self.development_state()?;
+                let mut backend = state.lock().unwrap();
                 backend.browser_sessions.remove(old_token_hash);
                 backend.browser_sessions.insert(
                     new_token_hash.to_vec(),
@@ -481,10 +475,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 store::delete_browser_session(&backend.database, token_hash).await?;
             }
-            BackendInner::Development(_) => {
-                self.development_state()?
-                    .browser_sessions
-                    .remove(token_hash);
+            BackendInner::Development(state) => {
+                state.lock().unwrap().browser_sessions.remove(token_hash);
             }
         }
         Ok(())
@@ -498,9 +490,10 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::browser_sessions_for_user(&backend.database, user_id).await?)
             }
-            BackendInner::Development(_) => {
-                let mut sessions = self
-                    .development_state()?
+            BackendInner::Development(state) => {
+                let mut sessions = state
+                    .lock()
+                    .unwrap()
                     .browser_sessions
                     .iter()
                     .filter(|(_, browser_session)| browser_session.user_id == user_id)
@@ -526,8 +519,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::revoke_browser_session(&backend.database, user_id, handle).await?)
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let mut backend = state.lock().unwrap();
                 let token_hash = backend
                     .browser_sessions
                     .iter()
@@ -547,8 +540,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::revoke_all_browser_sessions(&backend.database, user_id).await?)
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let mut backend = state.lock().unwrap();
                 let before = backend.browser_sessions.len();
                 backend
                     .browser_sessions
@@ -563,8 +556,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::user_by_id(&backend.database, user_id).await?)
             }
-            BackendInner::Development(_) => {
-                Ok(self.development_state()?.users.get(&user_id).cloned())
+            BackendInner::Development(state) => {
+                Ok(state.lock().unwrap().users.get(&user_id).cloned())
             }
         }
     }
@@ -574,8 +567,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::users_by_ids(&backend.database, user_ids).await?)
             }
-            BackendInner::Development(_) => {
-                let backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let backend = state.lock().unwrap();
                 let mut users = user_ids
                     .iter()
                     .filter_map(|user_id| backend.users.get(user_id).cloned())
@@ -594,8 +587,9 @@ impl Backend {
             BackendInner::Production(backend) => {
                 Ok(store::oidc_user_by_identifier(&backend.database, identifier).await?)
             }
-            BackendInner::Development(_) => Ok(self
-                .development_state()?
+            BackendInner::Development(state) => Ok(state
+                .lock()
+                .unwrap()
                 .users
                 .values()
                 .find(|user| {
@@ -619,8 +613,8 @@ impl Backend {
                         .await?,
                 )
             }
-            BackendInner::Development(_) => {
-                let backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let backend = state.lock().unwrap();
                 let mut matches = backend
                     .users
                     .values()
@@ -641,30 +635,11 @@ impl Backend {
         }
     }
 
-    pub async fn allow_user_search(&self, user_id: UserId) -> anyhow::Result<bool> {
-        match &*self.inner {
-            BackendInner::Production(backend) => {
-                Ok(store::allow_user_search(&backend.database, user_id).await?)
-            }
-            BackendInner::Development(_) => {
-                let now = epoch_seconds()?;
-                let mut backend = self.development_state()?;
-                let (window, count) = backend.search_limits.entry(user_id).or_insert((now, 0));
-                if now.saturating_sub(*window) >= 60 {
-                    *window = now;
-                    *count = 0;
-                }
-                *count += 1;
-                Ok(*count <= 30)
-            }
-        }
-    }
-
     pub async fn login_session_info(&self, token: &str) -> anyhow::Result<LoginSessionInfo> {
         match &*self.inner {
             BackendInner::Production(backend) => backend.dataserver.login_session_info(token).await,
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let mut backend = state.lock().unwrap();
                 let info = backend
                     .login_sessions
                     .entry(token.to_owned())
@@ -691,8 +666,8 @@ impl Backend {
                     .complete_login_session(token, user_id, access)
                     .await
             }
-            BackendInner::Development(_) => {
-                self.development_state()?.login_sessions.insert(
+            BackendInner::Development(state) => {
+                state.lock().unwrap().login_sessions.insert(
                     token.to_owned(),
                     LoginSessionInfo {
                         status: "complete".to_owned(),
@@ -710,8 +685,10 @@ impl Backend {
             BackendInner::Production(backend) => {
                 backend.dataserver.set_unlimited_storage(user_id).await
             }
-            BackendInner::Development(_) => {
-                self.development_state()?
+            BackendInner::Development(state) => {
+                state
+                    .lock()
+                    .unwrap()
                     .storage
                     .entry(user_id)
                     .or_insert(StorageUsage {
@@ -726,8 +703,9 @@ impl Backend {
     pub async fn storage_usage(&self, user_id: UserId) -> anyhow::Result<StorageUsage> {
         match &*self.inner {
             BackendInner::Production(backend) => backend.dataserver.storage_usage(user_id).await,
-            BackendInner::Development(_) => Ok(self
-                .development_state()?
+            BackendInner::Development(state) => Ok(state
+                .lock()
+                .unwrap()
                 .storage
                 .get(&user_id)
                 .copied()
@@ -743,8 +721,9 @@ impl Backend {
             BackendInner::Production(backend) => {
                 backend.dataserver.connected_clients(user_id).await
             }
-            BackendInner::Development(_) => Ok(self
-                .development_state()?
+            BackendInner::Development(state) => Ok(state
+                .lock()
+                .unwrap()
                 .connected_clients
                 .get(&user_id)
                 .cloned()
@@ -764,8 +743,8 @@ impl Backend {
                     .revoke_connected_client(user_id, handle)
                     .await
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let mut backend = state.lock().unwrap();
                 let clients = backend.connected_clients.entry(user_id).or_default();
                 let before = clients.len();
                 clients.retain(|client| client.handle != handle);
@@ -782,8 +761,9 @@ impl Backend {
                     .revoke_all_connected_clients(user_id)
                     .await
             }
-            BackendInner::Development(_) => Ok(self
-                .development_state()?
+            BackendInner::Development(state) => Ok(state
+                .lock()
+                .unwrap()
                 .connected_clients
                 .remove(&user_id)
                 .map_or(0, |clients| clients.len())),
@@ -793,8 +773,9 @@ impl Backend {
     pub async fn groups_for_user(&self, user_id: UserId) -> anyhow::Result<Vec<Group>> {
         match &*self.inner {
             BackendInner::Production(backend) => backend.dataserver.groups_for_user(user_id).await,
-            BackendInner::Development(_) => Ok(self
-                .development_state()?
+            BackendInner::Development(state) => Ok(state
+                .lock()
+                .unwrap()
                 .groups
                 .values()
                 .filter(|group| group.role(user_id).is_some())
@@ -806,8 +787,8 @@ impl Backend {
     pub async fn group(&self, group_id: u64) -> anyhow::Result<Option<Group>> {
         match &*self.inner {
             BackendInner::Production(backend) => backend.dataserver.group(group_id).await,
-            BackendInner::Development(_) => {
-                Ok(self.development_state()?.groups.get(&group_id).cloned())
+            BackendInner::Development(state) => {
+                Ok(state.lock().unwrap().groups.get(&group_id).cloned())
             }
         }
     }
@@ -817,8 +798,8 @@ impl Backend {
             BackendInner::Production(backend) => {
                 backend.dataserver.create_private_group(user_id, name).await
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let mut backend = state.lock().unwrap();
                 let group_id = backend.next_group_id;
                 backend.next_group_id += 1;
                 backend.groups.insert(
@@ -856,8 +837,8 @@ impl Backend {
                     .set_group_user(group_id, user_id, role)
                     .await
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let mut backend = state.lock().unwrap();
                 let group = backend
                     .groups
                     .get_mut(&group_id)
@@ -882,8 +863,10 @@ impl Backend {
     pub async fn rename_group(&self, group: &Group, name: &str) -> anyhow::Result<()> {
         match &*self.inner {
             BackendInner::Production(backend) => backend.dataserver.rename_group(group, name).await,
-            BackendInner::Development(_) => {
-                self.development_state()?
+            BackendInner::Development(state) => {
+                state
+                    .lock()
+                    .unwrap()
                     .groups
                     .get_mut(&group.id)
                     .ok_or_else(|| anyhow!("group does not exist"))?
@@ -901,8 +884,8 @@ impl Backend {
                     .remove_group_user(group_id, user_id)
                     .await
             }
-            BackendInner::Development(_) => {
-                let mut backend = self.development_state()?;
+            BackendInner::Development(state) => {
+                let mut backend = state.lock().unwrap();
                 let group = backend
                     .groups
                     .get_mut(&group_id)
@@ -917,8 +900,9 @@ impl Backend {
     pub async fn delete_group(&self, group_id: u64) -> anyhow::Result<()> {
         match &*self.inner {
             BackendInner::Production(backend) => backend.dataserver.delete_group(group_id).await,
-            BackendInner::Development(_) => self
-                .development_state()?
+            BackendInner::Development(state) => state
+                .lock()
+                .unwrap()
                 .groups
                 .remove(&group_id)
                 .map(|_| ())
@@ -1058,7 +1042,6 @@ impl DevelopmentState {
             oidc_flows: HashMap::new(),
             authorization_codes: HashMap::new(),
             login_sessions: HashMap::new(),
-            search_limits: HashMap::new(),
         }
     }
 

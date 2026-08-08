@@ -12,6 +12,7 @@ use topcoat::{
 };
 
 use crate::{
+    app::users::member_search_shard,
     app::{AppState, authenticated_user, confirmation_dialog, toast_script, username_label},
     dataserver::{Group, GroupRole},
     id::UserId,
@@ -188,6 +189,47 @@ async fn update_role_runtime(
     Ok(Ok(requested_role))
 }
 
+#[procedure]
+async fn add_member_runtime(
+    cx: &Cx,
+    group_id: f64,
+    identifier: String,
+    requested_role: GroupRole,
+) -> Result<std::result::Result<String, String>> {
+    let failed = || Err("member-add-failed".to_owned());
+    let Some(group_id) = GroupId::from_runtime(group_id) else {
+        return Ok(failed());
+    };
+    if !matches!(requested_role, GroupRole::Admin | GroupRole::Member) {
+        return Ok(failed());
+    }
+    let identifier = identifier.trim();
+    let identifier = identifier.strip_prefix('@').unwrap_or(identifier);
+    if identifier.is_empty() {
+        return Ok(failed());
+    }
+    let (_, group, actor_role) = current_group_by_id(cx, group_id.0).await?;
+    if !actor_role.can_manage() {
+        return Ok(failed());
+    }
+    let app = app_context::<AppState>(cx);
+    let Some(target) = app.backend.user_by_identifier(identifier).await? else {
+        return Ok(Err("member-not-found".to_owned()));
+    };
+    if group.role(target.user_id).is_some() {
+        return Ok(Err("already-member".to_owned()));
+    }
+    if let Err(error) = app
+        .backend
+        .set_group_user(group.id, target.user_id, requested_role)
+        .await
+    {
+        eprintln!("failed to add group member: {error:#}");
+        return Ok(failed());
+    }
+    Ok(Ok(target.username))
+}
+
 #[page]
 async fn show_group(cx: &Cx) -> Result {
     let parameters = query_params::<GroupPageQuery>(cx)?;
@@ -221,12 +263,23 @@ async fn members_shard(cx: &Cx, group_id: f64, refresh: bool) -> Result {
 #[component]
 async fn group_page(group: &Group, actor_role: GroupRole, toast: Option<&ToastNotice>) -> Result {
     let members_action = format!("/groups/{}/members", group.id);
-    let search_url = "/users/search";
     let search_results_id = format!("member-search-results-{}", group.id);
     let runtime_group_id = group.id as f64;
     view! {
         signal member_group_id = runtime_group_id;
         signal members_refresh = false;
+        signal member_search_query = String::new();
+        signal empty_member_search_query = String::new();
+        signal member_search_open = false;
+        signal new_member_role = GroupRole::Member;
+        signal administrator_role = GroupRole::Admin;
+        signal member_role = GroupRole::Member;
+        signal add_pending = false;
+        signal add_toast_visible = false;
+        signal add_toast_error = false;
+        signal add_toast_outcome = String::new();
+        signal add_toast_identity = String::new();
+        signal add_toast_role = GroupRole::Member;
 
         <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
             <div class="pointer-events-none fixed inset-x-4 top-20 z-50 sm:left-auto sm:right-5 sm:w-96" aria-live="polite" aria-atomic="true" data-toast-region="">
@@ -280,18 +333,68 @@ async fn group_page(group: &Group, actor_role: GroupRole, toast: Option<&ToastNo
                     <p class="mt-2 text-stone-600 dark:text-stone-400">
                         "Search by name, username, or email. You can also enter an exact username or email directly. The person must have signed in to this server at least once."
                     </p>
-                    <form class="mt-5 grid grid-cols-[minmax(0,1fr)_5.5rem] items-center gap-3 sm:grid-cols-[minmax(0,1fr)_13rem_5.5rem] sm:gap-4" method="post" action=(members_action) data-member-picker="">
-                        <input type="hidden" name="operation" value="add">
+                    <form class="mt-5 grid grid-cols-[minmax(0,1fr)_5.5rem] items-center gap-3 sm:grid-cols-[minmax(0,1fr)_13rem_5.5rem] sm:gap-4" data-member-picker="" @submit=$(async |event: topcoat::runtime::Event| {
+                        event.prevent_default();
+                        let requested_identifier = member_search_query.get().trim().to_owned();
+                        add_pending.set(true);
+                        add_toast_identity.set(requested_identifier.to_owned());
+                        add_toast_role.set(new_member_role.get());
+                        let outcome = add_member_runtime(member_group_id.get(), requested_identifier, new_member_role.get()).await;
+                        if outcome.is_ok() {
+                            let added = outcome.unwrap();
+                            add_toast_identity.set(added);
+                            add_toast_error.set(false);
+                            member_search_query.set(empty_member_search_query.get());
+                            member_search_open.set(false);
+                            members_refresh.toggle();
+                        } else {
+                            add_toast_outcome.set(outcome.unwrap_err());
+                            add_toast_error.set(true);
+                        }
+                        add_pending.set(false);
+                        add_toast_visible.set(true);
+                    })>
                         <div class="relative col-span-2 sm:col-span-1">
                             <label class="sr-only" for="member-identifier">"Name, username, or email"</label>
-                            <input class="w-full rounded border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950" id="member-identifier" type="search" name="identifier" placeholder="Name, username, or email" required="required" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls=(search_results_id.as_str()) data-member-search="" data-search-url=(search_url)>
-                            <div class="absolute z-10 mt-1 max-h-96 w-full overflow-y-auto border border-stone-300 bg-white shadow-lg dark:border-stone-700 dark:bg-stone-950" id=(search_results_id) role="listbox" aria-live="polite" data-member-search-results="" hidden="hidden"></div>
+                            <input type="checkbox" hidden="hidden" data-member-search-open="" @change=$(|event: topcoat::runtime::Event| member_search_open.set(event.target.checked))>
+                            <input class="w-full rounded border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950" id="member-identifier" type="search" name="identifier" placeholder="Name, username, or email" required="required" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls=(search_results_id.as_str()) data-member-search="" :value=$(member_search_query.get()) @input=$(|event: topcoat::runtime::Event| member_search_query.set(event.target.value))>
+                            <div class="absolute z-10 mt-1 max-h-96 w-full overflow-y-auto border border-stone-300 bg-white shadow-lg dark:border-stone-700 dark:bg-stone-950" id=(search_results_id) role="listbox" aria-live="polite" data-member-search-results="" :hidden=$(!member_search_open.get())>
+                                member_search_shard(query: $(member_search_query.get()))
+                            </div>
                         </div>
-                        administrator_checkbox(input_id: "new-member-administrator")
-                        <button class="w-full rounded border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-800" type="submit">
+                        <input class="administrator-checkbox sr-only" id="new-member-administrator" type="checkbox" name="role" value="admin" :checked=$(new_member_role.get() == administrator_role.get()) @change=$(|event: topcoat::runtime::Event| new_member_role.set(if event.target.checked { administrator_role.get() } else { member_role.get() }))>
+                        <label class="role-toggle flex w-full cursor-pointer items-center justify-between gap-3 border border-stone-300 px-3 py-2 text-left hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" for="new-member-administrator" :data-current-role=$(if new_member_role.get() == administrator_role.get() { "admin" } else { "member" })>
+                            <span class="text-sm font-medium">"Administrator"</span>
+                            <span class="flex items-center gap-2" aria-hidden="true">
+                                <span class="role-toggle-track"><span class="role-toggle-knob"></span></span>
+                                <span class="w-6 text-xs font-semibold uppercase tracking-wide">$(if new_member_role.get() == administrator_role.get() { "On" } else { "Off" })</span>
+                            </span>
+                        </label>
+                        <button class="w-full rounded border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700 dark:hover:bg-stone-800" type="submit" :disabled=$(add_pending.get())>
                             "Add"
                         </button>
                     </form>
+                    <div class="pointer-events-none fixed inset-x-4 top-20 z-50 sm:left-auto sm:right-5 sm:w-96" aria-live="polite" aria-atomic="true">
+                        <div class="portal-toast border px-4 py-3 shadow-lg" :hidden=$(!add_toast_visible.get()) :role=$(if add_toast_error.get() { "alert" } else { "status" }) :data-toast-kind=$(if add_toast_error.get() { "error" } else { "success" }) @animationend=$(|_event: topcoat::runtime::Event| add_toast_visible.set(false))>
+                            $(if add_toast_error.get() {
+                                if add_toast_outcome.get() == "member-not-found" { "Couldn’t add " } else { "" }
+                            } else { "" })
+                            <strong class="font-mono font-semibold">$(add_toast_identity.get())</strong>
+                            $(if add_toast_error.get() {
+                                if add_toast_outcome.get() == "member-not-found" {
+                                    ". Please check the username or email and try again."
+                                } else if add_toast_outcome.get() == "already-member" {
+                                    " is already a member of this group."
+                                } else {
+                                    " couldn’t be added to the group. Please try again."
+                                }
+                            } else if add_toast_role.get() == administrator_role.get() {
+                                " added as Administrator."
+                            } else {
+                                " added as Member."
+                            })
+                        </div>
+                    </div>
                 </section>
             }
             confirmation_dialog()
@@ -346,7 +449,7 @@ pub(super) async fn members_list(
                                             <button class="text-sm font-medium hover:text-red-800 dark:hover:text-red-400" type="submit">"Transfer ownership"</button>
                                         </form>
                                     }
-                                    <form class=(if actor_role == GroupRole::Owner { "border-t border-stone-200 pt-3 dark:border-stone-800" } else { "" }) method="post" action=(members_action.as_str()) data-confirm="Remove this member from the group?" data-confirm-action="Remove member" data-confirm-success-prefix="Removed " data-confirm-success-username=(member.username.as_str()) data-confirm-success-suffix=" from the group." data-confirm-error-prefix="Couldn’t remove " data-confirm-error-username=(member.username.as_str()) data-confirm-error-suffix=" from the group. Please try again." data-confirm-remove="closest">
+                                    <form class=(if actor_role == GroupRole::Owner { "border-t border-stone-200 pt-3 dark:border-stone-800" } else { "" }) method="post" action=(members_action.as_str()) data-confirm="Remove this member from the group?" data-confirm-action="Remove member" data-confirm-success-prefix="Removed " data-confirm-success-username=(member.username.as_str()) data-confirm-success-suffix=" from the group." data-confirm-error-prefix="Couldn’t remove " data-confirm-error-username=(member.username.as_str()) data-confirm-error-suffix=" from the group. Please try again." data-confirm-refresh="[data-members-refresh]">
                                         <input type="hidden" name="operation" value="remove">
                                         <input type="hidden" name="identifier" value=(member.username.as_str())>
                                         <button class="text-sm font-medium text-red-800 hover:underline dark:text-red-400" type="submit">"Remove from group"</button>
@@ -376,21 +479,6 @@ async fn administrator_self_toggle(group_id: u64) -> Result {
                 </span>
             </button>
         </form>
-    }
-}
-
-#[component]
-async fn administrator_checkbox(input_id: &str) -> Result {
-    view! {
-        <input class="administrator-checkbox sr-only" id=(input_id) type="checkbox" name="role" value="admin">
-        <label class="role-toggle flex w-full cursor-pointer items-center justify-between gap-3 border border-stone-300 px-3 py-2 text-left hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" for=(input_id) data-current-role="member">
-            <span class="text-sm font-medium">"Administrator"</span>
-            <span class="flex items-center gap-2" aria-hidden="true">
-                <span class="role-toggle-track"><span class="role-toggle-knob"></span></span>
-                <span class="w-6 text-xs font-semibold uppercase tracking-wide role-toggle-state-off">"Off"</span>
-                <span class="hidden w-6 text-xs font-semibold uppercase tracking-wide role-toggle-state-on">"On"</span>
-            </span>
-        </label>
     }
 }
 
@@ -459,6 +547,20 @@ mod tests {
     async fn role_procedure_is_registered_on_the_application_router() {
         let procedure_id =
             serde_json::to_string(&update_role_runtime.id()).expect("procedure ID must serialize");
+        let procedure_id = procedure_id.trim_matches('"');
+        let request = Request::post(format!("/_topcoat/procedures/{procedure_id}"))
+            .body(Body::empty())
+            .expect("procedure request must be valid");
+
+        let response = crate::app::routes().build().handle(request).await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn add_member_procedure_is_registered_on_the_application_router() {
+        let procedure_id =
+            serde_json::to_string(&add_member_runtime.id()).expect("procedure ID must serialize");
         let procedure_id = procedure_id.trim_matches('"');
         let request = Request::post(format!("/_topcoat/procedures/{procedure_id}"))
             .body(Body::empty())

@@ -473,12 +473,9 @@ mod tests {
     fn browser_mutations_use_topcoat_form_encoding() {
         let confirmation = include_str!("app/confirmation.js");
         let group_actions = include_str!("app/groups/group_id/group_actions.js");
-        for script in [confirmation, group_actions] {
-            assert!(script.contains("new URLSearchParams(new FormData(form))"));
-        }
-        assert!(group_actions.contains("[data-members-refresh]"));
-        assert!(group_actions.contains("X-Zotero-Outcome"));
-        assert!(group_actions.contains("already-member"));
+        assert!(confirmation.contains("new URLSearchParams(new FormData(form))"));
+        assert!(!group_actions.contains("fetch("));
+        assert!(!group_actions.contains("FormData"));
         assert!(!group_actions.contains("createContextualFragment"));
     }
 }

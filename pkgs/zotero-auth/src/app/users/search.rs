@@ -1,8 +1,8 @@
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{StatusCode, query_params, route},
-    view::{View, component, view},
+    runtime::shard,
+    view::{component, view},
 };
 
 use crate::{
@@ -10,45 +10,28 @@ use crate::{
     store::UserSummary,
 };
 
-#[query_params(error = bad_request)]
-struct SearchQuery {
-    q: String,
-}
-
-#[route(GET)]
-async fn search(cx: &Cx) -> Result<View> {
-    let parameters = query_params::<SearchQuery>(cx)?;
-    let query = parameters.q.trim();
-    let user_id = authenticated_user(cx).await?;
+#[shard]
+pub(crate) async fn member_search_shard(cx: &Cx, query: String) -> Result {
+    let query = query.trim();
+    authenticated_user(cx).await?;
     if query.chars().count() < 3 || query.chars().count() > 128 {
-        return view! { cx => search_results(query: query, candidates: &[]) };
+        return view! {};
     }
     let app = app_context::<AppState>(cx);
-    if !app.backend.allow_user_search(user_id).await? {
-        return view! { cx =>
-            (StatusCode::TOO_MANY_REQUESTS)
-            <div class="p-5 text-stone-600 dark:text-stone-400" role="status">
-                "Too many searches. Wait a minute, or enter an exact username or email and select Add."
-            </div>
-        };
-    }
     let candidates = app.backend.search_users(query, &[], 10).await?;
-    view! { cx => search_results(query: query, candidates: &candidates) }
+    view! { search_results(candidates: &candidates) }
 }
 
 #[component]
-async fn search_results(query: &str, candidates: &[UserSummary]) -> Result {
+async fn search_results(candidates: &[UserSummary]) -> Result {
     view! {
         <div class="p-3">
-            <p class="px-2 pb-2 text-sm text-stone-600 dark:text-stone-400">
-                "Results for “" (query) "”"
-            </p>
             if candidates.is_empty() {
-                <p class="border-t border-stone-200 px-2 py-4 text-stone-600 dark:border-stone-800 dark:text-stone-400">
+                <p class="px-2 py-4 text-stone-600 dark:text-stone-400">
                     "No matching users found. You can still enter an exact username or email."
                 </p>
             } else {
-                <ul class="divide-y divide-stone-200 border-t border-stone-200 dark:divide-stone-800 dark:border-stone-800">
+                <ul class="divide-y divide-stone-200 dark:divide-stone-800">
                     for candidate in candidates {
                         let option_id = format!("member-option-{}", candidate.username);
                         <li>

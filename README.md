@@ -113,11 +113,10 @@ unlimited storage policy. Unauthenticated requests are redirected to `/user/logi
 return to their original path after OIDC completes. The shared navigation shows
 the current user and provides `/user/logout`.
 
-Group owners and administrators can add a provisioned OIDC account directly by
-its numeric Zotero user ID, which each user can find on the account page. The
-person must have signed in at least once. Owners can change roles, remove
-members with confirmation, and transfer ownership to an existing member after
-typing the group name to confirm. Dataserver makes the former owner an
+Group owners and administrators can add a provisioned OIDC account by username
+or email. The person must have signed in at least once. Owners can change roles,
+remove members with confirmation, and transfer ownership to an existing member
+after typing the group name to confirm. Dataserver makes the former owner an
 administrator as part of the transfer. Owners can also permanently delete a
 group after typing its name. Group deletion deletes that group's synced library
 items and files; it never affects a personal library.
@@ -221,6 +220,128 @@ preferences. See [syncRunner.js](https://github.com/zotero/zotero/blob/main/chro
 and [streamer.js](https://github.com/zotero/zotero/blob/main/chrome/content/zotero/xpcom/streamer.js).
 The hidden preferences do not redirect website actions; use `withConfig` for
 the self-hosted group and account pages.
+
+### Patching Zotero without Nix
+
+The same client patch can be applied to a conventional Linux, macOS, or Windows
+installation. Quit Zotero first and make a backup of its application archive.
+This changes the installed application, not the Zotero profile or data
+directory, so it does not affect the local library database.
+
+Find the `omni.ja` that contains both `resource/config.mjs` and
+`chrome/content/zotero/`. Typical locations are:
+
+- Linux: `<Zotero installation>/app/omni.ja`
+- macOS: `/Applications/Zotero.app/Contents/Resources/app/omni.ja`
+- Windows: `C:\Program Files\Zotero\app\omni.ja`
+
+An installation can contain another `omni.ja` for the Mozilla runtime. Check
+the archive contents and patch only the one containing Zotero's
+`resource/config.mjs`. Copy that archive somewhere safe before modifying it.
+
+Extract these four entries into an otherwise empty working directory, preserving
+their directory names:
+
+```text
+resource/config.mjs
+chrome/content/zotero/preferences/preferences_sync.xhtml
+chrome/content/zotero/xpcom/uri.js
+chrome/content/zotero/xpcom/storage/zfs.js
+```
+
+In `resource/config.mjs`, change these properties of `ZOTERO_CONFIG`, replacing
+the example host with the deployment's public origin and keeping every trailing
+slash:
+
+```javascript
+DOMAIN_NAME: 'zotero.example.com',
+BASE_URI: 'https://zotero.example.com/',
+WWW_BASE_URL: 'https://zotero.example.com/',
+API_URL: 'https://zotero.example.com/api/',
+STREAMING_URL: 'wss://zotero.example.com/stream/',
+```
+
+In `chrome/content/zotero/xpcom/storage/zfs.js`, replace the hard-coded storage
+settings URL:
+
+```javascript
+let url = "https://www.zotero.org/settings/storage";
+```
+
+with:
+
+```javascript
+let url = ZOTERO_CONFIG.WWW_BASE_URL + "settings/storage";
+```
+
+In `chrome/content/zotero/preferences/preferences_sync.xhtml`, replace the
+upstream account-registration target:
+
+```html
+href="http://zotero.org/user/register"
+```
+
+with the private compatibility route:
+
+```html
+href="https://zotero.example.com/user/register"
+```
+
+The portal temporarily redirects that route to `/user/login`; OIDC provisions
+the account on first sign-in, so there is no separate registration form.
+
+In `chrome/content/zotero/xpcom/uri.js`, make object URIs use the configured
+canonical base by replacing:
+
+```javascript
+value: 'http://zotero.org/'
+```
+
+with:
+
+```javascript
+value: ZOTERO_CONFIG.BASE_URI
+```
+
+Also fix `getGroupURI()` so it keeps the converted website URL:
+
+```javascript
+uri = this.toWebURL(uri);
+```
+
+instead of calling `this.toWebURL(uri)` and discarding its return value. These
+changes make double-clicking a personal library or group open the private web
+origin. The portal maps a personal-library URL to its index and a group URL to
+that group's management page.
+
+Update the original archive with the four edited files. With Info-ZIP tools,
+run this from the working directory:
+
+```console
+zip -u /path/to/Zotero/app/omni.ja \
+  resource/config.mjs \
+  chrome/content/zotero/preferences/preferences_sync.xhtml \
+  chrome/content/zotero/xpcom/uri.js \
+  chrome/content/zotero/xpcom/storage/zfs.js
+```
+
+Writing inside `Program Files` or `/Applications` may require administrator
+access. Modifying the macOS application invalidates its existing signature; an
+ad-hoc re-sign after patching is usually required:
+
+```console
+codesign --force --deep --sign - /Applications/Zotero.app
+```
+
+Start Zotero and also check the two hidden preferences shown above. An existing
+user-set preference can override a newly patched application default. **New
+Group** should open `/groups/new`, and **Open Account Settings** should open
+`/settings/storage`, both on the private server. Clearing Zotero's cache does
+not change these URLs.
+
+Zotero updates replace `omni.ja`, so repeat the patch after every client update.
+The substitutions deliberately depend on Zotero's current source layout;
+inspect an updated archive rather than assuming an old patch still applied.
 
 ## File storage on a network share
 

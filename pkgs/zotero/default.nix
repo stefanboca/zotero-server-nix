@@ -73,6 +73,8 @@
       cd config-patch
       unzip -q "$out/lib/app/omni.ja" \
         resource/config.mjs \
+        chrome/content/zotero/preferences/preferences_sync.xhtml \
+        chrome/content/zotero/xpcom/uri.js \
         chrome/content/zotero/xpcom/storage/zfs.js
       substituteInPlace resource/config.mjs \
         --replace-fail ${escapeShellArg "DOMAIN_NAME: 'zotero.org',"} ${escapeShellArg "DOMAIN_NAME: ${toJSON config.domainName},"} \
@@ -86,9 +88,30 @@
           ${escapeShellArg ''let url = "https://www.zotero.org/settings/storage";''} \
           ${escapeShellArg ''let url = ZOTERO_CONFIG.WWW_BASE_URL + "settings/storage";''}
 
+      substituteInPlace chrome/content/zotero/preferences/preferences_sync.xhtml \
+        --replace-fail \
+          ${escapeShellArg ''href="http://zotero.org/user/register"''} \
+          ${escapeShellArg ''href="${config.wwwBaseUrl}user/register"''}
+
+      substituteInPlace chrome/content/zotero/xpcom/uri.js \
+        --replace-fail \
+          ${escapeShellArg "value: 'http://zotero.org/'"} \
+          ${escapeShellArg "value: ZOTERO_CONFIG.BASE_URI"} \
+        --replace-fail \
+          ${escapeShellArg ''        this.getGroupURI = function (group, webRoot) {
+            var uri = this.getObjectURI(group);
+            if (webRoot) {
+              this.toWebURL(uri);''} \
+          ${escapeShellArg ''        this.getGroupURI = function (group, webRoot) {
+            var uri = this.getObjectURI(group);
+            if (webRoot) {
+              uri = this.toWebURL(uri);''}
+
       chmod u+w "$out/lib/app" "$out/lib/app/omni.ja"
       zip -q -u "$out/lib/app/omni.ja" \
         resource/config.mjs \
+        chrome/content/zotero/preferences/preferences_sync.xhtml \
+        chrome/content/zotero/xpcom/uri.js \
         chrome/content/zotero/xpcom/storage/zfs.js
 
       # wrapGApps embeds the unconfigured output in this outer launcher.

@@ -376,26 +376,6 @@ pub async fn search_oidc_users(
     Ok(matches.into_iter().map(|(_, user)| user).collect())
 }
 
-pub async fn allow_user_search(pool: &MySqlPool, user_id: UserId) -> sqlx::Result<bool> {
-    sqlx::query(
-        "INSERT INTO oidc_user_search_limits (userID, windowStartedAt, requestCount) \
-         VALUES (?, CURRENT_TIMESTAMP(6), 1) \
-         ON DUPLICATE KEY UPDATE \
-         requestCount = IF(windowStartedAt <= CURRENT_TIMESTAMP(6) - INTERVAL 1 MINUTE, 1, requestCount + 1), \
-         windowStartedAt = IF(windowStartedAt <= CURRENT_TIMESTAMP(6) - INTERVAL 1 MINUTE, CURRENT_TIMESTAMP(6), windowStartedAt)",
-    )
-    .bind(user_id)
-    .execute(pool)
-    .await?;
-    let request_count = sqlx::query_scalar::<_, u32>(
-        "SELECT requestCount FROM oidc_user_search_limits WHERE userID = ?",
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await?;
-    Ok(request_count <= 30)
-}
-
 pub(crate) fn user_search_score(query: &str, user: &UserSummary) -> Option<usize> {
     let query = normalize_search(query);
     if query.chars().count() < 3 {

@@ -111,6 +111,13 @@ submit?.addEventListener("click", async () => {
     if (form.dataset.confirmRemoveAll) {
       for (const element of document.querySelectorAll(form.dataset.confirmRemoveAll)) element.remove();
     }
+    if (form.dataset.confirmRefresh) {
+      const refresh = document.querySelector(form.dataset.confirmRefresh);
+      if (refresh) {
+        refresh.checked = !refresh.checked;
+        refresh.dispatchEvent(new Event("change"));
+      }
+    }
     dialog.close();
   } catch {
     showToast(form, "error");

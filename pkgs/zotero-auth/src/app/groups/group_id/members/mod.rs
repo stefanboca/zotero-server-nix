@@ -19,22 +19,6 @@ use super::{GroupId, current_group};
 struct MemberAction {
     operation: String,
     identifier: Option<String>,
-    role: Option<String>,
-}
-
-fn role(value: Option<&str>) -> Result<GroupRole> {
-    match value {
-        Some("member") => Ok(GroupRole::Member),
-        Some("admin") => Ok(GroupRole::Admin),
-        _ => Err(bad_request("role must be member or admin").into()),
-    }
-}
-
-fn add_role(value: Option<&str>) -> Result<GroupRole> {
-    match value {
-        None => Ok(GroupRole::Member),
-        value => role(value),
-    }
 }
 
 fn identifier(input: &MemberAction) -> Result<&str> {
@@ -122,64 +106,6 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
     let app = app_context::<AppState>(cx);
 
     match input.operation.as_str() {
-        "add" => {
-            if !actor_role.can_manage() {
-                return Err(forbidden().into());
-            }
-            let identifier = identifier(&input)?;
-            let new_role = add_role(input.role.as_deref())?;
-            let Some(target) = app.backend.user_by_identifier(identifier).await? else {
-                return action_response(
-                    cx,
-                    StatusCode::BAD_REQUEST,
-                    group.id,
-                    "member-not-found",
-                    Some(identifier),
-                    Some(new_role.display_name()),
-                    None,
-                )
-                .await;
-            };
-            if group.role(target.user_id).is_some() {
-                return action_response(
-                    cx,
-                    StatusCode::BAD_REQUEST,
-                    group.id,
-                    "already-member",
-                    Some(&target.username),
-                    None,
-                    None,
-                )
-                .await;
-            }
-            if let Err(error) = app
-                .backend
-                .set_group_user(group.id, target.user_id, new_role)
-                .await
-            {
-                eprintln!("failed to add group member: {error:#}");
-                return action_response(
-                    cx,
-                    StatusCode::BAD_GATEWAY,
-                    group.id,
-                    "member-add-failed",
-                    Some(&target.username),
-                    Some(new_role.display_name()),
-                    None,
-                )
-                .await;
-            }
-            action_response(
-                cx,
-                StatusCode::NO_CONTENT,
-                group.id,
-                "member-added",
-                Some(&target.username),
-                Some(new_role.display_name()),
-                None,
-            )
-            .await
-        }
         "leave" => {
             if actor_role == GroupRole::Owner {
                 return Err(forbidden().into());

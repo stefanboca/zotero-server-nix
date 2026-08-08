@@ -7,6 +7,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{page, query_params},
+    runtime::shard,
     session,
     view::{component, view},
 };
@@ -27,33 +28,51 @@ struct SettingsQuery {
 async fn settings(cx: &Cx) -> Result {
     let parameters = query_params::<SettingsQuery>(cx)?;
     let user = signed_in_user(cx).await?;
-    let now = epoch_seconds()?;
     let app = app_context::<AppState>(cx);
+    let usage = app.backend.storage_usage(user.user_id).await?;
+    view! { settings_page(
+        usage: usage,
+        notice: parameters.notice.as_deref(),
+        notice_name: parameters.name.as_deref(),
+    ) }
+}
+
+#[shard]
+async fn browser_sessions_shard(cx: &Cx, refresh: bool) -> Result {
+    let _ = refresh;
+    let user = signed_in_user(cx).await?;
     let current_handle = session::token_hash(cx)
         .await?
         .map(|hash| store::session_handle(&*hash))
         .unwrap_or_default();
-    let usage = app.backend.storage_usage(user.user_id).await?;
-    let browser_sessions = app.backend.browser_sessions_for_user(user.user_id).await?;
-    let connected_clients = app.backend.connected_clients(user.user_id).await?;
-    view! { settings_page(
-        usage: usage,
+    let browser_sessions = app_context::<AppState>(cx)
+        .backend
+        .browser_sessions_for_user(user.user_id)
+        .await?;
+    view! { browser_sessions_list(
         browser_sessions: &browser_sessions,
         current_handle: &current_handle,
+        now: epoch_seconds()?,
+    ) }
+}
+
+#[shard]
+async fn connected_apps_shard(cx: &Cx, refresh: bool) -> Result {
+    let _ = refresh;
+    let user = signed_in_user(cx).await?;
+    let connected_clients = app_context::<AppState>(cx)
+        .backend
+        .connected_clients(user.user_id)
+        .await?;
+    view! { connected_apps_list(
         connected_clients: &connected_clients,
-        now: now,
-        notice: parameters.notice.as_deref(),
-        notice_name: parameters.name.as_deref(),
+        now: epoch_seconds()?,
     ) }
 }
 
 #[component]
 async fn settings_page(
     usage: StorageUsage,
-    browser_sessions: &[BrowserSession],
-    current_handle: &str,
-    connected_clients: &[ConnectedClient],
-    now: u64,
     notice: Option<&str>,
     notice_name: Option<&str>,
 ) -> Result {
@@ -67,6 +86,9 @@ async fn settings_page(
         _ => None,
     };
     view! {
+        signal browser_sessions_refresh = false;
+        signal connected_apps_refresh = false;
+
         <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
             <div class="pointer-events-none fixed inset-x-4 top-20 z-50 sm:left-auto sm:right-5 sm:w-96" aria-live="polite" aria-atomic="true" data-toast-region="">
                 if let Some(message) = toast.as_deref() {
@@ -92,91 +114,111 @@ async fn settings_page(
             <section class="border-b border-stone-200 py-8 dark:border-stone-800" id="sessions">
                 <h2 class="text-xl font-semibold">"Browser sessions"</h2>
                 <p class="mt-2 text-stone-600 dark:text-stone-400">"Browsers currently signed in to this portal."</p>
-                <ul class="mt-5 divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
-                    for browser_session in browser_sessions {
-                        let is_current = browser_session.handle == current_handle;
-                        let last_active = display_epoch_timestamp(now, browser_session.last_seen_at)?;
-                        let created = display_epoch_timestamp(now, browser_session.created_at)?;
-                        let expires = display_epoch_timestamp(now, browser_session.expires_at)?;
-                        <li class="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between" data-confirm-item="" data-browser-session-item="">
-                            <div class="min-w-0">
-                                <p class="font-medium">
-                                    "Browser session"
-                                    if is_current {
-                                        <span class="ml-2 border border-stone-300 px-2 py-0.5 text-xs dark:border-stone-700">"Current"</span>
-                                    }
-                                </p>
-                                <p class="mt-1 text-sm text-stone-600 dark:text-stone-400">
-                                    "Last active " <time datetime=(last_active.datetime.as_str()) title=(last_active.absolute.as_str())>(last_active.relative.as_str())</time>
-                                    " · Created " <time datetime=(created.datetime.as_str()) title=(created.absolute.as_str())>(created.relative.as_str())</time>
-                                    " · Expires " <time datetime=(expires.datetime.as_str()) title=(expires.absolute.as_str())>(expires.relative.as_str())</time>
-                                </p>
-                            </div>
-                            if !is_current {
-                                <form method="post" action="/settings/sessions" data-confirm="Sign out this browser session?" data-confirm-action="Sign out" data-confirm-success="Browser session signed out." data-confirm-error="Couldn’t sign out the browser session. Please try again." data-confirm-remove="closest" data-confirm-stay="true">
-                                    <input type="hidden" name="operation" value="one">
-                                    <input type="hidden" name="handle" value=(browser_session.handle.as_str())>
-                                    <button class="self-start border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900 sm:self-auto" type="submit">"Sign out"</button>
-                                </form>
-                            }
-                        </li>
-                    }
-                </ul>
-                <div class="mt-6 flex justify-end">
-                    <form method="post" action="/settings/sessions" data-confirm="Sign out every browser session, including this one?" data-confirm-action="Sign out all sessions" data-confirm-success="All browser sessions signed out." data-confirm-error="Couldn’t sign out all browser sessions. Please try again." data-confirm-delay-redirect="true">
-                        <input type="hidden" name="operation" value="all">
-                        <button class="border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">"Sign out all sessions"</button>
-                    </form>
-                </div>
+                <input type="checkbox" hidden="hidden" data-browser-sessions-refresh="" @change=$(|event: topcoat::runtime::Event| browser_sessions_refresh.set(event.target.checked))>
+                browser_sessions_shard(refresh: $(browser_sessions_refresh.get()))
             </section>
 
             <section class="py-8" id="apps">
                 <h2 class="text-xl font-semibold">"Connected apps"</h2>
                 <p class="mt-2 text-stone-600 dark:text-stone-400">"Zotero clients and other apps authorized to access your libraries."</p>
-                if connected_clients.is_empty() {
-                    <p class="mt-5 text-stone-600 dark:text-stone-400">"No connected apps."</p>
-                } else {
-                    <ul class="mt-5 divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
-                        for client in connected_clients {
-                            let last_connected = display_client_timestamp(now, client.last_used.as_deref())?;
-                            let added = display_client_timestamp(now, Some(&client.date_added))?;
-                            <li class="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between" data-confirm-item="" data-client-item="">
-                                <div class="min-w-0">
-                                    <p class="break-words font-medium">(client.name.as_str())</p>
-                                    <p class="mt-1 text-sm text-stone-600 dark:text-stone-400">
-                                        "Last connected "
-                                        if let Some(last_connected) = last_connected.as_ref() {
-                                            <time datetime=(last_connected.datetime.as_str()) title=(last_connected.absolute.as_str())>(last_connected.relative.as_str())</time>
-                                        } else {
-                                            "never"
-                                        }
-                                        " · Added "
-                                        if let Some(added) = added.as_ref() {
-                                            <time datetime=(added.datetime.as_str()) title=(added.absolute.as_str())>(added.relative.as_str())</time>
-                                        } else {
-                                            "unknown"
-                                        }
-                                    </p>
-                                </div>
-                                <form method="post" action="/settings/apps" data-confirm=(format!("Disconnect “{}”?", client.name)) data-confirm-action="Disconnect" data-confirm-success=(format!("Disconnected {}.", client.name)) data-confirm-error=(format!("Couldn’t disconnect {}. Please try again.", client.name)) data-confirm-remove="closest">
-                                    <input type="hidden" name="operation" value="one">
-                                    <input type="hidden" name="handle" value=(client.handle.as_str())>
-                                    <button class="self-start border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900 sm:self-auto" type="submit">"Disconnect"</button>
-                                </form>
-                            </li>
-                        }
-                    </ul>
-                    <div class="mt-6 flex justify-end">
-                        <form method="post" action="/settings/apps" data-confirm="Disconnect every Zotero client and app?" data-confirm-action="Disconnect all apps" data-confirm-success="Disconnected all apps." data-confirm-error="Couldn’t disconnect all apps. Please try again." data-confirm-remove-all="[data-client-item]">
-                            <input type="hidden" name="operation" value="all">
-                            <button class="border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">"Disconnect all apps"</button>
-                        </form>
-                    </div>
-                }
+                <input type="checkbox" hidden="hidden" data-connected-apps-refresh="" @change=$(|event: topcoat::runtime::Event| connected_apps_refresh.set(event.target.checked))>
+                connected_apps_shard(refresh: $(connected_apps_refresh.get()))
             </section>
             confirmation_dialog()
             toast_script()
         </main>
+    }
+}
+
+#[component]
+async fn browser_sessions_list(
+    browser_sessions: &[BrowserSession],
+    current_handle: &str,
+    now: u64,
+) -> Result {
+    view! {
+        <ul class="mt-5 divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
+            for browser_session in browser_sessions {
+                let is_current = browser_session.handle == current_handle;
+                let last_active = display_epoch_timestamp(now, browser_session.last_seen_at)?;
+                let created = display_epoch_timestamp(now, browser_session.created_at)?;
+                let expires = display_epoch_timestamp(now, browser_session.expires_at)?;
+                <li class="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between" data-confirm-item="" data-browser-session-item="">
+                    <div class="min-w-0">
+                        <p class="font-medium">
+                            "Browser session"
+                            if is_current {
+                                <span class="ml-2 border border-stone-300 px-2 py-0.5 text-xs dark:border-stone-700">"Current"</span>
+                            }
+                        </p>
+                        <p class="mt-1 text-sm text-stone-600 dark:text-stone-400">
+                            "Last active " <time datetime=(last_active.datetime.as_str()) title=(last_active.absolute.as_str())>(last_active.relative.as_str())</time>
+                            " · Created " <time datetime=(created.datetime.as_str()) title=(created.absolute.as_str())>(created.relative.as_str())</time>
+                            " · Expires " <time datetime=(expires.datetime.as_str()) title=(expires.absolute.as_str())>(expires.relative.as_str())</time>
+                        </p>
+                    </div>
+                    if !is_current {
+                        <form method="post" action="/settings/sessions" data-confirm="Sign out this browser session?" data-confirm-action="Sign out" data-confirm-success="Browser session signed out." data-confirm-error="Couldn’t sign out the browser session. Please try again." data-confirm-refresh="[data-browser-sessions-refresh]" data-confirm-stay="true">
+                            <input type="hidden" name="operation" value="one">
+                            <input type="hidden" name="handle" value=(browser_session.handle.as_str())>
+                            <button class="self-start border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900 sm:self-auto" type="submit">"Sign out"</button>
+                        </form>
+                    }
+                </li>
+            }
+        </ul>
+        <div class="mt-6 flex justify-end">
+            <form method="post" action="/settings/sessions" data-confirm="Sign out every browser session, including this one?" data-confirm-action="Sign out all sessions" data-confirm-success="All browser sessions signed out." data-confirm-error="Couldn’t sign out all browser sessions. Please try again." data-confirm-delay-redirect="true">
+                <input type="hidden" name="operation" value="all">
+                <button class="border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">"Sign out all sessions"</button>
+            </form>
+        </div>
+    }
+}
+
+#[component]
+async fn connected_apps_list(connected_clients: &[ConnectedClient], now: u64) -> Result {
+    view! {
+        if connected_clients.is_empty() {
+            <p class="mt-5 text-stone-600 dark:text-stone-400">"No connected apps."</p>
+        } else {
+            <ul class="mt-5 divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800">
+                for client in connected_clients {
+                    let last_connected = display_client_timestamp(now, client.last_used.as_deref())?;
+                    let added = display_client_timestamp(now, Some(&client.date_added))?;
+                    <li class="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between" data-confirm-item="" data-client-item="">
+                        <div class="min-w-0">
+                            <p class="break-words font-medium">(client.name.as_str())</p>
+                            <p class="mt-1 text-sm text-stone-600 dark:text-stone-400">
+                                "Last connected "
+                                if let Some(last_connected) = last_connected.as_ref() {
+                                    <time datetime=(last_connected.datetime.as_str()) title=(last_connected.absolute.as_str())>(last_connected.relative.as_str())</time>
+                                } else {
+                                    "never"
+                                }
+                                " · Added "
+                                if let Some(added) = added.as_ref() {
+                                    <time datetime=(added.datetime.as_str()) title=(added.absolute.as_str())>(added.relative.as_str())</time>
+                                } else {
+                                    "unknown"
+                                }
+                            </p>
+                        </div>
+                        <form method="post" action="/settings/apps" data-confirm=(format!("Disconnect “{}”?", client.name)) data-confirm-action="Disconnect" data-confirm-success=(format!("Disconnected {}.", client.name)) data-confirm-error=(format!("Couldn’t disconnect {}. Please try again.", client.name)) data-confirm-refresh="[data-connected-apps-refresh]" data-confirm-stay="true">
+                            <input type="hidden" name="operation" value="one">
+                            <input type="hidden" name="handle" value=(client.handle.as_str())>
+                            <button class="self-start border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900 sm:self-auto" type="submit">"Disconnect"</button>
+                        </form>
+                    </li>
+                }
+            </ul>
+            <div class="mt-6 flex justify-end">
+                <form method="post" action="/settings/apps" data-confirm="Disconnect every Zotero client and app?" data-confirm-action="Disconnect all apps" data-confirm-success="Disconnected all apps." data-confirm-error="Couldn’t disconnect all apps. Please try again." data-confirm-refresh="[data-connected-apps-refresh]" data-confirm-stay="true">
+                    <input type="hidden" name="operation" value="all">
+                    <button class="border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">"Disconnect all apps"</button>
+                </form>
+            </div>
+        }
     }
 }
 

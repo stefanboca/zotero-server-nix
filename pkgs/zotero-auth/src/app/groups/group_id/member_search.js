@@ -1,16 +1,20 @@
 const input = document.querySelector("[data-member-search]");
 const results = document.querySelector("[data-member-search-results]");
-let requestNumber = 0;
-let timer;
+const openControl = document.querySelector("[data-member-search-open]");
 let activeIndex = -1;
+
+function setResultsOpen(open) {
+  openControl.checked = open;
+  openControl.dispatchEvent(new Event("change"));
+  input.setAttribute("aria-expanded", String(open));
+}
 
 function options() {
   return [...results.querySelectorAll("[data-member-option]")];
 }
 
 function closeResults() {
-  results.hidden = true;
-  input.setAttribute("aria-expanded", "false");
+  setResultsOpen(false);
   input.removeAttribute("aria-activedescendant");
   activeIndex = -1;
 }
@@ -29,6 +33,7 @@ function activate(index) {
 
 function select(option) {
   input.value = option.dataset.username;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
   closeResults();
   input.focus();
 }
@@ -54,29 +59,13 @@ input.addEventListener("keydown", (event) => {
 });
 
 input.addEventListener("input", () => {
-  clearTimeout(timer);
   const query = input.value.trim();
   if (query.length < 3) {
     closeResults();
-    results.replaceChildren();
     return;
   }
-  timer = setTimeout(async () => {
-    const currentRequest = ++requestNumber;
-    const url = new URL(input.dataset.searchUrl, window.location.origin);
-    url.searchParams.set("q", query);
-    try {
-      const response = await fetch(url, { headers: { Accept: "text/html" } });
-      if (currentRequest !== requestNumber) return;
-      if (!response.ok && response.status !== 429) return;
-      results.innerHTML = await response.text();
-      activeIndex = -1;
-      results.hidden = false;
-      input.setAttribute("aria-expanded", "true");
-    } catch {
-      if (currentRequest === requestNumber) closeResults();
-    }
-  }, 180);
+  activeIndex = -1;
+  setResultsOpen(true);
 });
 
 document.addEventListener("click", (event) => {

@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use topcoat::runtime::{BoolSurrogate, Surrogate, Surrogated};
@@ -45,7 +45,8 @@ pub struct StorageUsage {
     pub library_mb: f64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(try_from = "String")]
 pub enum GroupRole {
     Owner,
     Admin,
@@ -75,10 +76,18 @@ impl GroupRole {
 
     pub fn user_summary(self) -> &'static str {
         match self {
-            Self::Owner => "You are the group owner",
-            Self::Admin => "You are a group administrator",
-            Self::Member => "You are a group member",
+            Self::Owner => "You are the owner",
+            Self::Admin => "You are an administrator",
+            Self::Member => "You are a member",
         }
+    }
+
+    pub fn eq(&self, other: &Self) -> BoolSurrogate {
+        (*self == *other).into_surrogate()
+    }
+
+    pub fn ne(&self, other: &Self) -> BoolSurrogate {
+        (*self != *other).into_surrogate()
     }
 }
 
@@ -101,22 +110,15 @@ impl std::str::FromStr for GroupRole {
     }
 }
 
-/// The runtime represents group roles as its built-in tagged string value.
-/// Rust code still exchanges the closed `GroupRole` enum, never that string.
-#[derive(Clone, Debug)]
-pub struct GroupRoleSurrogate(GroupRole);
+impl TryFrom<String> for GroupRole {
+    type Error = &'static str;
 
-impl GroupRoleSurrogate {
-    pub fn eq(&self, other: &Self) -> BoolSurrogate {
-        (self.0 == other.0).into_surrogate()
-    }
-
-    pub fn ne(&self, other: &Self) -> BoolSurrogate {
-        (self.0 != other.0).into_surrogate()
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        value.parse()
     }
 }
 
-impl Serialize for GroupRoleSurrogate {
+impl Serialize for GroupRole {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -129,67 +131,41 @@ impl Serialize for GroupRoleSurrogate {
 
         TaggedRole {
             t: "str",
-            v: self.0.wire_name(),
+            v: self.wire_name(),
         }
         .serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for GroupRoleSurrogate {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        // Topcoat uses the tagged representation above to hydrate the browser
-        // surrogate, then dehydrates that surrogate to its raw string value
-        // when it is passed back to a procedure.
-        String::deserialize(deserializer)?
-            .parse()
-            .map(Self)
-            .map_err(de::Error::custom)
-    }
-}
-
 impl Surrogated for GroupRole {
-    type Surrogate = GroupRoleSurrogate;
+    type Surrogate = Self;
 
     fn into_surrogate(self) -> Self::Surrogate {
-        GroupRoleSurrogate(self)
+        self
     }
 }
 
-impl Surrogate for GroupRoleSurrogate {
+impl Surrogate for GroupRole {
     type Real = GroupRole;
 
     fn into_real(self) -> Self::Real {
-        self.0
-    }
-}
-
-pub struct GroupRoleRefSurrogate<'a>(&'a GroupRole);
-
-impl Serialize for GroupRoleRefSurrogate<'_> {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        GroupRoleSurrogate(*self.0).serialize(serializer)
+        self
     }
 }
 
 impl<'a> Surrogated for &'a GroupRole {
-    type Surrogate = GroupRoleRefSurrogate<'a>;
+    type Surrogate = Self;
 
     fn into_surrogate(self) -> Self::Surrogate {
-        GroupRoleRefSurrogate(self)
+        self
     }
 }
 
-impl<'a> Surrogate for GroupRoleRefSurrogate<'a> {
+impl<'a> Surrogate for &'a GroupRole {
     type Real = &'a GroupRole;
 
     fn into_real(self) -> Self::Real {
-        self.0
+        self
     }
 }
 
@@ -672,13 +648,13 @@ mod tests {
     }
 
     #[test]
-    fn group_role_surrogate_matches_topcoat_browser_round_trip() {
-        let serialized = serde_json::to_string(&GroupRole::Admin.into_surrogate())
-            .expect("group role must serialize");
+    fn group_role_matches_topcoat_browser_round_trip() {
+        let serialized =
+            serde_json::to_string(&GroupRole::Admin).expect("group role must serialize");
         assert_eq!(serialized, r#"{"t":"str","v":"admin"}"#);
 
-        let deserialized: GroupRoleSurrogate =
+        let deserialized: GroupRole =
             serde_json::from_str(r#""member""#).expect("browser role must deserialize");
-        assert_eq!(deserialized.into_real(), GroupRole::Member);
+        assert_eq!(deserialized, GroupRole::Member);
     }
 }
