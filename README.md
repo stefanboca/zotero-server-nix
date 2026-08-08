@@ -103,8 +103,28 @@ persisted; the access token is used only for the callback's optional UserInfo
 request.
 
 Every successful OIDC login also assigns the user Dataserver's upstream
-`unlimited` file-storage quota. Dataserver represents this as 1,000,000 MB
-(approximately 1 TB), and the assignment is refreshed on every login.
+`unlimited` file-storage quota. This deployment stores unlimited as a zero
+quota sentinel and bypasses the upload quota check for that value. The
+assignment is refreshed on every login.
+
+The same origin serves an OIDC-authenticated web portal. `/` is the account
+home, `/groups` lists groups, and `/account` shows the OIDC identity and
+unlimited storage policy. Unauthenticated requests are redirected to `/user/login` and
+return to their original path after OIDC completes. The shared navigation shows
+the current user and provides `/user/logout`.
+
+Group owners and administrators can add a provisioned OIDC account directly by
+its numeric Zotero user ID, which each user can find on the account page. The
+person must have signed in at least once. Owners can change roles, remove
+members with confirmation, and transfer ownership to an existing member after
+typing the group name to confirm. Dataserver makes the former owner an
+administrator as part of the transfer. Owners can also permanently delete a
+group after typing its name. Group deletion deletes that group's synced library
+items and files; it never affects a personal library.
+
+The account page gets current storage usage from Dataserver's storage
+administration API and displays it alongside the unlimited quota policy. The
+total includes the personal library and any group libraries the user owns.
 
 ### Authelia
 
@@ -165,23 +185,30 @@ Use this flake's overlay to build a client that uses the private server:
 
   environment.systemPackages = [
     (pkgs.zotero.withConfig {
-      apiBaseUri = "https://zotero.example.com/";
+      baseUri = "https://zotero.example.com/";
     })
   ];
 }
 ```
 
-`apiBaseUri` is required. By default, the package uses it for the canonical
-object URI, website URL, API URL, and domain name. It changes `https` to `wss`
-and adds `/stream/` for the stream URL. You can override `baseUri`,
+`baseUri` is required. By default, the package uses it for canonical object and
+website URLs, adds `/api/` for the API URL, and changes `https` to `wss` while
+adding `/stream/` for the stream URL. You can override `apiBaseUri`,
 `wwwBaseUrl`, `domainName`, or `streamingUrl` if the deployment uses different
-URLs.
+URLs. Dataserver is exposed only below `/api/`; other paths go to the web
+portal when authentication is enabled.
+
+The configured package also makes Zotero load the configured application
+archive instead of the upstream archive reached through Nix store symlinks.
+This makes website actions honor `wwwBaseUrl`: **New Group** opens the
+self-hosted group-creation page, and storage's **Open Account Settings** opens
+the self-hosted unlimited-storage page.
 
 For an unmodified Zotero package, open the Config Editor in the advanced
 settings. Set these two hidden preferences:
 
 ```text
-extensions.zotero.api.url = https://zotero.example.com/
+extensions.zotero.api.url = https://zotero.example.com/api/
 extensions.zotero.streaming.url = wss://zotero.example.com/stream/
 ```
 
@@ -192,6 +219,8 @@ client does not need a WebDAV URL or S3 settings.
 The upstream client source reads the API and stream endpoints from these
 preferences. See [syncRunner.js](https://github.com/zotero/zotero/blob/main/chrome/content/zotero/xpcom/sync/syncRunner.js)
 and [streamer.js](https://github.com/zotero/zotero/blob/main/chrome/content/zotero/xpcom/streamer.js).
+The hidden preferences do not redirect website actions; use `withConfig` for
+the self-hosted group and account pages.
 
 ## File storage on a network share
 

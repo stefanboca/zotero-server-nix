@@ -1,0 +1,66 @@
+.portal-toast {
+  animation: portal-toast 4s ease-in-out both;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+
+.portal-toast[data-toast-kind="success"] {
+  background: #f0fdf4;
+  border-color: #15803d;
+  color: #052e16;
+}
+
+.portal-toast[data-toast-kind="error"] {
+  background: #fef2f2;
+  border-color: #b91c1c;
+  color: #450a0a;
+}
+
+@keyframes portal-toast {
+  0% {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+
+  6%,
+  86% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-toast {
+    animation-name: portal-toast-reduced-motion;
+  }
+
+  @keyframes portal-toast-reduced-motion {
+    0%,
+    92% {
+      opacity: 1;
+    }
+
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .portal-toast[data-toast-kind="success"] {
+    background: #052e16;
+    border-color: #16a34a;
+    color: #dcfce7;
+  }
+
+  .portal-toast[data-toast-kind="error"] {
+    background: #450a0a;
+    border-color: #dc2626;
+    color: #fee2e2;
+  }
+}

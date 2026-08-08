@@ -1,6 +1,9 @@
+mod account;
 mod auth;
 mod groups;
-mod login;
+mod settings;
+mod user;
+mod users;
 
 use std::{
     env,
@@ -12,11 +15,21 @@ use anyhow::Context as _;
 use sqlx::MySqlPool;
 use topcoat::{
     Result,
-    asset::{Asset, AssetBundle, RouterBuilderAssetExt},
+    asset::{AssetBundle, RouterBuilderAssetExt},
+    context::{Cx, CxBuilder, app_context},
     cookie::RouterBuilderCookieExt,
-    router::{RouterBuilder, error::not_found, layout, page},
-    session::{RouterBuilderSessionExt, SessionConfig},
-    view::view,
+    router::{
+        Body, Next, Response, RouterBuilder,
+        StatusCode,
+        error::{
+            BadRequestError, ForbiddenError, InternalServerError, MethodNotAllowedError,
+            NotFoundError, RedirectError, UnauthorizedError, not_found, redirect,
+            redirect_permanent,
+        },
+        layer, layout, page, uri,
+    },
+    session::{self, RouterBuilderSessionExt, SessionConfig},
+    view::{component, view},
 };
 
 use crate::{
@@ -27,8 +40,6 @@ use crate::{
 };
 
 pub(crate) const FLOW_LIFETIME: Duration = Duration::from_secs(15 * 60);
-const STYLESHEET: Asset = topcoat::asset::asset!("target/topcoat/tailwind.css");
-
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -104,24 +115,289 @@ pub(crate) fn valid_session_token(token: &str) -> bool {
     token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
+pub(crate) async fn current_user(cx: &Cx) -> Result<Option<u64>> {
+    let Some(browser_session) = session::refresh(cx).await? else {
+        return Ok(None);
+    };
+    let expires = browser_session
+        .expires_at
+        .duration_since(UNIX_EPOCH)?
+        .as_secs();
+    let app = app_context::<AppState>(cx);
+    store::refresh_browser_session(&app.database, &*browser_session.token_hash, expires)
+        .await
+        .map_err(Into::into)
+}
+
+pub(crate) async fn authenticated_user(cx: &Cx) -> Result<u64> {
+    if is_topcoat_dev() {
+        return Ok(1);
+    }
+    if let Some(user_id) = current_user(cx).await? {
+        return Ok(user_id);
+    }
+
+    let return_path =
+        normalized_return_path(uri(cx).path_and_query().map_or("/", |path| path.as_str()))
+            .unwrap_or_else(|| "/".to_owned());
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("continue", &return_path)
+        .finish();
+    Err(redirect(&format!("/user/login?{query}")).into())
+}
+
+pub(crate) fn normalized_return_path(value: &str) -> Option<String> {
+    if value.len() > 2048 || !value.starts_with('/') {
+        return None;
+    }
+
+    let base = url::Url::parse("https://zotero.invalid/").expect("static base URL is valid");
+    let target = base.join(value).ok()?;
+    if target.origin() != base.origin()
+        || !target.username().is_empty()
+        || target.password().is_some()
+        || target.fragment().is_some()
+    {
+        return None;
+    }
+
+    let mut path = target.path().to_owned();
+    if let Some(query) = target.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    Some(path)
+}
+
+#[layer]
+async fn canonicalize_trailing_slash(
+    cx: &mut CxBuilder,
+    body: Body,
+    next: Next<'_>,
+) -> Result<Response> {
+    let request_uri = uri(cx);
+    let path = request_uri.path();
+    if path != "/" && path.ends_with('/') {
+        let mut location = path.trim_end_matches('/').to_owned();
+        if let Some(query) = request_uri.query() {
+            location.push('?');
+            location.push_str(query);
+        }
+        return Err(redirect_permanent(&location).into());
+    }
+    next.run(cx, body).await
+}
+
 #[layout]
-async fn root_layout(slot: Result) -> Result {
+async fn root_layout(cx: &Cx, slot: Result) -> Result {
+    let (mut content, error_page) = match slot {
+        Ok(content) => (content, false),
+        Err(error) if error.downcast_ref::<RedirectError>().is_some() => return Err(error),
+        Err(error) => (friendly_error(cx, &error).await?, true),
+    };
+    let path = uri(cx).path();
+    let home_active = path == "/";
+    let groups_active = path == "/groups" || path.starts_with("/groups/");
+    let account_active = path == "/account";
+    let settings_active = path == "/settings" || path.starts_with("/settings/");
+    let nav_class = |active| {
+        if active {
+            "border-b-2 border-red-800 pb-1 text-sm font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
+        } else {
+            "border-b-2 border-transparent pb-1 text-sm hover:text-red-800 dark:hover:text-red-400"
+        }
+    };
+    let navigation_user = match navigation_user(cx).await {
+        Ok(user) => user,
+        Err(error) => {
+            eprintln!("failed to render Zotero navigation: {error:?}");
+            if !error_page {
+                content = friendly_internal_error(cx).await?;
+            }
+            None
+        }
+    };
     view! {
         <!DOCTYPE html>
         <html lang="en">
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
-                <title>"Zotero login"</title>
-                <link rel="stylesheet" href=(STYLESHEET)>
+                <title>"Zotero"</title>
+                <link rel="stylesheet" href=(topcoat::asset::asset!("target/topcoat/tailwind.css"))>
+                <link rel="stylesheet" href=(topcoat::asset::asset!("src/app/feedback.css"))>
                 topcoat::dev::script()
             </head>
-            <body
-                class="grid min-h-screen place-items-center bg-stone-100 p-6 font-sans text-stone-950 dark:bg-stone-950 dark:text-stone-50"
-            >
-                (slot?)
+            <body class="min-h-screen bg-white font-sans text-stone-950 dark:bg-stone-950 dark:text-stone-50">
+                <header class="border-b border-stone-200 dark:border-stone-800">
+                    <nav class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6" aria-label="Primary navigation">
+                        <div class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6">
+                            <a class=(if home_active { "border-b-2 border-red-800 pb-1 text-lg font-semibold text-red-800 dark:border-red-400 dark:text-red-400" } else { "border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400" }) href="/" aria-current=(home_active.then_some("page"))>"Zotero"</a>
+                            <a class=(nav_class(groups_active)) href="/groups" aria-current=(groups_active.then_some("page"))>"Groups"</a>
+                            <a class=(nav_class(account_active)) href="/account" aria-current=(account_active.then_some("page"))>"Account"</a>
+                            <a class=(nav_class(settings_active)) href="/settings" aria-current=(settings_active.then_some("page"))>"Settings"</a>
+                        </div>
+                        <div class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto">
+                            if let Some(user) = &navigation_user {
+                                <span class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400">
+                                    "Signed in as " (user.display_name())
+                                </span>
+                                <form method="post" action="/user/logout">
+                                    <button class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">
+                                        "Log out"
+                                    </button>
+                                </form>
+                            } else {
+                                <a class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" href="/user/login">
+                                    "Sign in"
+                                </a>
+                            }
+                        </div>
+                    </nav>
+                </header>
+                (content)
             </body>
         </html>
+    }
+}
+
+async fn navigation_user(cx: &Cx) -> Result<Option<store::UserSummary>> {
+    if is_topcoat_dev() {
+        return Ok(Some(signed_in_user(cx).await?));
+    }
+    let Some(user_id) = current_user(cx).await? else {
+        return Ok(None);
+    };
+    let app = app_context::<AppState>(cx);
+    store::user_by_id(&app.database, user_id)
+        .await
+        .map_err(Into::into)
+}
+
+async fn friendly_error(cx: &Cx, error: &topcoat::Error) -> Result<topcoat::view::View> {
+    if let Some(error) = error.downcast_ref::<BadRequestError>() {
+        friendly_error_page(
+            cx,
+            StatusCode::BAD_REQUEST,
+            "That request could not be completed",
+            error.description(),
+        )
+        .await
+    } else if error.downcast_ref::<UnauthorizedError>().is_some() {
+        friendly_error_page(
+            cx,
+            StatusCode::UNAUTHORIZED,
+            "Sign in required",
+            "Sign in and try that request again.",
+        )
+        .await
+    } else if error.downcast_ref::<ForbiddenError>().is_some() {
+        friendly_error_page(
+            cx,
+            StatusCode::FORBIDDEN,
+            "You do not have access",
+            "Your account is not allowed to perform that action.",
+        )
+        .await
+    } else if error.downcast_ref::<NotFoundError>().is_some() {
+        friendly_error_page(
+            cx,
+            StatusCode::NOT_FOUND,
+            "Page not found",
+            "The page may have moved, or you may not have access to it.",
+        )
+        .await
+    } else if error.downcast_ref::<MethodNotAllowedError>().is_some() {
+        friendly_error_page(
+            cx,
+            StatusCode::METHOD_NOT_ALLOWED,
+            "Method not allowed",
+            "That action is not supported at this address.",
+        )
+        .await
+    } else {
+        if error.downcast_ref::<InternalServerError>().is_none() {
+            eprintln!("Zotero portal request failed: {error:?}");
+        }
+        friendly_internal_error(cx).await
+    }
+}
+
+async fn friendly_internal_error(cx: &Cx) -> Result<topcoat::view::View> {
+    friendly_error_page(
+        cx,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Something went wrong",
+        "The request could not be completed. Please try again.",
+    )
+    .await
+}
+
+async fn friendly_error_page(
+    cx: &Cx,
+    status: StatusCode,
+    title: &str,
+    message: &str,
+) -> Result<topcoat::view::View> {
+    view! { cx =>
+        (status)
+        <main class="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
+            <p class="text-sm font-semibold text-red-800 dark:text-red-400">(status.as_u16())</p>
+            <h1 class="mt-2 text-2xl font-semibold">(title)</h1>
+            <p class="mt-4 max-w-2xl leading-7 text-stone-600 dark:text-stone-400">(message)</p>
+            <a class="mt-6 inline-block border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" href="/">
+                "Return to Zotero"
+            </a>
+        </main>
+    }
+}
+
+#[page("/{*path}")]
+async fn unmatched_page() -> Result {
+    Err(not_found().into())
+}
+
+pub(crate) async fn signed_in_user(cx: &Cx) -> Result<store::UserSummary> {
+    if is_topcoat_dev() {
+        return Ok(store::UserSummary {
+            user_id: 1,
+            username: "researcher".to_owned(),
+            email: "researcher@example.com".to_owned(),
+            real_name: Some("Example Researcher".to_owned()),
+        });
+    }
+    let user_id = authenticated_user(cx).await?;
+    let app = app_context::<AppState>(cx);
+    store::user_by_id(&app.database, user_id)
+        .await?
+        .ok_or_else(|| not_found().into())
+}
+
+#[component]
+pub(crate) async fn username_label(username: &str) -> Result {
+    view! {
+        <span class="font-mono font-semibold">"@" (username)</span>
+    }
+}
+
+#[page]
+async fn index(cx: &Cx) -> Result {
+    let user = signed_in_user(cx).await?;
+
+    view! { portal_index(user: &user) }
+}
+
+#[topcoat::view::component]
+async fn portal_index(user: &store::UserSummary) -> Result {
+    view! {
+        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
+            <section>
+                <h1 class="text-2xl font-semibold">"Zotero account"</h1>
+                <p class="mt-2 text-stone-600 dark:text-stone-400">
+                    "Manage groups and file storage for " (user.email.as_str()) "."
+                </p>
+            </section>
+        </main>
     }
 }
 
@@ -135,37 +411,17 @@ mod tests {
         assert!(!valid_session_token("short"));
         assert!(!valid_session_token("0123456789abcdefghijklmnopqr-_"));
     }
-}
 
-#[page]
-async fn index() -> Result {
-    if !is_topcoat_dev() {
-        return Err(not_found().into());
-    }
-
-    view! {
-        <main
-            class="w-full max-w-md rounded-xl border border-stone-200 bg-white p-8 shadow-sm dark:border-stone-800 dark:bg-stone-900"
-        >
-            <h1 class="text-2xl font-semibold">"Zotero auth UI previews"</h1>
-            <ul class="mt-4 space-y-2">
-                <li>
-                    <a
-                        class="text-red-800 underline decoration-red-800/40 underline-offset-4 hover:text-red-600 dark:text-red-400 dark:decoration-red-400/40 dark:hover:text-red-300"
-                        href="/login"
-                    >
-                        "Sign in"
-                    </a>
-                </li>
-                <li>
-                    <a
-                        class="text-red-800 underline decoration-red-800/40 underline-offset-4 hover:text-red-600 dark:text-red-400 dark:decoration-red-400/40 dark:hover:text-red-300"
-                        href="/auth/oidc/callback"
-                    >
-                        "Login complete"
-                    </a>
-                </li>
-            </ul>
-        </main>
+    #[test]
+    fn normalizes_only_same_origin_return_paths() {
+        assert_eq!(
+            normalized_return_path("/groups/../groups/new?from=desktop"),
+            Some("/groups/new?from=desktop".to_owned())
+        );
+        assert_eq!(normalized_return_path("/"), Some("/".to_owned()));
+        assert_eq!(normalized_return_path("https://example.com/groups"), None);
+        assert_eq!(normalized_return_path("//example.com/groups"), None);
+        assert_eq!(normalized_return_path("/\\example.com/groups"), None);
+        assert_eq!(normalized_return_path("/groups#fragment"), None);
     }
 }

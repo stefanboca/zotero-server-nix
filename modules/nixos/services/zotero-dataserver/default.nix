@@ -86,6 +86,7 @@
     then cfg.virtualHost
     else "https://${cfg.virtualHost}";
   publicBaseUri = normalizeUri virtualHostUri;
+  publicApiBaseUri = "${removeSuffix "/" publicBaseUri}${cfg.apiPath}";
 
   defaultConfig = ''
     <?
@@ -101,7 +102,7 @@
       public static $DEBUG_LOG = ${phpBool cfg.php.settings.debugLog};
 
       public static $BASE_URI = ${phpString cfg.php.settings.baseUri};
-      public static $API_BASE_URI = ${phpString publicBaseUri};
+      public static $API_BASE_URI = ${phpString publicApiBaseUri};
       public static $WWW_BASE_URI = ${phpString publicBaseUri};
       public static $REPROXY_MAP = ${phpStringListAttrs cfg.php.settings.reproxyMap};
       public static $URI_PREFIX_DOMAIN_MAP = ${phpStringAttrs cfg.php.settings.uriPrefixDomainMap};
@@ -262,7 +263,14 @@ in {
 
     virtualHost = mkOption {
       type = str;
-      description = "Caddy virtual host and public base URI for the Zotero API, file proxy, stream service, and login portal. A host name uses HTTPS; include an explicit scheme to override it.";
+      description = "Caddy virtual host and public base URI for the Zotero services. A host name uses HTTPS; include an explicit scheme to override it.";
+    };
+
+    apiPath = mkOption {
+      type = str;
+      default = "/api/";
+      apply = normalizePath;
+      description = "URL path at which Caddy exposes the Zotero API.";
     };
 
     php = {
@@ -625,27 +633,36 @@ in {
         enable = true;
         virtualHosts.${cfg.virtualHost} = {
           extraConfig = ''
-            ${optionalString cfg.auth.enable ''
-              redir /groups/new/ /groups/new 308
-              @zoteroAuth path /login /auth/* /groups/new /settings/storage /_topcoat/assets/*
-              handle @zoteroAuth {
-                reverse_proxy unix//run/zotero-auth/zotero-auth.sock
+            route {
+              handle_path ${removeSuffix "/" cfg.attachment-proxy.path}/* {
+                reverse_proxy 127.0.0.1:${toString cfg.attachment-proxy.settings.port}
               }
-            ''}
 
-            handle_path ${removeSuffix "/" cfg.attachment-proxy.path}/* {
-              reverse_proxy 127.0.0.1:${toString cfg.attachment-proxy.settings.port}
-            }
+              handle_path ${removeSuffix "/" cfg.stream-server.path}/* {
+                reverse_proxy 127.0.0.1:${toString cfg.stream-server.settings.httpPort}
+              }
 
-            handle_path ${removeSuffix "/" cfg.stream-server.path}/* {
-              reverse_proxy 127.0.0.1:${toString cfg.stream-server.settings.httpPort}
-            }
+              redir ${removeSuffix "/" cfg.apiPath} ${cfg.apiPath} 308
+              handle_path ${removeSuffix "/" cfg.apiPath}/* {
+                root * ${package}/share/php/zotero-dataserver/htdocs
+                php_fastcgi unix/${config.services.phpfpm.pools.zotero-dataserver.socket} {
+                  capture_stderr
+                }
+                file_server
+              }
 
-            root * ${package}/share/php/zotero-dataserver/htdocs
-            php_fastcgi unix/${config.services.phpfpm.pools.zotero-dataserver.socket} {
-              capture_stderr
+              ${
+              if cfg.auth.enable
+              then ''
+                handle {
+                  reverse_proxy unix//run/zotero-auth/zotero-auth.sock
+                }
+              ''
+              else ''
+                respond 404
+              ''
             }
-            file_server
+            }
           '';
         };
       };
@@ -680,7 +697,7 @@ in {
             real_name_claim = cfg.auth.realNameClaim;
             require_verified_email = cfg.auth.requireVerifiedEmail;
           };
-          dataserver.url = publicBaseUri;
+          dataserver.url = publicApiBaseUri;
         }
         // optionalAttrs (cfg.auth.browserSessionLifetimeSeconds != null) {
           browser_session_lifetime_seconds = cfg.auth.browserSessionLifetimeSeconds;
@@ -714,7 +731,7 @@ in {
           proxyProtocol = false;
           https = false;
           trustedProxies = ["127.0.0.1"];
-          apiURL = publicBaseUri;
+          apiURL = publicApiBaseUri;
           apiVersion = 3;
           apiRequestHeaders = {};
           redis = {

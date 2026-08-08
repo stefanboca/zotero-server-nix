@@ -8,8 +8,9 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
+        HeaderValue, StatusCode,
         error::{bad_request, forbidden},
-        page, query_params,
+        header, page, query_params,
     },
     session,
     view::view,
@@ -134,7 +135,15 @@ async fn callback_inner(cx: &Cx) -> Result {
             .map(str::to_owned),
         email_verified,
     };
-    let user_id = provision_and_complete_login(app, &flow.session_token, &profile).await?;
+    let user_id = if let Some(session_token) = flow.session_token.as_deref() {
+        provision_and_complete_login(app, session_token, &profile).await?
+    } else {
+        let user_id = store::provision_user(&app.database, &profile)
+            .await?
+            .ok_or_else(forbidden)?;
+        app.dataserver.set_unlimited_storage(user_id).await?;
+        user_id
+    };
     let rotation = session::rotate(cx)
         .await?
         .ok_or_else(|| bad_request("missing or invalid OIDC flow session"))?;
@@ -153,14 +162,20 @@ async fn callback_inner(cx: &Cx) -> Result {
     .await?;
     store::delete_oidc_flow(&app.database, &*rotation.revoked).await?;
 
-    success_page().await
+    if flow.session_token.is_some() {
+        success_page().await
+    } else {
+        let location = HeaderValue::try_from(flow.return_path)?;
+        view! { cx =>
+            (StatusCode::SEE_OTHER)
+            ((header::LOCATION, location))
+        }
+    }
 }
 
 async fn success_page() -> Result {
     view! {
-        <main
-            class="w-full max-w-md rounded-xl border border-stone-200 bg-white p-8 shadow-sm dark:border-stone-800 dark:bg-stone-900"
-        >
+        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
             <h1 class="text-2xl font-semibold text-red-800 dark:text-red-400">
                 "Login complete"
             </h1>

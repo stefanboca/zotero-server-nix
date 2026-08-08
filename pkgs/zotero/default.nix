@@ -19,12 +19,12 @@
     else elemAt parts 0;
 
   withConfig = {
-    apiBaseUri,
-    baseUri ? apiBaseUri,
-    wwwBaseUrl ? apiBaseUri,
+    baseUri,
+    apiBaseUri ? "${removeSuffix "/" baseUri}/api/",
+    wwwBaseUrl ? baseUri,
     domainName ? hostFromUrl wwwBaseUrl,
     streamingUrl ? "${
-      replaceStrings ["https://" "http://"] ["wss://" "ws://"] (removeSuffix "/" apiBaseUri)
+      replaceStrings ["https://" "http://"] ["wss://" "ws://"] (removeSuffix "/" baseUri)
     }/stream/",
   }: let
     config = {

@@ -19,7 +19,7 @@ use crate::{
 #[query_params(error = bad_request)]
 struct StartQuery {
     #[serde(rename = "session")]
-    dataserver_session: String,
+    dataserver_session: Option<String>,
 }
 
 #[route(POST)]
@@ -29,19 +29,23 @@ async fn start(cx: &Cx) -> Result<Response> {
     }
 
     let query = query_params::<StartQuery>(cx)?;
-    if !valid_session_token(&query.dataserver_session) {
+    let dataserver_session = query
+        .dataserver_session
+        .as_deref()
+        .ok_or_else(|| bad_request("missing Zotero login-session token"))?;
+    if !valid_session_token(dataserver_session) {
         return Err(bad_request("invalid Zotero login-session token").into());
     }
 
     let app = app_context::<AppState>(cx);
     let info = app
         .dataserver
-        .login_session_info(&query.dataserver_session)
+        .login_session_info(dataserver_session)
         .await?;
     if info.status != "pending" {
         return Err(bad_request("Zotero login session is no longer pending").into());
     }
-    let url = begin_oidc_flow(cx, &query.dataserver_session, None).await?;
+    let url = begin_oidc_flow(cx, Some(dataserver_session), "/", None).await?;
 
     // A Topcoat redirect error bypasses the cookie layer's response finalizer.
     // Return a successful redirect so session::start can emit its cookie.
@@ -50,7 +54,8 @@ async fn start(cx: &Cx) -> Result<Response> {
 
 pub(crate) async fn begin_oidc_flow(
     cx: &Cx,
-    dataserver_session: &str,
+    dataserver_session: Option<&str>,
+    return_path: &str,
     browser_session: Option<session::Session>,
 ) -> Result<Url> {
     let app = app_context::<AppState>(cx);
@@ -89,6 +94,7 @@ pub(crate) async fn begin_oidc_flow(
         nonce.secret(),
         verifier.secret(),
         dataserver_session,
+        return_path,
         expires,
     )
     .await;

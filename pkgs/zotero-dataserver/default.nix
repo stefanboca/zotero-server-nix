@@ -67,6 +67,7 @@ in
       ./0002-custom-s3-endpoint.patch
       ./0003-mariadb-upsert.patch
       ./0004-zero-unlimited-storage.patch
+      ./0005-login-path.patch
     ];
 
     composerStrictValidation = false;

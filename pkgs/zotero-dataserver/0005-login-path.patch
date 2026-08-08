@@ -1,0 +1,13 @@
+diff --git a/controllers/LoginSessionsController.php b/controllers/LoginSessionsController.php
+index c37aec1..43c6e96 100644
+--- a/controllers/LoginSessionsController.php
++++ b/controllers/LoginSessionsController.php
+@@ -87,7 +87,7 @@ class LoginSessionsController extends ApiController {
+ 
+ 			$response = [
+ 				'sessionToken' => $session->sessionToken,
+-				'loginURL' => Z_CONFIG::$WWW_BASE_URI . 'login?session=' . $session->sessionToken
++				'loginURL' => Z_CONFIG::$WWW_BASE_URI . 'user/login?session=' . $session->sessionToken
+ 			];
+ 
+ 			header('Content-Type: application/json');

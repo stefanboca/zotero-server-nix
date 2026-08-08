@@ -42,7 +42,7 @@
       packages = mapAttrs' (n: nameValuePair "package-${n}") self.packages.${system};
       configuredZotero = {
         package-zotero-configured = self.packages.${system}.zotero.withConfig {
-          apiBaseUri = "https://zotero.example.com/";
+          baseUri = "https://zotero.example.com/";
         };
       };
       formatting = {formatting = treefmtFor.${system}.config.build.check self;};

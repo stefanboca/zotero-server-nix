@@ -122,6 +122,7 @@ in {
 
       start_all()
       public_url = "https://${testDomain}"
+      api_url = public_url + "/api"
 
       for unit in [
           "zotero-dataserver-credentials.service",
@@ -276,7 +277,7 @@ in {
                   "curl --silent --show-error --fail-with-body "
                   "--request POST --header "
                   "'User-Agent: Mozilla/5.0 (Linux) Zotero/7.0' "
-                  + shlex.quote(public_url + "/keys/sessions")
+                  + shlex.quote(api_url + "/keys/sessions")
               )
           )
 
@@ -284,7 +285,7 @@ in {
           return json.loads(
               machine.succeed(
                   "curl --silent --show-error --fail-with-body "
-                  + shlex.quote(f"{public_url}/keys/sessions/{token}")
+                  + shlex.quote(f"{api_url}/keys/sessions/{token}")
               )
           )
 
@@ -340,7 +341,7 @@ in {
               f"WHERE userID = {oidc_user_id}"
           )
       ).strip().split("\t")
-      assert oidc_storage == ["1000000", "1"], oidc_storage
+      assert oidc_storage == ["0", "1"], oidc_storage
       oidc_counts = machine.succeed(
           "mariadb --batch --skip-column-names zotero_www "
           "--execute=\"SELECT "
@@ -422,7 +423,7 @@ in {
               "SELECT quota FROM storageAccounts "
               f"WHERE userID = {oidc_user_id}"
           )
-      ).strip() == "1000000"
+      ).strip() == "0"
       durable_cookie = browser_session_cookie()
       assert durable_cookie != oidc_flow_cookie
       durable_hash = hashlib.sha256(
@@ -466,6 +467,301 @@ in {
           "mariadb --batch --skip-column-names zotero_www "
           "--execute='SELECT COUNT(*) FROM oidc_flows'"
       ).strip() == "0"
+
+      account_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/")
+      )
+      assert "Signed in as OIDC User" in account_page, account_page
+      assert "Manage groups and file storage for oidc@example.net" in account_page, account_page
+      assert 'href="/groups"' in account_page, account_page
+      assert 'action="/user/logout"' in account_page, account_page
+      assert "Your groups" not in account_page, account_page
+
+      trailing_group_headers = machine.succeed(
+          "curl --silent --show-error --dump-header - --output /dev/null --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/groups/new/")
+      )
+      assert trailing_group_headers.startswith("HTTP/2 308"), trailing_group_headers
+      assert "location: /groups/new" in trailing_group_headers.lower(), trailing_group_headers
+      group_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --location --cookie "
+          + shlex.quote(cookie_file)
+          + " --cookie-jar "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/groups/new/")
+      )
+      assert "Create a Zotero group" in group_page, group_page
+      group_name = "OIDC integration group"
+      group_result = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " --cookie-jar "
+          + shlex.quote(cookie_file)
+          + " --data-urlencode "
+          + shlex.quote("name=" + group_name)
+          + " "
+          + shlex.quote(public_url + "/groups/new")
+      )
+      assert f"Created “{group_name}”" in group_result, group_result
+      assert machine.succeed(
+          "mariadb --batch --skip-column-names zotero_master --execute="
+          + shlex.quote(
+              "SELECT COUNT(*) FROM groups "
+              "JOIN groupUsers USING (groupID) "
+              f"WHERE name = '{group_name}' "
+              f"AND userID = {oidc_user_id} AND role = 'owner'"
+          )
+      ).strip() == "1"
+      group_id = int(machine.succeed(
+          "mariadb --batch --skip-column-names zotero_master --execute="
+          + shlex.quote(
+              f"SELECT groupID FROM groups WHERE name = '{group_name}'"
+          )
+      ).strip())
+      groups_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/groups")
+      )
+      assert "Your groups" in groups_page, groups_page
+      assert group_name in groups_page, groups_page
+      assert f'href="/groups/{group_id}"' in groups_page, groups_page
+      assert "You are the group owner" in groups_page, groups_page
+      assert "1 person total" in groups_page, groups_page
+
+      machine.succeed(
+          "mariadb zotero_www --execute="
+          + shlex.quote(
+              "INSERT INTO users (username, password, email) VALUES "
+              "('new-owner', '!oidc-only!', 'new-owner@example.net'); "
+              "SET @candidate = LAST_INSERT_ID(); "
+              "INSERT INTO users_email VALUES "
+              "(@candidate, 'new-owner@example.net', 1); "
+              "INSERT INTO users_meta VALUES "
+              "(@candidate, 'profile_realname', 'New Group Owner'); "
+              "INSERT INTO GDN_User VALUES (@candidate, 0); "
+              "INSERT INTO oidc_identities (issuer, subject, userID) VALUES "
+              "('http://127.0.0.1:19090', 'new-owner', @candidate)"
+          )
+      )
+      candidate_user_id = int(machine.succeed(
+          "mariadb --batch --skip-column-names zotero_www --execute="
+          + shlex.quote(
+              "SELECT userID FROM users WHERE username = 'new-owner'"
+          )
+      ).strip())
+      group_management = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(f"{public_url}/groups/{group_id}")
+      )
+      assert 'name="user_id"' in group_management, group_management
+      assert 'type="number"' in group_management, group_management
+      assert 'data-member-search=""' not in group_management, group_management
+      search_status = machine.succeed(
+          "curl --silent --show-error --output /tmp/removed-search.html "
+          "--write-out='%{http_code}' --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(f"{public_url}/users/search?q=new-owner")
+      ).strip()
+      assert search_status == "404", search_status
+      removed_search_page = machine.succeed("cat /tmp/removed-search.html")
+      assert "Page not found" in removed_search_page, removed_search_page
+
+      add_member_headers = machine.succeed(
+          "curl --silent --show-error --dump-header - --output /dev/null "
+          "--cookie "
+          + shlex.quote(cookie_file)
+          + " --data operation=add --data role=member --data "
+          + shlex.quote(f"user_id={candidate_user_id}")
+          + " "
+          + shlex.quote(f"{public_url}/groups/{group_id}/members")
+      )
+      assert add_member_headers.startswith("HTTP/2 303"), add_member_headers
+      assert machine.succeed(
+          "mariadb --batch --skip-column-names zotero_master --execute="
+          + shlex.quote(
+              "SELECT role FROM groupUsers "
+              f"WHERE groupID = {group_id} AND userID = {candidate_user_id}"
+          )
+      ).strip() == "member"
+
+      group_management = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(f"{public_url}/groups/{group_id}")
+      )
+      assert "New Group Owner" in group_management, group_management
+      assert f"Zotero user ID {candidate_user_id}" in group_management, group_management
+      transfer_url = (
+          f"{public_url}/groups/{group_id}/owner?user_id={candidate_user_id}"
+      )
+      assert f'href="/groups/{group_id}/owner?user_id={candidate_user_id}"' in group_management
+      transfer_confirmation = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(transfer_url)
+      )
+      assert "Transfer group ownership" in transfer_confirmation, transfer_confirmation
+      assert "You will become an administrator" in transfer_confirmation, transfer_confirmation
+      assert f'Zotero user ID {candidate_user_id}' in transfer_confirmation
+
+      rejected_transfer_status = machine.succeed(
+          "curl --silent --show-error --output /tmp/rejected-transfer.html "
+          "--write-out='%{http_code}' --cookie "
+          + shlex.quote(cookie_file)
+          + " --data "
+          + shlex.quote(f"user_id={candidate_user_id}")
+          + " --data confirmation=wrong "
+          + shlex.quote(f"{public_url}/groups/{group_id}/owner")
+      ).strip()
+      assert rejected_transfer_status == "400", rejected_transfer_status
+      rejected_transfer = machine.succeed("cat /tmp/rejected-transfer.html")
+      assert "That request could not be completed" in rejected_transfer, rejected_transfer
+      assert "group name confirmation did not match" in rejected_transfer, rejected_transfer
+
+      transfer_headers = machine.succeed(
+          "curl --silent --show-error --dump-header - --output /dev/null "
+          "--cookie "
+          + shlex.quote(cookie_file)
+          + " --data "
+          + shlex.quote(f"user_id={candidate_user_id}")
+          + " --data-urlencode "
+          + shlex.quote("confirmation=" + group_name)
+          + " "
+          + shlex.quote(f"{public_url}/groups/{group_id}/owner")
+      )
+      assert transfer_headers.startswith("HTTP/2 303"), transfer_headers
+      ownership = machine.succeed(
+          "mariadb --batch --skip-column-names zotero_master --execute="
+          + shlex.quote(
+              "SELECT userID, role FROM groupUsers "
+              f"WHERE groupID = {group_id} ORDER BY userID"
+          )
+      ).splitlines()
+      assert f"{oidc_user_id}\tadmin" in ownership, ownership
+      assert f"{candidate_user_id}\towner" in ownership, ownership
+
+      storage_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/account")
+      )
+      assert "Your identity is managed by the OpenID Connect provider" in storage_page, storage_page
+      assert "Unlimited" in storage_page, storage_page
+      assert f"Zotero user ID</dt><dd>{oidc_user_id}" in storage_page, storage_page
+      assert "Used</dt><dd" in storage_page, storage_page
+      storage_redirect = machine.succeed(
+          "curl --silent --show-error --dump-header - --output /dev/null --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/settings/storage")
+      )
+      assert storage_redirect.startswith("HTTP/2 308"), storage_redirect
+      assert "location: /account#storage" in storage_redirect.lower(), storage_redirect
+
+      oidc_attachment_template = json.loads(
+          machine.succeed(
+              "curl --silent --show-error --fail-with-body "
+              + shlex.quote(
+                  api_url
+                  + "/items/new?itemType=attachment&linkMode=imported_file"
+              )
+          )
+      )
+      oidc_created = json.loads(
+          machine.succeed(
+              "curl --silent --show-error --fail-with-body "
+              "--request POST --header 'Content-Type: application/json' "
+              + "--header "
+              + shlex.quote(
+                  f"Zotero-API-Key: {parallel_statuses[0]['apiKey']}"
+              )
+              + " --data "
+              + shlex.quote(json.dumps([oidc_attachment_template]))
+              + " "
+              + shlex.quote(
+                  f"{api_url}/users/{oidc_user_id}/items"
+              )
+          )
+      )
+      oidc_success = oidc_created["success"]
+      oidc_attachment_key = (
+          oidc_success[0]
+          if isinstance(oidc_success, list)
+          else next(iter(oidc_success.values()))
+      )
+      oidc_library_id = machine.succeed(
+          "mariadb --batch --skip-column-names zotero_master --execute="
+          + shlex.quote(
+              f"SELECT libraryID FROM users WHERE userID = {oidc_user_id}"
+          )
+      ).strip()
+      machine.succeed(
+          "mariadb zotero_shard --execute="
+          + shlex.quote(
+              "UPDATE shardLibraries SET storageUsage = 2199023255552 "
+              f"WHERE libraryID = {oidc_library_id}"
+          )
+      )
+      machine.succeed("systemctl restart memcached.service")
+      machine.wait_for_unit("memcached.service")
+      large_storage_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/account")
+      )
+      assert "2.00 TiB" in large_storage_page, large_storage_page
+      unlimited_parameters = urllib.parse.urlencode(
+          {
+              "md5": hashlib.md5(b"unlimited").hexdigest(),
+              "filename": "unlimited.txt",
+              "filesize": 1,
+              "mtime": int(time.time() * 1000),
+              "contentType": "text/plain",
+          }
+      )
+      unlimited_authorization = json.loads(
+          machine.succeed(
+              "curl --silent --show-error --fail-with-body "
+              "--request POST "
+              "--header 'Content-Type: application/x-www-form-urlencoded' "
+              "--header 'If-None-Match: *' --header "
+              + shlex.quote(
+                  f"Zotero-API-Key: {parallel_statuses[0]['apiKey']}"
+              )
+              + " --data "
+              + shlex.quote(unlimited_parameters)
+              + " "
+              + shlex.quote(
+                  f"{api_url}/users/{oidc_user_id}/items/"
+                  f"{oidc_attachment_key}/file"
+              )
+          )
+      )
+      assert unlimited_authorization["uploadKey"], unlimited_authorization
+      machine.succeed(
+          "mariadb zotero_shard --execute="
+          + shlex.quote(
+              "UPDATE shardLibraries SET storageUsage = 0 "
+              f"WHERE libraryID = {oidc_library_id}"
+          )
+      )
+      machine.succeed("systemctl restart memcached.service")
+      machine.wait_for_unit("memcached.service")
 
       machine.succeed(
           "mariadb zotero_www --execute="
@@ -609,7 +905,7 @@ in {
               "\"access\":{\"user\":{\"library\":true,"
               "\"notes\":true,\"write\":true},\"groups\":{\"all\":{"
               "\"library\":true,\"write\":true}}}}' "
-              + shlex.quote(public_url + "/keys")
+              + shlex.quote(api_url + "/keys")
           )
       )
       assert key["userID"] == 1, key
@@ -645,7 +941,7 @@ in {
           "url": "redis://127.0.0.1:16389",
           "prefix": "zotero:",
       }, stream_server
-      assert stream_server["apiURL"] == public_url + "/", stream_server
+      assert stream_server["apiURL"] == api_url + "/", stream_server
 
       stream_client = """
       import json
@@ -753,7 +1049,7 @@ in {
           machine.succeed(
               "curl --silent --show-error --fail-with-body "
               + shlex.quote(
-                  public_url
+                  api_url
                   + "/items/new?itemType=attachment&linkMode=imported_file"
               )
           )
@@ -767,7 +1063,7 @@ in {
               + " --data "
               + shlex.quote(json.dumps([attachment_template]))
               + " "
-              + shlex.quote(public_url + "/users/1/items")
+              + shlex.quote(api_url + "/users/1/items")
           )
       )
       success = created["success"]
@@ -798,7 +1094,7 @@ in {
               + shlex.quote(file_parameters)
               + " "
               + shlex.quote(
-                  f"{public_url}/users/1/items/{attachment_key}/file"
+                  f"{api_url}/users/1/items/{attachment_key}/file"
               )
           )
       )
@@ -831,7 +1127,7 @@ in {
           + " --data "
           + shlex.quote(f"upload={authorization['uploadKey']}")
           + " "
-          + shlex.quote(f"{public_url}/users/1/items/{attachment_key}/file")
+          + shlex.quote(f"{api_url}/users/1/items/{attachment_key}/file")
       ).strip()
       assert registration_status == "204", registration_status
 
@@ -839,7 +1135,7 @@ in {
           "curl --silent --show-error --fail-with-body --location --header "
           + shlex.quote(f"Zotero-API-Key: {key['key']}")
           + " "
-          + shlex.quote(f"{public_url}/users/1/items/{attachment_key}/file")
+          + shlex.quote(f"{api_url}/users/1/items/{attachment_key}/file")
       )
       assert downloaded == client_file, downloaded
 
@@ -859,7 +1155,13 @@ in {
           "curl --silent --show-error --output /dev/null "
           "--write-out='%{http_code}' " + shlex.quote(public_url + "/")
       ).strip()
-      assert response == "200", response
+      assert response == "307", response
+
+      old_api_response = machine.succeed(
+          "curl --silent --show-error --output /dev/null "
+          "--write-out='%{http_code}' " + shlex.quote(public_url + "/keys")
+      ).strip()
+      assert old_api_response == "404", old_api_response
 
       attachment_proxy_response = machine.succeed(
           "curl --silent --show-error --output /dev/null "
