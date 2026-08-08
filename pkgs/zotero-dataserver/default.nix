@@ -66,6 +66,7 @@ in
       ./0001-tmp-path.patch
       ./0002-custom-s3-endpoint.patch
       ./0003-mariadb-upsert.patch
+      ./0004-zero-unlimited-storage.patch
     ];
 
     composerStrictValidation = false;

@@ -18,6 +18,7 @@ buildNpmPackage (finalAttrs: {
   patches = [
     ./0001-add-bin.patch
     ./0002-configurable-listen-address.patch
+    ./0003-disable-status-logging.patch
   ];
 
   npmDepsHash = "sha256-sIasdXvj+vZidDDaVdb+sdhE58dW2p36MUoyIs7/lMY=";

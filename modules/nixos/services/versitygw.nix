@@ -109,6 +109,14 @@ in {
       group = "versitygw";
     };
 
+    systemd.tmpfiles.settings."10-versitygw" = optionalAttrs (cfg.metadataSidecarDir != null) {
+      "${toString cfg.metadataSidecarDir}".d = {
+        mode = "0750";
+        user = "versitygw";
+        group = "versitygw";
+      };
+    };
+
     systemd.services.versitygw = {
       description = "versity s3 gateway";
       wantedBy = ["multi-user.target"];

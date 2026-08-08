@@ -1,4 +1,5 @@
 mod auth;
+mod groups;
 mod login;
 
 use std::{

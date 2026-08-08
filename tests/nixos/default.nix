@@ -95,6 +95,13 @@ in {
           requires = ["oidc-mock.service"];
           after = ["oidc-mock.service"];
         };
+        versitygw.preStart = pkgs.lib.mkBefore ''
+          retry_marker=/tmp/versitygw-failed-once
+          if ! test -e "$retry_marker"; then
+            touch "$retry_marker"
+            exit 1
+          fi
+        '';
         zotero-stream-server.environment.NODE_EXTRA_CA_CERTS = toString testCertificates.ca.cert;
       };
 
@@ -160,6 +167,38 @@ in {
           "systemctl show -P Group zotero-auth.service"
       ).strip() == "zotero-auth"
       assert "zotero-auth" in machine.succeed("id -nG caddy").split()
+
+      for unit in [
+          "zotero-dataserver-credentials.service",
+          "zotero-auth-migrate.service",
+          "zotero-dataserver-schema.service",
+      ]:
+          assert machine.succeed(
+              f"systemctl show -P Restart {unit}"
+          ).strip() == "on-failure"
+
+      for unit in [
+          "zotero-auth.service",
+          "phpfpm-zotero-dataserver.service",
+          "versitygw.service",
+          "zotero-attachment-proxy.service",
+          "zotero-citeproc-js-server.service",
+          "zotero-stream-server.service",
+          "zotero-tinymce-clean-server.service",
+          "zotero-translation-server.service",
+      ]:
+          assert machine.succeed(
+              f"systemctl show -P Restart {unit}"
+          ).strip() == "always"
+
+      attachment_proxy_wants = machine.succeed(
+          "systemctl show -P Wants zotero-attachment-proxy.service"
+      ).split()
+      attachment_proxy_requires = machine.succeed(
+          "systemctl show -P Requires zotero-attachment-proxy.service"
+      ).split()
+      assert "versitygw.service" in attachment_proxy_wants
+      assert "versitygw.service" not in attachment_proxy_requires
 
       auth_config = tomllib.loads(
           machine.succeed("cat /etc/zotero-dataserver/auth.toml")
@@ -294,6 +333,14 @@ in {
       assert all(status["status"] == "completed" for status in parallel_statuses), parallel_statuses
       assert parallel_statuses[0]["userID"] == parallel_statuses[1]["userID"], parallel_statuses
       oidc_user_id = parallel_statuses[0]["userID"]
+      oidc_storage = machine.succeed(
+          "mariadb --batch --skip-column-names zotero_master --execute="
+          + shlex.quote(
+              "SELECT quota, expiration IS NULL FROM storageAccounts "
+              f"WHERE userID = {oidc_user_id}"
+          )
+      ).strip().split("\t")
+      assert oidc_storage == ["1000000", "1"], oidc_storage
       oidc_counts = machine.succeed(
           "mariadb --batch --skip-column-names zotero_www "
           "--execute=\"SELECT "
@@ -315,6 +362,13 @@ in {
 
       repeated_session = create_login_session()
       cookie_file = "/tmp/oidc-repeated.cookies"
+      machine.succeed(
+          "mariadb zotero_master --execute="
+          + shlex.quote(
+              "UPDATE storageAccounts SET quota = 1 "
+              f"WHERE userID = {oidc_user_id}"
+          )
+      )
 
       def browser_session_cookie():
           return urllib.parse.unquote(
@@ -362,6 +416,13 @@ in {
           + shlex.quote(second_location)
       )
       assert "Login complete" in repeated_result, repeated_result
+      assert machine.succeed(
+          "mariadb --batch --skip-column-names zotero_master --execute="
+          + shlex.quote(
+              "SELECT quota FROM storageAccounts "
+              f"WHERE userID = {oidc_user_id}"
+          )
+      ).strip() == "1000000"
       durable_cookie = browser_session_cookie()
       assert durable_cookie != oidc_flow_cookie
       durable_hash = hashlib.sha256(
@@ -579,6 +640,7 @@ in {
           machine.succeed("cat /etc/zotero-dataserver/stream-server.json")
       )
       assert stream_server["listenAddress"] == "127.0.0.1", stream_server
+      assert stream_server["statusInterval"] == 0, stream_server
       assert stream_server["redis"] == {
           "url": "redis://127.0.0.1:16389",
           "prefix": "zotero:",
@@ -840,6 +902,13 @@ in {
           )
       )
       assert imported[0]["title"] == "Test Article", imported
+
+      stream_log = machine.succeed(
+          "journalctl -u zotero-stream-server.service --no-pager -o cat"
+      )
+      assert re.search(
+          r"\[\d+ connections, \d+ subscriptions\]", stream_log
+      ) is None, stream_log
     '';
   };
 
@@ -851,7 +920,6 @@ in {
 
       systemd.tmpfiles.rules = [
         "d /srv/versitygw-test 0750 versitygw versitygw -"
-        "d /var/lib/versitygw-sidecar 0750 versitygw versitygw -"
       ];
 
       services.versitygw = {
@@ -883,6 +951,9 @@ in {
       assert "--disable-copy-file-range" in command_line, command_line
       assert "/var/lib/versitygw-sidecar" in command_line, command_line
       assert "/srv/versitygw-test" in command_line, command_line
+      assert machine.succeed(
+          "stat --format='%U:%G:%a' /var/lib/versitygw-sidecar"
+      ).strip() == "versitygw:versitygw:750"
       machine.succeed(
           "curl --silent --show-error --fail http://127.0.0.1:10000/health"
       )

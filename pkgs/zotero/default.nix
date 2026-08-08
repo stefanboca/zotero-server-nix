@@ -55,7 +55,11 @@
       mkdir -p "$out"
       lndir -silent ${zotero} "$out"
 
-      rm "$out/lib/app/omni.ja" "$out/lib/zotero"
+      rm \
+        "$out/lib/app/application.ini" \
+        "$out/lib/app/omni.ja" \
+        "$out/lib/zotero"
+      cp ${zotero}/lib/app/application.ini "$out/lib/app/application.ini"
       cp ${zotero}/lib/app/omni.ja "$out/lib/app/omni.ja"
       cp ${zotero}/lib/zotero "$out/lib/zotero"
 
@@ -67,7 +71,9 @@
       # --replace-fail makes an upstream rename or format change visible.
       mkdir config-patch
       cd config-patch
-      unzip -q "$out/lib/app/omni.ja" resource/config.mjs
+      unzip -q "$out/lib/app/omni.ja" \
+        resource/config.mjs \
+        chrome/content/zotero/xpcom/storage/zfs.js
       substituteInPlace resource/config.mjs \
         --replace-fail ${escapeShellArg "DOMAIN_NAME: 'zotero.org',"} ${escapeShellArg "DOMAIN_NAME: ${toJSON config.domainName},"} \
         --replace-fail ${escapeShellArg "BASE_URI: 'http://zotero.org/',"} ${escapeShellArg "BASE_URI: ${toJSON config.baseUri},"} \
@@ -75,8 +81,15 @@
         --replace-fail ${escapeShellArg "API_URL: 'https://api.zotero.org/',"} ${escapeShellArg "API_URL: ${toJSON config.apiBaseUri},"} \
         --replace-fail ${escapeShellArg "STREAMING_URL: 'wss://stream.zotero.org/',"} ${escapeShellArg "STREAMING_URL: ${toJSON config.streamingUrl},"}
 
+      substituteInPlace chrome/content/zotero/xpcom/storage/zfs.js \
+        --replace-fail \
+          ${escapeShellArg ''let url = "https://www.zotero.org/settings/storage";''} \
+          ${escapeShellArg ''let url = ZOTERO_CONFIG.WWW_BASE_URL + "settings/storage";''}
+
       chmod u+w "$out/lib/app" "$out/lib/app/omni.ja"
-      zip -q -u "$out/lib/app/omni.ja" resource/config.mjs
+      zip -q -u "$out/lib/app/omni.ja" \
+        resource/config.mjs \
+        chrome/content/zotero/xpcom/storage/zfs.js
 
       # wrapGApps embeds the unconfigured output in this outer launcher.
       substituteInPlace "$out/bin/zotero" \

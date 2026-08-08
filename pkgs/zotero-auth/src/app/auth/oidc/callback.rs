@@ -198,6 +198,7 @@ async fn provision_and_complete_login(
     app.dataserver
         .complete_login_session(session_token, user_id, info.access)
         .await?;
+    app.dataserver.set_unlimited_storage(user_id).await?;
     transaction.commit().await?;
     Ok(user_id)
 }

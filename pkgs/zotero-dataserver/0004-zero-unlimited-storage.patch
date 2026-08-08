@@ -1,0 +1,142 @@
+diff --git a/model/Storage.inc.php b/model/Storage.inc.php
+index f19f648..ca99dcf 100644
+--- a/model/Storage.inc.php
++++ b/model/Storage.inc.php
+@@ -27,5 +27,6 @@ use GeoIp2\Database\Reader;
+ 
+ class Zotero_Storage {
++	public const UNLIMITED_QUOTA = 0;
+ 	public static $defaultQuota = 300;
+ 	public static $uploadQueueLimit = 10;
+ 	public static $uploadQueueTimeout = 300;
+@@ -830,16 +831,16 @@ class Zotero_Storage {
+ 	/**
+ 	 * Set quota and expiration date for a user
+ 	 */
+-	public static function setUserValues($userID, $quota, $expiration) {
++	public static function setUserValues($userID, $quota, $expiration, $unlimited = false) {
+ 		$cacheKey = "userStorageQuota_" . $userID;
+ 		Z_Core::$MC->delete($cacheKey);
+ 		
+-		if ($expiration == 0 && $quota == 0) {
++		if (!$unlimited && $expiration == 0 && $quota == 0) {
+ 			$sql = "DELETE FROM storageAccounts WHERE userID=?";
+ 			Zotero_DB::query($sql, $userID);
+ 			return;
+ 		}
+ 		
+ 		// If changing quota, make sure it's not less than current usage
+ 		$current = self::getUserValues($userID);
+ 		$usage = self::getUserUsage($userID, 'mb');
+@@ -847,7 +849,8 @@ class Zotero_Storage {
+ 		// Allow usage a bit above the quota, to account for upload race conditions that result in
+ 		// a last file going above the quota
+ 		$leeway = 10;
+-		if (($current['quota'] ?? 0) != $quota && ($quota + $leeway) < $usage['total']) {
++		if (!$unlimited && ($current['quota'] ?? 0) != $quota
++				&& ($quota + $leeway) < $usage['total']) {
+ 			throw new Exception("Cannot set quota below current usage", Z_ERROR_GROUP_QUOTA_SET_BELOW_USAGE);
+ 		}
+ 		
+@@ -909,23 +912,29 @@ class Zotero_Storage {
+ 		$cacheKey = "userStorageQuota_" . $userID;
+ 		
+ 		$quota = Z_Core::$MC->get($cacheKey);
+-		if ($quota) {
++		if ($quota !== false) {
+ 			return $quota;
+ 		}
+ 		
+ 		$personalQuota = self::getUserValues($userID);
+-		if ($personalQuota && $personalQuota['expiration'] < time()) {
++		if ($personalQuota && $personalQuota['expiration']
++				&& $personalQuota['expiration'] < time()) {
+ 			$personalQuota = false;
+ 		}
+-		$personalQuota = $personalQuota ? $personalQuota['quota'] : 0;
+-		
+-		$instQuota = self::getInstitutionalUserQuota($userID);
+-		if (!$instQuota) {
+-			$instQuota = 0;
++
++		if ($personalQuota
++				&& (int) $personalQuota['quota'] === self::UNLIMITED_QUOTA) {
++			$quota = self::UNLIMITED_QUOTA;
++		}
++		else {
++			$personalQuota = $personalQuota ? $personalQuota['quota'] : 0;
++			$instQuota = self::getInstitutionalUserQuota($userID);
++			if (!$instQuota) {
++				$instQuota = 0;
++			}
++			$quota = max($personalQuota, $instQuota);
++			$quota = $quota ? $quota : self::$defaultQuota;
+ 		}
+-		
+-		$quota = max($personalQuota, $instQuota);
+-		$quota = $quota ? $quota : self::$defaultQuota;
+ 		
+ 		Z_Core::$MC->set($cacheKey, $quota, 60);
+ 		
+diff --git a/controllers/ItemsController.php b/controllers/ItemsController.php
+index ee742be..2218d4d 100644
+--- a/controllers/ItemsController.php
++++ b/controllers/ItemsController.php
+@@ -1007,7 +1007,8 @@ class ItemsController extends ApiController {
+ 					$usage = Zotero_Storage::getUserUsage($this->objectUserID, 'b');
+ 				}
+ 				$requestedMB = round(($usage['total'] + $info->size) / 1024 / 1024, 1);
+-				if ($requestedMB > $quota) {
++				if ($quota != Zotero_Storage::UNLIMITED_QUOTA
++						&& $requestedMB > $quota) {
+ 					StatsD::increment("storage.upload.quota", 1);
+ 					$usageMB = round($usage['total'] / 1024 / 1024, 1);
+ 					header("Zotero-Storage-Usage: $usageMB");
+diff --git a/controllers/StorageController.php b/controllers/StorageController.php
+index db37dc2..25658cf 100644
+--- a/controllers/StorageController.php
++++ b/controllers/StorageController.php
+@@ -27,8 +27,5 @@ require('ApiController.php');
+ 
+ class StorageController extends ApiController {
+-	// Use 1TB as a numeric stand-in for unlimited, for now
+-	const UNLIMITED = 1000000;
+-	
+ 	//
+ 	// Storage-related
+ 	//
+@@ -71,8 +68,10 @@ class StorageController extends ApiController {
+ 				$this->e400("Quota not provided");
+ 			}
+ 			// Accept 'unlimited' via API
++			$unlimited = false;
+ 			if ($_POST['quota'] == 'unlimited') {
+-				$_POST['quota'] = self::UNLIMITED;
++				$_POST['quota'] = Zotero_Storage::UNLIMITED_QUOTA;
++				$unlimited = true;
+ 			}
+ 			if (!isset($_POST['expiration'])) {
+ 				$this->e400("Expiration not provided");
+@@ -89,7 +88,12 @@ class StorageController extends ApiController {
+ 			}
+ 			
+ 			try {
+-				Zotero_Storage::setUserValues($this->objectUserID, $_POST['quota'], $_POST['expiration']);
++				Zotero_Storage::setUserValues(
++					$this->objectUserID,
++					$_POST['quota'],
++					$_POST['expiration'],
++					$unlimited
++				);
+ 			}
+ 			catch (Exception $e) {
+ 				if ($e->getCode() == Z_ERROR_GROUP_QUOTA_SET_BELOW_USAGE) {
+@@ -112,7 +116,7 @@ class StorageController extends ApiController {
+ 			}
+ 		}
+ 		// Return 'unlimited' via API
+-		if ($quota == self::UNLIMITED) {
++		if ($quota == Zotero_Storage::UNLIMITED_QUOTA) {
+ 			$xml->quota = 'unlimited';
+ 		}
+ 		// TEMP: Use an uncached lookup until we make sure we're clearing the cache on all actions

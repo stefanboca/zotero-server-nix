@@ -20,6 +20,12 @@
   credentialUnit = "zotero-dataserver-credentials.service";
   generatedCredentialDir = "%S/zotero-dataserver/credentials";
 
+  restartAlways = {
+    Restart = "always";
+    RestartSec = 5;
+  };
+  restartOnFailure = restartAlways // {Restart = "on-failure";};
+
   credentialFiles = {
     authSalt = "${generatedCredentialDir}/auth-salt";
     attachmentProxySecret = "${generatedCredentialDir}/attachment-proxy-secret";
@@ -457,7 +463,7 @@ in {
         dev = settingOption bool false "Expose detailed server errors intended for development.";
         logLevel = settingOption str "info" "Streaming-server log level.";
         httpPort = settingOption port 8080 "Local streaming-server listen port.";
-        statusInterval = settingOption int 10 "Seconds between streaming-server status reports.";
+        statusInterval = settingOption int 0 "Seconds between streaming-server status reports; zero disables them.";
         keepaliveInterval = settingOption int 25 "Seconds between WebSocket keepalive pings.";
         retryTime = settingOption int 10 "Seconds clients are asked to wait before reconnecting.";
         globalTopics = settingOption (listOf str) ["styles" "translators"] "Public topics clients may subscribe to without an API key.";
@@ -620,7 +626,8 @@ in {
         virtualHosts.${cfg.virtualHost} = {
           extraConfig = ''
             ${optionalString cfg.auth.enable ''
-              @zoteroAuth path /login /auth/* /_topcoat/assets/*
+              redir /groups/new/ /groups/new 308
+              @zoteroAuth path /login /auth/* /groups/new /settings/storage /_topcoat/assets/*
               handle @zoteroAuth {
                 reverse_proxy unix//run/zotero-auth/zotero-auth.sock
               }
@@ -730,13 +737,15 @@ in {
     systemd.services = {
       zotero-dataserver-credentials = {
         description = "Generate persistent Zotero Dataserver credentials";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          StateDirectory = "zotero-dataserver";
-          StateDirectoryMode = "0700";
-          UMask = "0077";
-        };
+        serviceConfig =
+          restartOnFailure
+          // {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            StateDirectory = "zotero-dataserver";
+            StateDirectoryMode = "0700";
+            UMask = "0077";
+          };
         script = ''
           install -d -m 0700 "$STATE_DIRECTORY/credentials"
           ${concatMapStrings (credential:
@@ -751,46 +760,47 @@ in {
 
       zotero-auth-migrate = {
         description = "Migrate the Zotero website compatibility database";
-        requires = ["mysql.service"];
+        wants = ["mysql.service"];
         after = ["mysql.service"];
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          User = "zotero-auth";
-          Group = "zotero-auth";
-          ExecStart = "${getExe cfg.auth.package} --config /etc/zotero-dataserver/auth.toml --migrate-only";
-        };
+        serviceConfig =
+          restartOnFailure
+          // {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            User = "zotero-auth";
+            Group = "zotero-auth";
+            ExecStart = "${getExe cfg.auth.package} --config /etc/zotero-dataserver/auth.toml --migrate-only";
+          };
       };
 
       zotero-auth = mkIf cfg.auth.enable {
         description = "OIDC login portal for Zotero Dataserver";
         wantedBy = ["multi-user.target"];
-        requires = [credentialUnit "zotero-auth-migrate.service"];
-        wants = ["network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
+        wants = [credentialUnit "zotero-auth-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
         after = [credentialUnit "zotero-auth-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
-        serviceConfig = {
-          User = "zotero-auth";
-          Group = "zotero-auth";
-          RuntimeDirectory = "zotero-auth";
-          RuntimeDirectoryMode = "0750";
-          UMask = "0007";
-          ExecStart = "${getExe cfg.auth.package} --config /etc/zotero-dataserver/auth.toml";
-          Restart = "always";
-          RestartSec = 5;
-          LoadCredential = [
-            "oidc-client-secret:${
-              if cfg.auth.clientSecretFile == null
-              then "/dev/null"
-              else cfg.auth.clientSecretFile
-            }"
-            "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
-          ];
-        };
+        serviceConfig =
+          restartAlways
+          // {
+            User = "zotero-auth";
+            Group = "zotero-auth";
+            RuntimeDirectory = "zotero-auth";
+            RuntimeDirectoryMode = "0750";
+            UMask = "0007";
+            ExecStart = "${getExe cfg.auth.package} --config /etc/zotero-dataserver/auth.toml";
+            LoadCredential = [
+              "oidc-client-secret:${
+                if cfg.auth.clientSecretFile == null
+                then "/dev/null"
+                else cfg.auth.clientSecretFile
+              }"
+              "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
+            ];
+          };
       };
 
       phpfpm-zotero-dataserver = {
-        requires = ["zotero-dataserver-schema.service"];
         wants = [
+          "zotero-dataserver-schema.service"
           "zotero-attachment-proxy.service"
           "zotero-citeproc-js-server.service"
           "zotero-stream-server.service"
@@ -814,34 +824,36 @@ in {
 
       zotero-dataserver-schema = {
         description = "Update Zotero Dataserver's metadata schema";
-        requires = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-auth-migrate.service"];
+        wants = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-auth-migrate.service"];
         after = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-auth-migrate.service"];
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          User = "zotero-dataserver";
-          Group = "zotero-dataserver";
-          WorkingDirectory = "${package}/share/php/zotero-dataserver/admin";
-          ExecStart = "${getExe package.php} ${package}/share/php/zotero-dataserver/admin/schema_update";
-          LoadCredential = [
-            "auth-salt:${credentialFiles.authSalt}"
-            "attachment-proxy-secret:${credentialFiles.attachmentProxySecret}"
-            "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
-            "s3-access-key-id:${credentialFiles.s3AccessKeyId}"
-            "s3-secret-access-key:${credentialFiles.s3SecretAccessKey}"
-          ];
-        };
+        serviceConfig =
+          restartOnFailure
+          // {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            User = "zotero-dataserver";
+            Group = "zotero-dataserver";
+            WorkingDirectory = "${package}/share/php/zotero-dataserver/admin";
+            ExecStart = "${getExe package.php} ${package}/share/php/zotero-dataserver/admin/schema_update";
+            LoadCredential = [
+              "auth-salt:${credentialFiles.authSalt}"
+              "attachment-proxy-secret:${credentialFiles.attachmentProxySecret}"
+              "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
+              "s3-access-key-id:${credentialFiles.s3AccessKeyId}"
+              "s3-secret-access-key:${credentialFiles.s3SecretAccessKey}"
+            ];
+          };
       };
 
       versitygw = mkIf cfg.storage.manageBackend {
-        requires = [credentialUnit];
+        wants = [credentialUnit];
         after = [credentialUnit];
       };
 
       zotero-attachment-proxy = {
         description = "Zotero attachment-proxy";
         wantedBy = ["phpfpm-zotero-dataserver.service"];
-        requires = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
+        wants = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
         after = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
         environment = {
           NODE_ENV = "attachment-proxy";
@@ -881,7 +893,7 @@ in {
       zotero-stream-server = {
         description = "Zotero stream-server";
         wantedBy = ["phpfpm-zotero-dataserver.service"];
-        requires = ["redis-zotero-dataserver.service"];
+        wants = ["redis-zotero-dataserver.service"];
         after = ["redis-zotero-dataserver.service"];
         environment = {
           NODE_ENV = "stream-server";

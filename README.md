@@ -102,6 +102,10 @@ successful OIDC callback. Provider access and refresh tokens are never
 persisted; the access token is used only for the callback's optional UserInfo
 request.
 
+Every successful OIDC login also assigns the user Dataserver's upstream
+`unlimited` file-storage quota. Dataserver represents this as 1,000,000 MB
+(approximately 1 TB), and the assignment is refreshed on every login.
+
 ### Authelia
 
 First, configure an [Authelia OpenID Connect
