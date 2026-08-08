@@ -168,7 +168,7 @@ async fn browser_sessions_list(
             }
         </ul>
         <div class="mt-6 flex justify-end">
-            <form method="post" action="/settings/sessions" data-confirm="Sign out every browser session, including this one?" data-confirm-action="Sign out all sessions" data-confirm-success="All browser sessions signed out." data-confirm-error="Couldn’t sign out all browser sessions. Please try again." data-confirm-delay-redirect="true">
+            <form method="post" action="/settings/sessions" data-confirm="Sign out every browser session, including this one?" data-confirm-action="Sign out all sessions" data-confirm-success="All browser sessions signed out." data-confirm-error="Couldn’t sign out all browser sessions. Please try again.">
                 <input type="hidden" name="operation" value="all">
                 <button class="border border-stone-300 px-3 py-2 text-sm font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">"Sign out all sessions"</button>
             </form>

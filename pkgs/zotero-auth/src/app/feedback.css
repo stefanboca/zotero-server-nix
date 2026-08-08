@@ -4,6 +4,12 @@
   will-change: opacity, transform;
 }
 
+.portal-toast:popover-open {
+  inset: 5rem max(1rem, env(safe-area-inset-right)) auto auto;
+  margin: 0;
+  width: min(24rem, calc(100vw - 2rem));
+}
+
 .portal-toast[data-toast-kind="success"] {
   background: #f0fdf4;
   border-color: #15803d;

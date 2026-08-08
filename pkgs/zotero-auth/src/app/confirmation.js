@@ -11,7 +11,12 @@ const toastRegion = document.querySelector("[data-toast-region]");
 let pendingForm;
 
 function finishToast(toast) {
-  toast.addEventListener("animationend", () => toast.remove(), { once: true });
+  toast.addEventListener("animationend", () => {
+    if (typeof toast.hidePopover === "function" && toast.matches(":popover-open")) {
+      toast.hidePopover();
+    }
+    toast.remove();
+  }, { once: true });
 }
 
 function showToast(form, kind) {
@@ -37,6 +42,10 @@ function showToast(form, kind) {
     if (suffix) toast.append(suffix);
   }
   toastRegion?.replaceChildren(toast);
+  if (typeof toast.showPopover === "function") {
+    toast.popover = "manual";
+    toast.showPopover();
+  }
   finishToast(toast);
 }
 
@@ -95,16 +104,12 @@ submit?.addEventListener("click", async () => {
       headers: { "X-Zotero-Confirmed": "true" },
     });
     if (!response.ok || response.redirected) throw new Error(`confirmation returned ${response.status}`);
-    showToast(form, "success");
     const redirect = response.headers.get("location");
     if (redirect && form.dataset.confirmStay !== "true") {
-      if (form.dataset.confirmDelayRedirect === "true") {
-        window.setTimeout(() => window.location.assign(redirect), 900);
-      } else {
-        window.location.assign(redirect);
-      }
+      window.location.assign(redirect);
       return;
     }
+    showToast(form, "success");
     if (form.dataset.confirmRemove === "closest") {
       form.closest("[data-confirm-item]")?.remove();
     }
