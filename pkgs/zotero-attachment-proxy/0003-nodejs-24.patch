@@ -1,0 +1,70 @@
+diff --git a/package-lock.json b/package-lock.json
+index 5bfa8e6..1d35a1a 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -11,7 +11,7 @@
+       "dependencies": {
+         "@aws-sdk/client-s3": "^3.812.0",
+         "@koa/cors": "^5.0.0",
+-        "config": "^3.3.6",
++        "config": "^3.3.12",
+         "koa": "^3.0.0",
+         "koa-compress": "^5.1.1",
+         "koa-router": "^13.0.1",
+@@ -2449,11 +2449,12 @@
+       "dev": true
+     },
+     "node_modules/config": {
+-      "version": "3.3.6",
+-      "resolved": "https://registry.npmjs.org/config/-/config-3.3.6.tgz",
+-      "integrity": "sha512-Hj5916C5HFawjYJat1epbyY2PlAgLpBtDUlr0MxGLgo3p5+7kylyvnRY18PqJHgnNWXcdd0eWDemT7eYWuFgwg==",
++      "version": "3.3.12",
++      "resolved": "https://registry.npmjs.org/config/-/config-3.3.12.tgz",
++      "integrity": "sha512-Vmx389R/QVM3foxqBzXO8t2tUikYZP64Q6vQxGrsMpREeJc/aWRnPRERXWsYzOHAumx/AOoILWe6nU3ZJL+6Sw==",
++      "license": "MIT",
+       "dependencies": {
+-        "json5": "^2.1.1"
++        "json5": "^2.2.3"
+       },
+       "engines": {
+         "node": ">= 10.0.0"
+@@ -3678,12 +3679,10 @@
+       "dev": true
+     },
+     "node_modules/json5": {
+-      "version": "2.2.0",
+-      "resolved": "https://registry.npmjs.org/json5/-/json5-2.2.0.tgz",
+-      "integrity": "sha512-f+8cldu7X/y7RAJurMEJmdoKXGB/X550w2Nr3tTbezL6RwEE/iMcm+tZnXeoZtKuOq6ft8+CqzEkrIgx1fPoQA==",
+-      "dependencies": {
+-        "minimist": "^1.2.5"
+-      },
++      "version": "2.2.3",
++      "resolved": "https://registry.npmjs.org/json5/-/json5-2.2.3.tgz",
++      "integrity": "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==",
++      "license": "MIT",
+       "bin": {
+         "json5": "lib/cli.js"
+       },
+@@ -4055,7 +4054,8 @@
+     "node_modules/minimist": {
+       "version": "1.2.5",
+       "resolved": "https://registry.npmjs.org/minimist/-/minimist-1.2.5.tgz",
+-      "integrity": "sha512-FM9nNUYrRBAELZQT3xeZQ7fmMOBg6nWNmJKTcgsJeaLstP/UODVpGsr5OhXhhXg6f+qtJ8uiZ+PUxkDWcgIXLw=="
++      "integrity": "sha512-FM9nNUYrRBAELZQT3xeZQ7fmMOBg6nWNmJKTcgsJeaLstP/UODVpGsr5OhXhhXg6f+qtJ8uiZ+PUxkDWcgIXLw==",
++      "dev": true
+     },
+     "node_modules/minipass": {
+       "version": "7.1.2",
+diff --git a/package.json b/package.json
+index d5f9704..4380c71 100644
+--- a/package.json
++++ b/package.json
+@@ -12,7 +12,7 @@
+   "dependencies": {
+     "@aws-sdk/client-s3": "^3.812.0",
+     "@koa/cors": "^5.0.0",
+-    "config": "^3.3.6",
++    "config": "^3.3.12",
+     "koa": "^3.0.0",
+     "koa-compress": "^5.1.1",
+     "koa-router": "^13.0.1",

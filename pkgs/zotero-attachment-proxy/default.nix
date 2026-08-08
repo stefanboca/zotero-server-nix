@@ -18,9 +18,10 @@ buildNpmPackage (finalAttrs: {
   patches = [
     ./0001-add-bin.patch
     ./0002-custom-s3-endpoint.patch
+    ./0003-nodejs-24.patch
   ];
 
-  npmDepsHash = "sha256-auGS3ssa3QgO3J7Q54rj15itFjcnvjCs5KPSu8GkrkU=";
+  npmDepsHash = "sha256-NLMPzCmDiZOushrEEOJG4GGlPYUdi5yQhs7OyB0KYVw=";
 
   dontNpmBuild = true;
 
