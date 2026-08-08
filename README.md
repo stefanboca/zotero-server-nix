@@ -87,6 +87,21 @@ nonce checks. It creates a Zotero user after the first successful login. It
 does not link a new OIDC identity to an existing user by email. It also does
 not sync OIDC groups or roles. Dataserver has no global administrator role.
 
+After a successful login, the portal retains a durable browser authentication
+session for 30 days by default. A returning authenticated browser skips the
+portal button and starts a fresh OIDC authorization-code flow, allowing the
+provider's own SSO session to complete login without another click while still
+refreshing profile and authorization claims. Set
+`auth.browserSessionLifetimeSeconds` to override the lifetime. The NixOS option
+is `null` by default, so the generated configuration leaves the service's
+30-day application default in effect.
+
+The database stores only a hash of the browser session token, its Zotero user
+binding, and its expiry. The portal rotates the browser cookie after every
+successful OIDC callback. Provider access and refresh tokens are never
+persisted; the access token is used only for the callback's optional UserInfo
+request.
+
 ### Authelia
 
 First, configure an [Authelia OpenID Connect

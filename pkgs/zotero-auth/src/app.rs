@@ -25,7 +25,7 @@ use crate::{
     store,
 };
 
-const FLOW_LIFETIME: Duration = Duration::from_secs(15 * 60);
+pub(crate) const FLOW_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const STYLESHEET: Asset = topcoat::asset::asset!("target/topcoat/tailwind.css");
 
 #[derive(Clone)]
@@ -47,6 +47,7 @@ pub async fn migrate(config: &Config) -> anyhow::Result<()> {
 }
 
 pub async fn serve(config: Config) -> anyhow::Result<()> {
+    let browser_session_lifetime = Duration::from_secs(config.browser_session_lifetime_seconds);
     let database = store::connect(&config.database)
         .await
         .context("connecting to MariaDB")?;
@@ -66,7 +67,11 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     };
     let router = routes()
         .cookies()
-        .sessions(SessionConfig::builder().lifetime(FLOW_LIFETIME).build())
+        .sessions(
+            SessionConfig::builder()
+                .lifetime(browser_session_lifetime)
+                .build(),
+        )
         .app_context(state)
         .build();
 

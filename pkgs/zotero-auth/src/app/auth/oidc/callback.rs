@@ -134,9 +134,24 @@ async fn callback_inner(cx: &Cx) -> Result {
             .map(str::to_owned),
         email_verified,
     };
-    provision_and_complete_login(app, &flow.session_token, &profile).await?;
-    store::delete_oidc_flow(&app.database, &*token_hash).await?;
-    session::stop(cx).await?;
+    let user_id = provision_and_complete_login(app, &flow.session_token, &profile).await?;
+    let rotation = session::rotate(cx)
+        .await?
+        .ok_or_else(|| bad_request("missing or invalid OIDC flow session"))?;
+    let expires = rotation
+        .session
+        .expires_at
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    store::replace_browser_session(
+        &app.database,
+        &*rotation.revoked,
+        &*rotation.session.token_hash,
+        user_id,
+        expires,
+    )
+    .await?;
+    store::delete_oidc_flow(&app.database, &*rotation.revoked).await?;
 
     success_page().await
 }
@@ -160,7 +175,7 @@ async fn provision_and_complete_login(
     app: &AppState,
     session_token: &str,
     profile: &OidcProfile,
-) -> Result<()> {
+) -> Result<u64> {
     let user_id = store::provision_user(&app.database, profile)
         .await?
         .ok_or_else(forbidden)?;
@@ -184,5 +199,5 @@ async fn provision_and_complete_login(
         .complete_login_session(session_token, user_id, info.access)
         .await?;
     transaction.commit().await?;
-    Ok(())
+    Ok(user_id)
 }

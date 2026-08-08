@@ -1,7 +1,9 @@
 {
   fetchFromGitHub,
   lib,
+  lndir,
   php,
+  runCommandLocal,
   ...
 }: let
   # TODO: find a better way to do this and/or upstream it
@@ -77,15 +79,43 @@ in
       withConfig = {
         config,
         dbconnect,
-      }:
-        finalAttrs.finalPackage.overrideAttrs {
+      }: let
+        unconfigured = finalAttrs.finalPackage;
+        app = "share/php/${finalAttrs.pname}";
+      in
+        runCommandLocal "${finalAttrs.pname}-configured-${finalAttrs.version}" {
           inherit config dbconnect;
           passAsFile = ["config" "dbconnect"];
-          postPatch = ''
-            cp $configPath include/config/config.inc.php
-            cp $dbconnectPath include/config/dbconnect.inc.php
-          '';
-        };
+
+          nativeBuildInputs = [lndir];
+
+          inherit (unconfigured) meta;
+          passthru =
+            (unconfigured.passthru or {})
+            // {
+              inherit (unconfigured) php;
+              inherit unconfigured;
+            };
+        } ''
+          mkdir -p "$out"
+          lndir -silent ${unconfigured} "$out"
+
+          rm -f \
+            "$out/${app}/include/config/config.inc.php" \
+            "$out/${app}/include/config/dbconnect.inc.php"
+
+          install -m 0444 "$configPath" \
+            "$out/${app}/include/config/config.inc.php"
+          install -m 0444 "$dbconnectPath" \
+            "$out/${app}/include/config/dbconnect.inc.php"
+
+          # CLI startup derives Z_ENV_BASE_PATH from header.inc.php's resolved
+          # path, so this file must not remain a symlink to the unconfigured tree.
+          rm "$out/${app}/include/header.inc.php"
+          install -m 0444 \
+            ${unconfigured}/${app}/include/header.inc.php \
+            "$out/${app}/include/header.inc.php"
+        '';
     };
 
     meta = {

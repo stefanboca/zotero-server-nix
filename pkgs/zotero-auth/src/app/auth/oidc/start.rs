@@ -1,5 +1,3 @@
-use std::time::UNIX_EPOCH;
-
 use openidconnect::{CsrfToken, Nonce, PkceCodeChallenge, Scope, core::CoreAuthenticationFlow};
 use topcoat::{
     Result,
@@ -11,9 +9,10 @@ use topcoat::{
     },
     session,
 };
+use url::Url;
 
 use crate::{
-    app::{AppState, epoch_seconds, is_topcoat_dev, valid_session_token},
+    app::{AppState, FLOW_LIFETIME, epoch_seconds, is_topcoat_dev, valid_session_token},
     store,
 };
 
@@ -42,6 +41,19 @@ async fn start(cx: &Cx) -> Result<Response> {
     if info.status != "pending" {
         return Err(bad_request("Zotero login session is no longer pending").into());
     }
+    let url = begin_oidc_flow(cx, &query.dataserver_session, None).await?;
+
+    // A Topcoat redirect error bypasses the cookie layer's response finalizer.
+    // Return a successful redirect so session::start can emit its cookie.
+    see_other(url.as_str()).into_response(cx)
+}
+
+pub(crate) async fn begin_oidc_flow(
+    cx: &Cx,
+    dataserver_session: &str,
+    browser_session: Option<session::Session>,
+) -> Result<Url> {
+    let app = app_context::<AppState>(cx);
     if let Some(token_hash) = session::token_hash(cx).await?
         && !store::clear_oidc_flow(&app.database, &*token_hash).await?
     {
@@ -60,24 +72,30 @@ async fn start(cx: &Cx) -> Result<Response> {
         }
     }
     let (url, csrf, nonce) = authorization.set_pkce_challenge(challenge).url();
-    store::delete_expired_oidc_flows(&app.database, epoch_seconds()?).await?;
-    let browser_session = session::start(cx).await?;
-    let expires = browser_session
-        .expires_at
-        .duration_since(UNIX_EPOCH)?
-        .as_secs();
+    let new_browser_session = browser_session.is_none();
+    let browser_session = match browser_session {
+        Some(browser_session) => browser_session,
+        None => session::start(cx).await?,
+    };
+    let now = epoch_seconds()?;
+    store::delete_expired_oidc_flows(&app.database, now).await?;
+    let expires = now
+        .checked_add(FLOW_LIFETIME.as_secs())
+        .ok_or_else(|| anyhow::anyhow!("OIDC flow expiry is out of range"))?;
     let inserted = store::create_oidc_flow(
         &app.database,
         &*browser_session.token_hash,
         csrf.secret(),
         nonce.secret(),
         verifier.secret(),
-        &query.dataserver_session,
+        dataserver_session,
         expires,
     )
     .await;
     if let Err(error) = inserted {
-        session::stop(cx).await?;
+        if new_browser_session {
+            session::stop(cx).await?;
+        }
         if store::is_duplicate_key(&error) {
             return Err(bad_request(
                 "an OIDC login is already being completed for this Zotero session",
@@ -86,8 +104,5 @@ async fn start(cx: &Cx) -> Result<Response> {
         }
         return Err(error.into());
     }
-
-    // A Topcoat redirect error bypasses the cookie layer's response finalizer.
-    // Return a successful redirect so session::start can emit its cookie.
-    see_other(url.as_str()).into_response(cx)
+    Ok(url)
 }

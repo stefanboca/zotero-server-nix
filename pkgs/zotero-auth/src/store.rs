@@ -125,6 +125,59 @@ pub async fn delete_oidc_flow(pool: &MySqlPool, token_hash: &[u8]) -> sqlx::Resu
     Ok(())
 }
 
+pub async fn refresh_browser_session(
+    pool: &MySqlPool,
+    token_hash: &[u8],
+    expires: u64,
+) -> sqlx::Result<Option<u64>> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query("DELETE FROM oidc_browser_sessions WHERE expiresAt <= CURRENT_TIMESTAMP(6)")
+        .execute(&mut *transaction)
+        .await?;
+    let user_id = sqlx::query_scalar::<_, u64>(
+        "SELECT userID FROM oidc_browser_sessions WHERE tokenHash = ? FOR UPDATE",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut *transaction)
+    .await?;
+    if user_id.is_some() {
+        sqlx::query(
+            "UPDATE oidc_browser_sessions SET expiresAt = FROM_UNIXTIME(?) WHERE tokenHash = ?",
+        )
+        .bind(expires)
+        .bind(token_hash)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
+    Ok(user_id)
+}
+
+pub async fn replace_browser_session(
+    pool: &MySqlPool,
+    old_token_hash: &[u8],
+    new_token_hash: &[u8],
+    user_id: u64,
+    expires: u64,
+) -> sqlx::Result<()> {
+    let mut transaction = pool.begin().await?;
+    sqlx::query(
+        "DELETE FROM oidc_browser_sessions WHERE tokenHash = ? OR expiresAt <= CURRENT_TIMESTAMP(6)",
+    )
+    .bind(old_token_hash)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO oidc_browser_sessions (tokenHash, userID, expiresAt) VALUES (?, ?, FROM_UNIXTIME(?))",
+    )
+    .bind(new_token_hash)
+    .bind(user_id)
+    .bind(expires)
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await
+}
+
 pub async fn provision_user(
     pool: &MySqlPool,
     profile: &OidcProfile,

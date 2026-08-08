@@ -4,11 +4,18 @@ use std::{
 };
 
 use anyhow::Context as _;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
+
+const DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(
+        default = "default_browser_session_lifetime_seconds",
+        deserialize_with = "deserialize_browser_session_lifetime_seconds"
+    )]
+    pub browser_session_lifetime_seconds: u64,
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub oidc: OidcConfig,
@@ -70,6 +77,23 @@ pub(crate) fn read_credential(name: &str) -> anyhow::Result<String> {
     Ok(value.trim().to_owned())
 }
 
+fn default_browser_session_lifetime_seconds() -> u64 {
+    DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS
+}
+
+fn deserialize_browser_session_lifetime_seconds<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let lifetime = u64::deserialize(deserializer)?;
+    if lifetime == 0 {
+        return Err(de::Error::custom(
+            "browser_session_lifetime_seconds must be greater than zero",
+        ));
+    }
+    Ok(lifetime)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,7 +129,50 @@ mod tests {
         .expect("valid config");
 
         assert_eq!(config.database.name, "zotero_www");
+        assert_eq!(
+            config.browser_session_lifetime_seconds,
+            DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS
+        );
         assert_eq!(config.oidc.scopes, ["openid", "profile", "email"]);
+    }
+
+    #[test]
+    fn rejects_a_zero_browser_session_lifetime() {
+        let result = toml::from_str::<Config>(
+            r#"
+                browser_session_lifetime_seconds = 0
+
+                [server]
+                socket = "/run/zotero-auth/zotero-auth.sock"
+                base_uri = "zotero.example.com"
+
+                [database]
+                socket = "/run/mysqld/mysqld.sock"
+                user = "zotero-auth"
+                name = "zotero_www"
+                max_connections = 10
+
+                [oidc]
+                issuer = "https://auth.example.com"
+                client_id = "zotero"
+                scopes = ["openid", "profile", "email"]
+
+                [identity]
+                username_claim = "preferred_username"
+                real_name_claim = "name"
+                require_verified_email = true
+
+                [dataserver]
+                url = "http://localhost"
+            "#,
+        );
+
+        assert!(
+            result
+                .expect_err("zero lifetime must fail")
+                .to_string()
+                .contains("browser_session_lifetime_seconds must be greater than zero")
+        );
     }
 
     #[test]

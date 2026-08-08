@@ -356,6 +356,12 @@ in {
       usernameClaim = settingOption str "preferred_username" "OIDC claim used as the initial Zotero username; dotted paths address nested claims.";
       realNameClaim = settingOption str "name" "OIDC claim synchronized to the Zotero profile real name; dotted paths address nested claims.";
       requireVerifiedEmail = settingOption bool true "Reject identities whose OIDC email_verified claim is not true.";
+      browserSessionLifetimeSeconds = mkOption {
+        type = nullOr int;
+        default = null;
+        example = 2592000;
+        description = "Browser authentication session lifetime in seconds. A null value uses the login portal default.";
+      };
       databaseMaxConnections = settingOption int 5 "Maximum MariaDB connections used by the login portal.";
     };
 
@@ -509,6 +515,10 @@ in {
         assertion = !cfg.auth.enable || cfg.auth.clientSecretFile != null;
         message = "services.zotero-dataserver.auth.clientSecretFile must be set when OIDC login is enabled";
       }
+      {
+        assertion = cfg.auth.browserSessionLifetimeSeconds == null || cfg.auth.browserSessionLifetimeSeconds > 0;
+        message = "services.zotero-dataserver.auth.browserSessionLifetimeSeconds must be positive when set";
+      }
     ];
 
     users = {
@@ -610,15 +620,8 @@ in {
         virtualHosts.${cfg.virtualHost} = {
           extraConfig = ''
             ${optionalString cfg.auth.enable ''
-              handle /login {
-                reverse_proxy unix//run/zotero-auth/zotero-auth.sock
-              }
-
-              handle /auth/* {
-                reverse_proxy unix//run/zotero-auth/zotero-auth.sock
-              }
-
-              handle /_topcoat/assets/* {
+              @zoteroAuth path /login /auth/* /_topcoat/assets/*
+              handle @zoteroAuth {
                 reverse_proxy unix//run/zotero-auth/zotero-auth.sock
               }
             ''}
@@ -642,35 +645,40 @@ in {
     };
 
     environment.etc = {
-      "zotero-dataserver/auth.toml".source = toml.generate "zotero-auth.toml" {
-        server = {
-          socket = "/run/zotero-auth/zotero-auth.sock";
-          base_uri = cfg.virtualHost;
-        };
-        database = {
-          socket = toString config.services.mysql.settings.mysqld.socket;
-          user = "zotero-auth";
-          name = "zotero_www";
-          max_connections = cfg.auth.databaseMaxConnections;
-        };
-        oidc = {
-          issuer =
-            if cfg.auth.issuer == null
-            then ""
-            else cfg.auth.issuer;
-          client_id =
-            if cfg.auth.clientId == null
-            then ""
-            else cfg.auth.clientId;
-          scopes = cfg.auth.scopes;
-        };
-        identity = {
-          username_claim = cfg.auth.usernameClaim;
-          real_name_claim = cfg.auth.realNameClaim;
-          require_verified_email = cfg.auth.requireVerifiedEmail;
-        };
-        dataserver.url = publicBaseUri;
-      };
+      "zotero-dataserver/auth.toml".source = toml.generate "zotero-auth.toml" (
+        {
+          server = {
+            socket = "/run/zotero-auth/zotero-auth.sock";
+            base_uri = cfg.virtualHost;
+          };
+          database = {
+            socket = toString config.services.mysql.settings.mysqld.socket;
+            user = "zotero-auth";
+            name = "zotero_www";
+            max_connections = cfg.auth.databaseMaxConnections;
+          };
+          oidc = {
+            issuer =
+              if cfg.auth.issuer == null
+              then ""
+              else cfg.auth.issuer;
+            client_id =
+              if cfg.auth.clientId == null
+              then ""
+              else cfg.auth.clientId;
+            scopes = cfg.auth.scopes;
+          };
+          identity = {
+            username_claim = cfg.auth.usernameClaim;
+            real_name_claim = cfg.auth.realNameClaim;
+            require_verified_email = cfg.auth.requireVerifiedEmail;
+          };
+          dataserver.url = publicBaseUri;
+        }
+        // optionalAttrs (cfg.auth.browserSessionLifetimeSeconds != null) {
+          browser_session_lifetime_seconds = cfg.auth.browserSessionLifetimeSeconds;
+        }
+      );
       "zotero-dataserver/attachment-proxy.json".source = json.generate "attachment-proxy.json" (cfg.attachment-proxy.settings
         // {
           host = "127.0.0.1";

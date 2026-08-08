@@ -1,11 +1,20 @@
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{error::bad_request, page, query_params},
+    router::{
+        error::{bad_request, redirect},
+        page, query_params,
+    },
+    session,
     view::view,
 };
 
-use crate::app::{AppState, is_topcoat_dev, valid_session_token};
+use crate::{
+    app::{AppState, is_topcoat_dev, valid_session_token},
+    store,
+};
+
+use super::auth::begin_oidc_flow;
 
 #[query_params(error = bad_request)]
 struct LoginQuery {
@@ -30,6 +39,23 @@ async fn login(cx: &Cx) -> Result {
             .await?;
         if info.status != "pending" {
             return Err(bad_request("Zotero login session is no longer pending").into());
+        }
+        if let Some(browser_session) = session::refresh(cx).await? {
+            let expires = browser_session
+                .expires_at
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            let authenticated = store::refresh_browser_session(
+                &app.database,
+                &*browser_session.token_hash,
+                expires,
+            )
+            .await?;
+            if authenticated.is_some() {
+                let url =
+                    begin_oidc_flow(cx, &query.dataserver_session, Some(browser_session)).await?;
+                return Err(redirect(url.as_str()).into());
+            }
         }
         format!("/auth/oidc/start?session={}", query.dataserver_session)
     };

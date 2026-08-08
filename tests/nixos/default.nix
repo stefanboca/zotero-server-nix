@@ -110,6 +110,7 @@ in {
       import re
       import shlex
       import time
+      import tomllib
       import urllib.parse
 
       start_all()
@@ -160,6 +161,11 @@ in {
       ).strip() == "zotero-auth"
       assert "zotero-auth" in machine.succeed("id -nG caddy").split()
 
+      auth_config = tomllib.loads(
+          machine.succeed("cat /etc/zotero-dataserver/auth.toml")
+      )
+      assert "browser_session_lifetime_seconds" not in auth_config
+
       databases = machine.succeed(
           "mariadb --batch --skip-column-names "
           "--execute='SHOW DATABASES LIKE \"zotero_%\"'"
@@ -194,6 +200,7 @@ in {
       assert www_tables == {
           "_sqlx_migrations",
           "GDN_User",
+          "oidc_browser_sessions",
           "oidc_flows",
           "oidc_identities",
           "sessions",
@@ -308,6 +315,15 @@ in {
 
       repeated_session = create_login_session()
       cookie_file = "/tmp/oidc-repeated.cookies"
+
+      def browser_session_cookie():
+          return urllib.parse.unquote(
+              machine.succeed(
+                  "awk '$6 == \"__Host-session\" {print $7}' "
+                  + shlex.quote(cookie_file)
+              ).strip()
+          )
+
       first_headers = machine.succeed(
           "curl --silent --show-error --dump-header - "
           "--data= --output /dev/null --cookie-jar "
@@ -335,6 +351,7 @@ in {
           if line.lower().startswith("location:")
       )
       assert first_location != second_location, (first_location, second_location)
+      oidc_flow_cookie = browser_session_cookie()
       repeated_result = machine.succeed(
           "curl --silent --show-error --fail-with-body "
           "--location --cookie "
@@ -345,6 +362,35 @@ in {
           + shlex.quote(second_location)
       )
       assert "Login complete" in repeated_result, repeated_result
+      durable_cookie = browser_session_cookie()
+      assert durable_cookie != oidc_flow_cookie
+      durable_hash = hashlib.sha256(
+          base64.urlsafe_b64decode(durable_cookie)
+      ).hexdigest().upper()
+      durable_row = machine.succeed(
+          "mariadb --batch --skip-column-names zotero_www --execute="
+          + shlex.quote(
+              "SELECT userID, CAST(UNIX_TIMESTAMP(expiresAt) AS UNSIGNED) "
+              "FROM oidc_browser_sessions "
+              f"WHERE tokenHash = UNHEX('{durable_hash}')"
+          )
+      ).strip().split("\t")
+      assert durable_row[0] == str(oidc_user_id), durable_row
+      assert int(durable_row[1]) > int(time.time()) + 29 * 24 * 60 * 60
+      browser_session_columns = machine.succeed(
+          "mariadb --batch --skip-column-names information_schema --execute="
+          + shlex.quote(
+              "SELECT COLUMN_NAME FROM COLUMNS "
+              "WHERE TABLE_SCHEMA = 'zotero_www' "
+              "AND TABLE_NAME = 'oidc_browser_sessions' "
+              "ORDER BY ORDINAL_POSITION"
+          )
+      ).splitlines()
+      assert browser_session_columns == [
+          "tokenHash",
+          "userID",
+          "expiresAt",
+      ], browser_session_columns
       stylesheet = re.search(
           r'href="(/_topcoat/assets/[^"]+)"', repeated_result
       )
@@ -358,6 +404,93 @@ in {
       assert machine.succeed(
           "mariadb --batch --skip-column-names zotero_www "
           "--execute='SELECT COUNT(*) FROM oidc_flows'"
+      ).strip() == "0"
+
+      machine.succeed(
+          "mariadb zotero_www --execute="
+          + shlex.quote(
+              "UPDATE oidc_browser_sessions "
+              "SET expiresAt = FROM_UNIXTIME(UNIX_TIMESTAMP() + 60) "
+              f"WHERE tokenHash = UNHEX('{durable_hash}')"
+          )
+      )
+      automatic_session = create_login_session()
+      automatic_headers = machine.succeed(
+          "curl --silent --show-error --dump-header - "
+          "--output /dev/null --cookie "
+          + shlex.quote(cookie_file)
+          + " --cookie-jar "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(automatic_session["loginURL"])
+      )
+      automatic_location = next(
+          line.split(":", 1)[1].strip()
+          for line in automatic_headers.splitlines()
+          if line.lower().startswith("location:")
+      )
+      assert automatic_location.startswith(
+          "http://127.0.0.1:19090/authorize?"
+      ), automatic_location
+      refreshed_expiry = int(machine.succeed(
+          "mariadb --batch --skip-column-names zotero_www --execute="
+          + shlex.quote(
+              "SELECT CAST(UNIX_TIMESTAMP(expiresAt) AS UNSIGNED) "
+              "FROM oidc_browser_sessions "
+              f"WHERE tokenHash = UNHEX('{durable_hash}')"
+          )
+      ).strip())
+      assert refreshed_expiry > int(time.time()) + 29 * 24 * 60 * 60
+      flow_expiry = int(machine.succeed(
+          "mariadb --batch --skip-column-names zotero_www --execute="
+          + shlex.quote(
+              "SELECT expires FROM oidc_flows "
+              f"WHERE tokenHash = UNHEX('{durable_hash}')"
+          )
+      ).strip())
+      assert flow_expiry > int(time.time()) + 14 * 60
+      assert flow_expiry < refreshed_expiry
+      automatic_result = machine.succeed(
+          "curl --silent --show-error --fail-with-body --location "
+          "--cookie "
+          + shlex.quote(cookie_file)
+          + " --cookie-jar "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(automatic_location)
+      )
+      assert "Login complete" in automatic_result, automatic_result
+      assert login_session_status(
+          automatic_session["sessionToken"]
+      )["status"] == "completed"
+
+      expired_hash = hashlib.sha256(
+          base64.urlsafe_b64decode(browser_session_cookie())
+      ).hexdigest().upper()
+      machine.succeed(
+          "mariadb zotero_www --execute="
+          + shlex.quote(
+              "UPDATE oidc_browser_sessions "
+              "SET expiresAt = FROM_UNIXTIME(UNIX_TIMESTAMP() - 1) "
+              f"WHERE tokenHash = UNHEX('{expired_hash}')"
+          )
+      )
+      expired_session = create_login_session()
+      expired_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " --cookie-jar "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(expired_session["loginURL"])
+      )
+      assert "Continue with OpenID Connect" in expired_page, expired_page
+      assert machine.succeed(
+          "mariadb --batch --skip-column-names zotero_www --execute="
+          + shlex.quote(
+              "SELECT COUNT(*) FROM oidc_browser_sessions "
+              f"WHERE tokenHash = UNHEX('{expired_hash}')"
+          )
       ).strip() == "0"
 
       machine.succeed(
