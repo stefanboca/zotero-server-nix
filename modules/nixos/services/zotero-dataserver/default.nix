@@ -511,17 +511,23 @@ in {
       }
     ];
 
-    users.groups.zotero-dataserver = {};
-    users.users.zotero-dataserver = {
-      isSystemUser = true;
-      group = "zotero-dataserver";
+    users = {
+      users = {
+        zotero-dataserver = {
+          isSystemUser = true;
+          group = "zotero-dataserver";
+        };
+        zotero-auth = {
+          isSystemUser = true;
+          group = "zotero-auth";
+        };
+        caddy.extraGroups = ["zotero-auth"];
+      };
+      groups = {
+        zotero-dataserver = {};
+        zotero-auth = {};
+      };
     };
-    users.groups.zotero-auth = {};
-    users.users.zotero-auth = {
-      isSystemUser = true;
-      group = "zotero-auth";
-    };
-    users.users.caddy.extraGroups = ["zotero-auth"];
 
     services = {
       memcached.enable = true;
@@ -578,34 +584,7 @@ in {
             name = "zotero_www";
           }
         ];
-        settings.mysqld = {
-          # Dataserver uses InnoDB, except for its MyISAM ID allocator. MariaDB
-          # also uses Aria internally, so retain those engines with small caches.
-          aria_pagecache_buffer_size = mkDefault "8M";
-          aria_sort_buffer_size = mkDefault "16M";
-          bind-address = mkDefault "127.0.0.1";
-          host_cache_size = mkDefault 0;
-          innodb_buffer_pool_size = mkDefault "64M";
-          innodb_ft_cache_size = mkDefault "2M";
-          innodb_ft_total_cache_size = mkDefault "32M";
-          innodb_log_buffer_size = mkDefault "8M";
-          innodb_read_io_threads = mkDefault 2;
-          innodb_write_io_threads = mkDefault 2;
-          key_buffer_size = mkDefault "8M";
-          max_connections = mkDefault 32;
-          max_heap_table_size = mkDefault "8M";
-          myisam_sort_buffer_size = mkDefault "16M";
-          performance_schema = mkDefault "OFF";
-          port = mkDefault 3336;
-          query_cache_size = mkDefault 0;
-          sequence = mkDefault "OFF";
-          skip_name_resolve = mkDefault true;
-          socket = mkDefault "/run/mysqld/mysqld.sock";
-          table_open_cache = mkDefault 400;
-          table_open_cache_instances = mkDefault 1;
-          thread_cache_size = mkDefault 8;
-          tmp_table_size = mkDefault "8M";
-        };
+        settings.mysqld.socket = mkDefault "/run/mysqld/mysqld.sock";
       };
 
       phpfpm.pools.zotero-dataserver = {
