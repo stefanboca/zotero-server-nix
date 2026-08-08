@@ -28,13 +28,17 @@ in
 
     cargoLock.lockFile = ./Cargo.lock;
     nativeBuildInputs = [tailwindcss_4 topcoat-cli];
-    TAILWIND_CLI = lib.getExe tailwindcss_4;
+    env.TAILWIND_CLI = lib.getExe tailwindcss_4;
 
+    # Topcoat's asset IDs include the build output path. Preserve and install
+    # the exact executable that the Topcoat bundler scanned.
     postBuild = ''
       topcoat asset bundle --release --bin zotero-auth --out target/assets
+      cp target/release/zotero-auth target/zotero-auth-with-assets
     '';
 
     postInstall = ''
+      install -m755 target/zotero-auth-with-assets $out/bin/zotero-auth
       mkdir -p $out/bin/assets
       cp -r target/assets/. $out/bin/assets/
     '';
