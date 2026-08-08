@@ -2,9 +2,6 @@
   inputs = {
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
 
-    rust-overlay.url = "github:oxalica/rust-overlay";
-    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
-
     treefmt-nix.url = "github:numtide/treefmt-nix";
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
@@ -12,7 +9,6 @@
   outputs = {
     self,
     nixpkgs,
-    rust-overlay,
     treefmt-nix,
     ...
   }: let
@@ -22,11 +18,7 @@
 
     systems = ["x86_64-linux" "aarch64-linux"];
     forAllSystems = genAttrs systems;
-    nixpkgsFor = forAllSystems (system:
-      import nixpkgs {
-        inherit system;
-        overlays = [rust-overlay.overlays.default];
-      });
+    nixpkgsFor = forAllSystems (system: nixpkgs.legacyPackages.${system});
     treefmtFor = forAllSystems (system: treefmt-nix.lib.evalModule nixpkgsFor.${system} ./treefmt.nix);
   in {
     packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
@@ -47,11 +39,6 @@
 
     formatter = forAllSystems (system: treefmtFor.${system}.config.build.wrapper);
     checks = forAllSystems (system: let
-      testPkgs = import nixpkgs {
-        inherit system;
-        config.allowUnfree = true;
-        overlays = [rust-overlay.overlays.default];
-      };
       packages = mapAttrs' (n: nameValuePair "package-${n}") self.packages.${system};
       configuredZotero = {
         package-zotero-configured = self.packages.${system}.zotero.withConfig {
@@ -60,6 +47,7 @@
       };
       formatting = {formatting = treefmtFor.${system}.config.build.check self;};
       nixos = import ./tests/nixos {
+        pkgs = nixpkgsFor.${system};
         inherit
           (self.packages.${system})
           versitygw
@@ -72,7 +60,6 @@
           zotero-translation-server
           ;
         module = self.nixosModules.default;
-        pkgs = testPkgs;
       };
     in
       packages // configuredZotero // formatting // nixos);

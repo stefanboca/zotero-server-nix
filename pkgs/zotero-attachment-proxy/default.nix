@@ -2,7 +2,6 @@
   buildNpmPackage,
   fetchFromGitHub,
   lib,
-  nodejs_20,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -22,8 +21,6 @@ buildNpmPackage (finalAttrs: {
   ];
 
   npmDepsHash = "sha256-auGS3ssa3QgO3J7Q54rj15itFjcnvjCs5KPSu8GkrkU=";
-
-  nodejs = nodejs_20;
 
   dontNpmBuild = true;
 
