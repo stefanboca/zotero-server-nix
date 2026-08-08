@@ -19,6 +19,7 @@ sqlx = {
   default-features = false,
   features = ["macros", "migrate", "mysql", "runtime-tokio"]
 }
+time = { version = "0.3.55", features = ["formatting", "parsing"] }
 tokio = {
   version = "1.53.1",
   features = ["macros", "net", "rt-multi-thread", "signal"]
@@ -32,6 +33,7 @@ topcoat = {
     "cookie",
     "discover",
     "router",
+    "runtime",
     "serve",
     "session",
     "tailwind",

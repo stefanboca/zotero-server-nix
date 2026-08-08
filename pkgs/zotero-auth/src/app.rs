@@ -6,35 +6,34 @@ mod user;
 mod users;
 
 use std::{
-    env,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Context as _;
-use sqlx::MySqlPool;
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
-    context::{Cx, CxBuilder, app_context},
+    context::{Cx, CxBuilder, app_context, try_request_context},
     cookie::RouterBuilderCookieExt,
     router::{
-        Body, Next, Response, RouterBuilder,
-        StatusCode,
+        Body, Next, Response, RouterBuilder, RouterBuilderDiscoverExt, StatusCode,
         error::{
             BadRequestError, ForbiddenError, InternalServerError, MethodNotAllowedError,
             NotFoundError, RedirectError, UnauthorizedError, not_found, redirect,
             redirect_permanent,
         },
-        layer, layout, page, uri,
+        headers, layer, layout, page, uri,
     },
     session::{self, RouterBuilderSessionExt, SessionConfig},
     view::{component, view},
 };
 
 use crate::{
+    backend::Backend,
     config::{Config, read_credential},
     dataserver::Dataserver,
+    id::UserId,
     oidc::Oidc,
     store,
 };
@@ -42,11 +41,10 @@ use crate::{
 pub(crate) const FLOW_LIFETIME: Duration = Duration::from_secs(15 * 60);
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Arc<Config>,
-    pub database: MySqlPool,
-    pub dataserver: Arc<Dataserver>,
-    pub oidc: Arc<Oidc>,
+    pub backend: Backend,
 }
+
+pub(crate) struct BareLayout;
 
 pub async fn migrate(config: &Config) -> anyhow::Result<()> {
     let database = store::connect(&config.database)
@@ -72,10 +70,12 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
     let dataserver = Dataserver::new(&config, read_credential("dataserver-super-password")?)?;
     let socket = config.server.socket.clone();
     let state = AppState {
-        config: Arc::new(config),
-        database,
-        dataserver: Arc::new(dataserver),
-        oidc: Arc::new(oidc),
+        backend: Backend::production(
+            Arc::new(config),
+            database,
+            Arc::new(dataserver),
+            Arc::new(oidc),
+        ),
     };
     let router = routes()
         .cookies()
@@ -98,13 +98,26 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         .context("serving auth portal")
 }
 
-pub fn routes() -> RouterBuilder {
-    topcoat::router::module_router!()
-        .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
+pub async fn serve_development() -> anyhow::Result<()> {
+    let state = AppState {
+        backend: Backend::development(),
+    };
+    let router = routes()
+        .cookies()
+        .sessions(SessionConfig::default())
+        .app_context(state)
+        .build();
+    topcoat::start(router)
+        .await
+        .context("serving development auth portal")
 }
 
-pub fn is_topcoat_dev() -> bool {
-    env::var_os("TOPCOAT_DEV_URL").is_some()
+pub fn routes() -> RouterBuilder {
+    topcoat::router::module_router!()
+        // `module_router!` discovers file-based routes, but runtime procedures
+        // are registered through the outer router discovery extension.
+        .discover()
+        .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
 }
 
 pub(crate) fn epoch_seconds() -> anyhow::Result<u64> {
@@ -115,7 +128,7 @@ pub(crate) fn valid_session_token(token: &str) -> bool {
     token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
-pub(crate) async fn current_user(cx: &Cx) -> Result<Option<u64>> {
+pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
     let Some(browser_session) = session::refresh(cx).await? else {
         return Ok(None);
     };
@@ -124,15 +137,13 @@ pub(crate) async fn current_user(cx: &Cx) -> Result<Option<u64>> {
         .duration_since(UNIX_EPOCH)?
         .as_secs();
     let app = app_context::<AppState>(cx);
-    store::refresh_browser_session(&app.database, &*browser_session.token_hash, expires)
+    app.backend
+        .refresh_browser_session(&*browser_session.token_hash, expires)
         .await
         .map_err(Into::into)
 }
 
-pub(crate) async fn authenticated_user(cx: &Cx) -> Result<u64> {
-    if is_topcoat_dev() {
-        return Ok(1);
-    }
+pub(crate) async fn authenticated_user(cx: &Cx) -> Result<UserId> {
     if let Some(user_id) = current_user(cx).await? {
         return Ok(user_id);
     }
@@ -190,11 +201,15 @@ async fn canonicalize_trailing_slash(
 
 #[layout]
 async fn root_layout(cx: &Cx, slot: Result) -> Result {
+    if headers(cx).get("x-zotero-fragment").is_some() {
+        return slot;
+    }
     let (mut content, error_page) = match slot {
         Ok(content) => (content, false),
         Err(error) if error.downcast_ref::<RedirectError>().is_some() => return Err(error),
         Err(error) => (friendly_error(cx, &error).await?, true),
     };
+    let bare_layout = try_request_context::<BareLayout>(cx).is_some();
     let path = uri(cx).path();
     let home_active = path == "/";
     let groups_active = path == "/groups" || path.starts_with("/groups/");
@@ -207,14 +222,18 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
             "border-b-2 border-transparent pb-1 text-sm hover:text-red-800 dark:hover:text-red-400"
         }
     };
-    let navigation_user = match navigation_user(cx).await {
-        Ok(user) => user,
-        Err(error) => {
-            eprintln!("failed to render Zotero navigation: {error:?}");
-            if !error_page {
-                content = friendly_internal_error(cx).await?;
+    let navigation_user = if bare_layout {
+        None
+    } else {
+        match navigation_user(cx).await {
+            Ok(user) => user,
+            Err(error) => {
+                eprintln!("failed to render Zotero navigation: {error:?}");
+                if !error_page {
+                    content = friendly_internal_error(cx).await?;
+                }
+                None
             }
-            None
         }
     };
     view! {
@@ -226,35 +245,38 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 <title>"Zotero"</title>
                 <link rel="stylesheet" href=(topcoat::asset::asset!("target/topcoat/tailwind.css"))>
                 <link rel="stylesheet" href=(topcoat::asset::asset!("src/app/feedback.css"))>
+                topcoat::runtime::script()
                 topcoat::dev::script()
             </head>
             <body class="min-h-screen bg-white font-sans text-stone-950 dark:bg-stone-950 dark:text-stone-50">
-                <header class="border-b border-stone-200 dark:border-stone-800">
-                    <nav class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6" aria-label="Primary navigation">
-                        <div class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6">
-                            <a class=(if home_active { "border-b-2 border-red-800 pb-1 text-lg font-semibold text-red-800 dark:border-red-400 dark:text-red-400" } else { "border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400" }) href="/" aria-current=(home_active.then_some("page"))>"Zotero"</a>
-                            <a class=(nav_class(groups_active)) href="/groups" aria-current=(groups_active.then_some("page"))>"Groups"</a>
-                            <a class=(nav_class(account_active)) href="/account" aria-current=(account_active.then_some("page"))>"Account"</a>
-                            <a class=(nav_class(settings_active)) href="/settings" aria-current=(settings_active.then_some("page"))>"Settings"</a>
-                        </div>
-                        <div class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto">
-                            if let Some(user) = &navigation_user {
-                                <span class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400">
-                                    "Signed in as " (user.display_name())
-                                </span>
-                                <form method="post" action="/user/logout">
-                                    <button class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">
-                                        "Log out"
-                                    </button>
-                                </form>
-                            } else {
-                                <a class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" href="/user/login">
-                                    "Sign in"
-                                </a>
-                            }
-                        </div>
-                    </nav>
-                </header>
+                if !bare_layout {
+                    <header class="border-b border-stone-200 dark:border-stone-800">
+                        <nav class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6" aria-label="Primary navigation">
+                            <div class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6">
+                                <a class=(if home_active { "border-b-2 border-red-800 pb-1 text-lg font-semibold text-red-800 dark:border-red-400 dark:text-red-400" } else { "border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400" }) href="/" aria-current=(home_active.then_some("page"))>"Zotero"</a>
+                                <a class=(nav_class(groups_active)) href="/groups" aria-current=(groups_active.then_some("page"))>"Groups"</a>
+                                <a class=(nav_class(account_active)) href="/account" aria-current=(account_active.then_some("page"))>"Account"</a>
+                                <a class=(nav_class(settings_active)) href="/settings" aria-current=(settings_active.then_some("page"))>"Settings"</a>
+                            </div>
+                            <div class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto">
+                                if let Some(user) = &navigation_user {
+                                    <span class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400">
+                                        "Signed in as " (user.display_name())
+                                    </span>
+                                    <form method="post" action="/user/logout">
+                                        <button class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">
+                                            "Log out"
+                                        </button>
+                                    </form>
+                                } else {
+                                    <a class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" href="/user/login">
+                                        "Sign in"
+                                    </a>
+                                }
+                            </div>
+                        </nav>
+                    </header>
+                }
                 (content)
             </body>
         </html>
@@ -262,16 +284,11 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
 }
 
 async fn navigation_user(cx: &Cx) -> Result<Option<store::UserSummary>> {
-    if is_topcoat_dev() {
-        return Ok(Some(signed_in_user(cx).await?));
-    }
     let Some(user_id) = current_user(cx).await? else {
         return Ok(None);
     };
     let app = app_context::<AppState>(cx);
-    store::user_by_id(&app.database, user_id)
-        .await
-        .map_err(Into::into)
+    app.backend.user_by_id(user_id).await.map_err(Into::into)
 }
 
 async fn friendly_error(cx: &Cx, error: &topcoat::Error) -> Result<topcoat::view::View> {
@@ -358,17 +375,10 @@ async fn unmatched_page() -> Result {
 }
 
 pub(crate) async fn signed_in_user(cx: &Cx) -> Result<store::UserSummary> {
-    if is_topcoat_dev() {
-        return Ok(store::UserSummary {
-            user_id: 1,
-            username: "researcher".to_owned(),
-            email: "researcher@example.com".to_owned(),
-            real_name: Some("Example Researcher".to_owned()),
-        });
-    }
     let user_id = authenticated_user(cx).await?;
     let app = app_context::<AppState>(cx);
-    store::user_by_id(&app.database, user_id)
+    app.backend
+        .user_by_id(user_id)
         .await?
         .ok_or_else(|| not_found().into())
 }
@@ -376,7 +386,36 @@ pub(crate) async fn signed_in_user(cx: &Cx) -> Result<store::UserSummary> {
 #[component]
 pub(crate) async fn username_label(username: &str) -> Result {
     view! {
-        <span class="font-mono font-semibold">"@" (username)</span>
+        <span class="font-mono font-semibold">(username)</span>
+    }
+}
+
+#[component]
+pub(crate) async fn toast_script() -> Result {
+    view! {
+        <script type="module" src=(topcoat::asset::asset!("src/app/toast.js"))></script>
+    }
+}
+
+#[component]
+pub(crate) async fn confirmation_dialog() -> Result {
+    view! {
+        <dialog class="fixed inset-0 m-auto max-h-[calc(100vh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg overflow-y-auto border border-stone-300 bg-white p-0 text-stone-950 shadow-xl backdrop:bg-stone-950/60 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-50" data-confirm-dialog="">
+            <div class="p-6">
+                <h2 class="text-xl font-semibold" data-confirm-title="">"Confirm action"</h2>
+                <p class="mt-3 leading-7 text-stone-600 dark:text-stone-400" data-confirm-message=""></p>
+                <div class="mt-5" data-confirm-input-container="" hidden="hidden">
+                    <label class="block font-medium" data-confirm-input-label="" for="portal-confirmation"></label>
+                    <input class="mt-2 w-full border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950" id="portal-confirmation" autocomplete="off" data-confirm-input="">
+                    <p class="mt-2 text-sm text-stone-600 dark:text-stone-400" data-confirm-input-help=""></p>
+                </div>
+                <div class="mt-6 flex flex-wrap justify-end gap-3">
+                    <button class="border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700 dark:hover:bg-stone-800" type="button" data-confirm-submit="">"Confirm"</button>
+                    <button class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700" type="button" data-confirm-cancel="">"Cancel"</button>
+                </div>
+            </div>
+        </dialog>
+        <script type="module" src=(topcoat::asset::asset!("src/app/confirmation.js"))></script>
     }
 }
 
@@ -391,10 +430,10 @@ async fn index(cx: &Cx) -> Result {
 async fn portal_index(user: &store::UserSummary) -> Result {
     view! {
         <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <section>
-                <h1 class="text-2xl font-semibold">"Zotero account"</h1>
-                <p class="mt-2 text-stone-600 dark:text-stone-400">
-                    "Manage groups and file storage for " (user.email.as_str()) "."
+            <section class="max-w-2xl py-8">
+                <h1 class="text-3xl font-semibold">"Welcome, " (user.display_name())</h1>
+                <p class="mt-4 text-lg leading-8 text-stone-600 dark:text-stone-400">
+                    "This portal manages the server-side parts of your Zotero account, including groups and service settings. Continue using Zotero desktop for library items, attachments, and sync."
                 </p>
             </section>
         </main>
@@ -404,6 +443,11 @@ async fn portal_index(user: &store::UserSummary) -> Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_tree_builds_without_duplicate_routes_or_assets() {
+        let _router = routes().build();
+    }
 
     #[test]
     fn accepts_only_dataserver_session_tokens() {
@@ -423,5 +467,18 @@ mod tests {
         assert_eq!(normalized_return_path("//example.com/groups"), None);
         assert_eq!(normalized_return_path("/\\example.com/groups"), None);
         assert_eq!(normalized_return_path("/groups#fragment"), None);
+    }
+
+    #[test]
+    fn browser_mutations_use_topcoat_form_encoding() {
+        let confirmation = include_str!("app/confirmation.js");
+        let group_actions = include_str!("app/groups/group_id/group_actions.js");
+        for script in [confirmation, group_actions] {
+            assert!(script.contains("new URLSearchParams(new FormData(form))"));
+        }
+        assert!(group_actions.contains("[data-members-refresh]"));
+        assert!(group_actions.contains("X-Zotero-Outcome"));
+        assert!(group_actions.contains("already-member"));
+        assert!(!group_actions.contains("createContextualFragment"));
     }
 }

@@ -4,18 +4,19 @@ mod r#new;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{page, query_params},
+    router::{HeaderValue, page, query_params},
     view::{component, view},
 };
 
-#[topcoat::router::query_params(error = topcoat::router::error::bad_request)]
+#[topcoat::router::query_params(error = bad_request)]
 struct GroupsQuery {
     notice: Option<String>,
     name: Option<String>,
+    dialog: Option<String>,
 }
 
 use crate::{
-    app::{AppState, is_topcoat_dev, signed_in_user},
+    app::{AppState, confirmation_dialog, signed_in_user, toast_script},
     dataserver::{Group, GroupRole},
     store::UserSummary,
 };
@@ -23,60 +24,63 @@ use crate::{
 #[page]
 async fn list_groups(cx: &Cx) -> Result {
     let parameters = query_params::<GroupsQuery>(cx)?;
+    let toast = groups_toast(parameters);
     let user = signed_in_user(cx).await?;
-    if is_topcoat_dev() {
-        let groups = vec![Group {
-            id: 1,
-            name: "Research group".to_owned(),
-            owner: 1,
-            admins: Vec::new(),
-            members: vec![2],
-            group_type: "Private".to_owned(),
-            library_editing: "members".to_owned(),
-            library_reading: "members".to_owned(),
-            file_editing: "members".to_owned(),
-            description: String::new(),
-            url: String::new(),
-            has_image: false,
-        }];
-        return view! { groups_index(user: &user, groups: &groups, left_group: left_group(parameters)) };
-    }
-
     let app = app_context::<AppState>(cx);
-    let groups = app.dataserver.groups_for_user(user.user_id).await?;
-    view! { groups_index(user: &user, groups: &groups, left_group: left_group(parameters)) }
+    let mut groups = app.backend.groups_for_user(user.user_id).await?;
+    groups.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    view! { groups_index(user: &user, groups: &groups, toast: toast.as_ref(), open_new: parameters.dialog.as_deref() == Some("new")) }
 }
 
-fn left_group(parameters: &GroupsQuery) -> Option<&str> {
-    (parameters.notice.as_deref() == Some("left-group"))
-        .then(|| parameters.name.as_deref())
-        .flatten()
+struct GroupsToast {
+    message: String,
+    is_error: bool,
+}
+
+fn groups_toast(parameters: &GroupsQuery) -> Option<GroupsToast> {
+    let name = parameters.name.as_deref().unwrap_or("the group");
+    let (message, is_error) = match parameters.notice.as_deref()? {
+        "left-group" => (format!("You left “{name}”."), false),
+        "group-created" => (format!("Created “{name}”."), false),
+        "group-create-failed" => (format!("Couldn’t create “{name}”. Please try again."), true),
+        "group-deleted" => (format!("Deleted “{name}”."), false),
+        "group-delete-failed" => (format!("Couldn’t delete “{name}”. Please try again."), true),
+        _ => return None,
+    };
+    Some(GroupsToast { message, is_error })
+}
+
+pub(super) fn groups_notice_location(notice: &str, name: &str) -> Result<HeaderValue> {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("notice", notice)
+        .append_pair("name", name)
+        .finish();
+    HeaderValue::try_from(format!("/groups?{query}")).map_err(Into::into)
 }
 
 #[component]
-async fn groups_index(user: &UserSummary, groups: &[Group], left_group: Option<&str>) -> Result {
+async fn groups_index(
+    user: &UserSummary,
+    groups: &[Group],
+    toast: Option<&GroupsToast>,
+    open_new: bool,
+) -> Result {
     view! {
         <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <div class="pointer-events-none fixed inset-x-4 top-20 z-50 sm:left-auto sm:right-5 sm:w-96" aria-live="polite" aria-atomic="true">
-                if let Some(group_name) = left_group {
-                    <div class="portal-toast border px-4 py-3 shadow-lg" role="status" data-toast="" data-toast-kind="success">
-                        "You left “" (group_name) "”."
+            <div class="pointer-events-none fixed inset-x-4 top-20 z-50 sm:left-auto sm:right-5 sm:w-96" aria-live="polite" aria-atomic="true" data-toast-region="">
+                if let Some(toast) = toast {
+                    <div class="portal-toast border px-4 py-3 shadow-lg" role=(if toast.is_error { "alert" } else { "status" }) data-toast="" data-toast-kind=(if toast.is_error { "error" } else { "success" })>
+                        (toast.message.as_str())
                     </div>
                 }
             </div>
-            <section class="border-b border-stone-200 py-8 dark:border-stone-800">
-                <div class="flex flex-wrap items-center justify-between gap-4">
-                    <div>
-                        <h1 class="text-2xl font-semibold">"Zotero groups"</h1>
-                    </div>
-                    <a class="rounded-lg bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 dark:bg-red-700" href="/groups/new">
-                        "New group"
-                    </a>
-                </div>
-            </section>
-
-            <section class="pt-8">
-                <h2 class="text-xl font-semibold">"Your groups"</h2>
+            <section class="py-8">
+                <h1 class="text-2xl font-semibold">"Your groups"</h1>
                 if groups.is_empty() {
                     <p class="mt-4 text-stone-600 dark:text-stone-400">
                         "You do not belong to any groups yet."
@@ -97,8 +101,14 @@ async fn groups_index(user: &UserSummary, groups: &[Group], left_group: Option<&
                         }
                     </ul>
                 }
+                <div class="mt-6 flex justify-end border-t border-stone-200 pt-6 dark:border-stone-800">
+                    <form method="post" action="/groups/new" data-confirm="The new private group will allow all members to edit its library and files." data-confirm-title="Create a Zotero group" data-confirm-action="Create group" data-confirm-input-name="name" data-confirm-input-label="Group name" data-confirm-input-required="true" data-confirm-input-maxlength="255" data-confirm-success="Group created." data-confirm-error="Couldn’t create the group. Please try again." data-confirm-auto=(if open_new { "true" } else { "false" })>
+                        <button class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 dark:bg-red-700" type="submit">"New group"</button>
+                    </form>
+                </div>
             </section>
-            <script type="module" src=(topcoat::asset::asset!("src/app/toast.js"))></script>
+            confirmation_dialog()
+            toast_script()
         </main>
     }
 }

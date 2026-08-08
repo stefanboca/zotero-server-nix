@@ -28,7 +28,7 @@ function activate(index) {
 }
 
 function select(option) {
-  input.value = `@${option.dataset.username}`;
+  input.value = option.dataset.username;
   closeResults();
   input.focus();
 }
@@ -56,7 +56,7 @@ input.addEventListener("keydown", (event) => {
 input.addEventListener("input", () => {
   clearTimeout(timer);
   const query = input.value.trim();
-  if (query.length < 2) {
+  if (query.length < 3) {
     closeResults();
     results.replaceChildren();
     return;
@@ -67,7 +67,8 @@ input.addEventListener("input", () => {
     url.searchParams.set("q", query);
     try {
       const response = await fetch(url, { headers: { Accept: "text/html" } });
-      if (!response.ok || currentRequest !== requestNumber) return;
+      if (currentRequest !== requestNumber) return;
+      if (!response.ok && response.status !== 429) return;
       results.innerHTML = await response.text();
       activeIndex = -1;
       results.hidden = false;

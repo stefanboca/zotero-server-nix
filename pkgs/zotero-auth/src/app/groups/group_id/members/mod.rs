@@ -3,7 +3,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        HeaderValue, StatusCode,
+        HeaderName, HeaderValue, StatusCode,
         content::Form,
         error::{bad_request, forbidden},
         header, headers, page, path_param,
@@ -11,11 +11,7 @@ use topcoat::{
     view::view,
 };
 
-use crate::{
-    app::{AppState, is_topcoat_dev},
-    dataserver::GroupRole,
-    store,
-};
+use crate::{app::AppState, dataserver::GroupRole};
 
 use super::{GroupId, current_group};
 
@@ -31,6 +27,13 @@ fn role(value: Option<&str>) -> Result<GroupRole> {
         Some("member") => Ok(GroupRole::Member),
         Some("admin") => Ok(GroupRole::Admin),
         _ => Err(bad_request("role must be member or admin").into()),
+    }
+}
+
+fn add_role(value: Option<&str>) -> Result<GroupRole> {
+    match value {
+        None => Ok(GroupRole::Member),
+        value => role(value),
     }
 }
 
@@ -82,11 +85,19 @@ async fn action_response(
     role: Option<&str>,
     manage: Option<&str>,
 ) -> Result {
-    if headers(cx)
-        .get("x-zotero-in-place")
-        .is_some_and(|value| value == "role")
+    if headers(cx).get("x-zotero-in-place").is_some()
+        || headers(cx)
+            .get("x-zotero-confirmed")
+            .is_some_and(|value| value == "true")
     {
-        return view! { cx => (status) };
+        let outcome = HeaderValue::try_from(notice)?;
+        return view! { cx =>
+            (status)
+            ((HeaderName::from_static("x-zotero-outcome"), outcome))
+            if !status.is_success() {
+                (notice)
+            }
+        };
     }
     let location = action_location(group_id, notice, member, role, manage)?;
     view! { cx =>
@@ -108,29 +119,6 @@ async fn members(cx: &Cx) -> Result {
 #[page(POST)]
 async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
     let (actor_id, group, actor_role) = current_group(cx).await?;
-    if is_topcoat_dev() {
-        let username = identifier(&input)?;
-        let (notice, role_name, manage) = match input.operation.as_str() {
-            "add" => ("member-added", Some(role(input.role.as_deref())?.display_name()), None),
-            "role" => (
-                "role-updated",
-                Some(role(input.role.as_deref())?.display_name()),
-                Some(username),
-            ),
-            "remove" => ("member-removed", None, None),
-            _ => return Err(bad_request("unknown member operation").into()),
-        };
-        return action_response(
-            cx,
-            StatusCode::NO_CONTENT,
-            group.id,
-            notice,
-            Some(username),
-            role_name,
-            manage,
-        )
-        .await;
-    }
     let app = app_context::<AppState>(cx);
 
     match input.operation.as_str() {
@@ -139,9 +127,8 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
                 return Err(forbidden().into());
             }
             let identifier = identifier(&input)?;
-            let new_role = role(input.role.as_deref())?;
-            let Some(target) = store::oidc_user_by_identifier(&app.database, identifier).await?
-            else {
+            let new_role = add_role(input.role.as_deref())?;
+            let Some(target) = app.backend.user_by_identifier(identifier).await? else {
                 return action_response(
                     cx,
                     StatusCode::BAD_REQUEST,
@@ -166,7 +153,7 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
                 .await;
             }
             if let Err(error) = app
-                .dataserver
+                .backend
                 .set_group_user(group.id, target.user_id, new_role)
                 .await
             {
@@ -193,49 +180,89 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
             )
             .await
         }
-        "role" => {
-            if !actor_role.can_manage() {
+        "leave" => {
+            if actor_role == GroupRole::Owner {
                 return Err(forbidden().into());
             }
-            let new_role = role(input.role.as_deref())?;
-            let target = store::oidc_user_by_identifier(&app.database, identifier(&input)?)
-                .await?
-                .ok_or_else(|| bad_request("user is not a group member"))?;
-            match group.role(target.user_id) {
-                Some(GroupRole::Owner) => return Err(forbidden().into()),
-                Some(_) => {}
-                None => return Err(bad_request("user is not a group member").into()),
+            if let Err(error) = app.backend.remove_group_user(group.id, actor_id).await {
+                eprintln!("failed to leave group: {error:#}");
+                return action_response(
+                    cx,
+                    StatusCode::BAD_GATEWAY,
+                    group.id,
+                    "member-remove-failed",
+                    None,
+                    None,
+                    None,
+                )
+                .await;
             }
+            let location = left_group_location(&group.name)?;
+            if headers(cx)
+                .get("x-zotero-confirmed")
+                .is_some_and(|value| value == "true")
+            {
+                return view! {
+                    (StatusCode::NO_CONTENT)
+                    ((header::LOCATION, location))
+                };
+            }
+            view! {
+                (StatusCode::SEE_OTHER)
+                ((header::LOCATION, location))
+            }
+        }
+        "demote-self" => {
+            if actor_role != GroupRole::Admin {
+                return Err(forbidden().into());
+            }
+            let actor = app
+                .backend
+                .user_by_id(actor_id)
+                .await?
+                .ok_or_else(|| bad_request("authenticated user does not exist"))?;
             if let Err(error) = app
-                .dataserver
-                .set_group_user(group.id, target.user_id, new_role)
+                .backend
+                .set_group_user(group.id, actor_id, GroupRole::Member)
                 .await
             {
-                eprintln!("failed to update group member role: {error:#}");
+                eprintln!("failed to demote group administrator: {error:#}");
                 return action_response(
                     cx,
                     StatusCode::BAD_GATEWAY,
                     group.id,
                     "role-update-failed",
-                    Some(&target.username),
-                    Some(new_role.display_name()),
-                    Some(&target.username),
+                    Some(&actor.username),
+                    Some(GroupRole::Member.display_name()),
+                    None,
                 )
                 .await;
             }
-            action_response(
-                cx,
-                StatusCode::NO_CONTENT,
+            let location = action_location(
                 group.id,
                 "role-updated",
-                Some(&target.username),
-                Some(new_role.display_name()),
-                Some(&target.username),
-            )
-            .await
+                Some(&actor.username),
+                Some(GroupRole::Member.display_name()),
+                None,
+            )?;
+            if headers(cx)
+                .get("x-zotero-confirmed")
+                .is_some_and(|value| value == "true")
+            {
+                return view! {
+                    (StatusCode::NO_CONTENT)
+                    ((header::LOCATION, location))
+                };
+            }
+            view! {
+                (StatusCode::SEE_OTHER)
+                ((header::LOCATION, location))
+            }
         }
         "remove" => {
-            let target = store::oidc_user_by_identifier(&app.database, identifier(&input)?)
+            let target = app
+                .backend
+                .user_by_identifier(identifier(&input)?)
                 .await?
                 .ok_or_else(|| bad_request("user is not a group member"))?;
             match group.role(target.user_id) {
@@ -247,7 +274,7 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
                 return Err(forbidden().into());
             }
             if let Err(error) = app
-                .dataserver
+                .backend
                 .remove_group_user(group.id, target.user_id)
                 .await
             {
@@ -262,13 +289,6 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
                     None,
                 )
                 .await;
-            }
-            if target.user_id == actor_id {
-                let location = left_group_location(&group.name)?;
-                return view! {
-                    (StatusCode::SEE_OTHER)
-                    ((header::LOCATION, location))
-                };
             }
             action_response(
                 cx,

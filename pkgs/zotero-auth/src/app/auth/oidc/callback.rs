@@ -1,9 +1,4 @@
-use anyhow::{Context as _, anyhow};
-use openidconnect::{
-    AccessTokenHash, AuthorizationCode, Nonce, OAuth2TokenResponse as _, PkceCodeVerifier,
-    TokenResponse as _,
-};
-use serde_json::Value;
+use anyhow::anyhow;
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -17,9 +12,9 @@ use topcoat::{
 };
 
 use crate::{
-    app::{AppState, epoch_seconds, is_topcoat_dev},
-    oidc::{jwt_claims, merge_claims, value_at_path, value_string},
-    store::{self, OidcProfile},
+    app::{AppState, epoch_seconds},
+    id::UserId,
+    store::OidcProfile,
 };
 
 #[query_params(error = bad_request)]
@@ -32,10 +27,6 @@ struct CallbackQuery {
 
 #[page]
 async fn callback(cx: &Cx) -> Result {
-    if is_topcoat_dev() {
-        return success_page().await;
-    }
-
     let result = callback_inner(cx).await;
     if let Err(error) = &result {
         eprintln!("OIDC callback failed: {error:#}");
@@ -62,86 +53,29 @@ async fn callback_inner(cx: &Cx) -> Result {
     let token_hash = session::token_hash(cx)
         .await?
         .ok_or_else(|| bad_request("missing or invalid OIDC flow session"))?;
-    let flow = store::consume_oidc_flow(&app.database, &*token_hash, state)
+    let flow = app
+        .backend
+        .consume_oidc_flow(&*token_hash, state)
         .await?
         .ok_or_else(|| bad_request("unknown or already-used OIDC state"))?;
     if flow.expires < epoch_seconds()? {
         return Err(bad_request("OIDC login flow expired").into());
     }
 
-    let token_response = app
-        .oidc
-        .client
-        .exchange_code(AuthorizationCode::new(code.to_owned()))?
-        .set_pkce_verifier(PkceCodeVerifier::new(flow.pkce_verifier))
-        .request_async(&app.oidc.http_client)
-        .await
-        .context("exchanging OIDC authorization code")?;
-    let id_token = token_response
-        .id_token()
-        .ok_or_else(|| anyhow!("OIDC provider omitted ID token"))?;
-    let verifier = app.oidc.client.id_token_verifier();
-    let claims = id_token
-        .claims(&verifier, &Nonce::new(flow.nonce))
-        .context("validating OIDC ID token")?;
-
-    if let Some(expected_hash) = claims.access_token_hash() {
-        let actual_hash = AccessTokenHash::from_token(
-            token_response.access_token(),
-            id_token.signing_alg()?,
-            id_token.signing_key(&verifier)?,
-        )?;
-        if &actual_hash != expected_hash {
-            return Err(anyhow!("OIDC access-token hash did not match ID token").into());
-        }
-    }
-
-    let mut all_claims = jwt_claims(id_token)?;
-    if let Some(endpoint) = app.oidc.client.user_info_url() {
-        let user_info: Value = app
-            .oidc
-            .http_client
-            .get(endpoint.as_str())
-            .bearer_auth(token_response.access_token().secret())
-            .send()
-            .await
-            .context("requesting OIDC UserInfo")?
-            .error_for_status()
-            .context("OIDC UserInfo returned an error")?
-            .json()
-            .await
-            .context("decoding OIDC UserInfo")?;
-        if value_string(&user_info, "sub") != Some(claims.subject().as_str()) {
-            return Err(anyhow!("OIDC UserInfo subject did not match ID token").into());
-        }
-        merge_claims(&mut all_claims, user_info)?;
-    }
-
-    let email = value_string(&all_claims, "email")
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| bad_request("OIDC provider did not supply an email address"))?;
-    let email_verified = value_at_path(&all_claims, "email_verified")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if app.config.identity.require_verified_email && !email_verified {
-        return Err(forbidden().into());
-    }
-    let profile = OidcProfile {
-        issuer: claims.issuer().as_str().to_owned(),
-        subject: claims.subject().as_str().to_owned(),
-        email: email.to_owned(),
-        username: value_string(&all_claims, &app.config.identity.username_claim).map(str::to_owned),
-        real_name: value_string(&all_claims, &app.config.identity.real_name_claim)
-            .map(str::to_owned),
-        email_verified,
-    };
+    let profile = app
+        .backend
+        .exchange_oidc_code(code, &flow)
+        .await?
+        .ok_or_else(forbidden)?;
     let user_id = if let Some(session_token) = flow.session_token.as_deref() {
         provision_and_complete_login(app, session_token, &profile).await?
     } else {
-        let user_id = store::provision_user(&app.database, &profile)
+        let user_id = app
+            .backend
+            .provision_user(&profile)
             .await?
             .ok_or_else(forbidden)?;
-        app.dataserver.set_unlimited_storage(user_id).await?;
+        app.backend.set_unlimited_storage(user_id).await?;
         user_id
     };
     let rotation = session::rotate(cx)
@@ -152,15 +86,15 @@ async fn callback_inner(cx: &Cx) -> Result {
         .expires_at
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
-    store::replace_browser_session(
-        &app.database,
-        &*rotation.revoked,
-        &*rotation.session.token_hash,
-        user_id,
-        expires,
-    )
-    .await?;
-    store::delete_oidc_flow(&app.database, &*rotation.revoked).await?;
+    app.backend
+        .replace_browser_session(
+            &*rotation.revoked,
+            &*rotation.session.token_hash,
+            user_id,
+            expires,
+        )
+        .await?;
+    app.backend.delete_oidc_flow(&*rotation.revoked).await?;
 
     if flow.session_token.is_some() {
         success_page().await
@@ -190,8 +124,10 @@ async fn provision_and_complete_login(
     app: &AppState,
     session_token: &str,
     profile: &OidcProfile,
-) -> Result<u64> {
-    let user_id = store::provision_user(&app.database, profile)
+) -> Result<UserId> {
+    let user_id = app
+        .backend
+        .provision_user(profile)
         .await?
         .ok_or_else(forbidden)?;
 
@@ -199,21 +135,23 @@ async fn provision_and_complete_login(
     // first-login shard setup is not atomic, so concurrent logins for one OIDC
     // identity must not complete at the same time. Cancellation rolls back the
     // transaction and releases this lock automatically.
-    let transaction = store::lock_identity_for_login_completion(&app.database, profile, user_id)
+    let transaction = app
+        .backend
+        .lock_identity_for_login_completion(profile, user_id)
         .await?
         .ok_or_else(|| anyhow!("OIDC identity changed during login completion"))?;
 
-    let info = app.dataserver.login_session_info(session_token).await?;
+    let info = app.backend.login_session_info(session_token).await?;
     if info.status != "pending" {
         return Err(bad_request("Zotero login session is no longer pending").into());
     }
     if info.user_id.is_some_and(|existing| existing != user_id) {
         return Err(forbidden().into());
     }
-    app.dataserver
+    app.backend
         .complete_login_session(session_token, user_id, info.access)
         .await?;
-    app.dataserver.set_unlimited_storage(user_id).await?;
+    app.backend.set_unlimited_storage(user_id).await?;
     transaction.commit().await?;
     Ok(user_id)
 }

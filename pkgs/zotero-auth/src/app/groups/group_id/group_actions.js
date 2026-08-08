@@ -4,105 +4,79 @@ function finishToast(toast) {
   toast.addEventListener("animationend", () => toast.remove(), { once: true });
 }
 
-function showRoleToast(username, role, kind) {
+function showMemberToast(identifier, role, kind, outcome = "") {
   const toast = document.createElement("div");
   toast.className = "portal-toast border px-4 py-3 shadow-lg";
   toast.dataset.toast = "";
   toast.dataset.toastKind = kind;
   toast.role = kind === "error" ? "alert" : "status";
-  if (kind === "error") toast.append("Couldn’t update ");
   const identity = document.createElement("strong");
   identity.className = "font-mono font-semibold";
-  identity.textContent = `@${username}`;
-  toast.append(identity, kind === "error"
-    ? ` to ${role}. Please try again.`
-    : ` is now ${role}.`);
+  identity.textContent = String(identifier).trim().replace(/^@/, "");
+  if (kind !== "error") {
+    toast.append(identity, ` added as ${role}.`);
+  } else if (outcome === "member-not-found") {
+    toast.append("Couldn’t add ", identity, ". Please check the username or email and try again.");
+  } else if (outcome === "already-member") {
+    toast.append(identity, " is already a member of this group.");
+  } else {
+    toast.append("Couldn’t add ", identity, " to the group. Please try again.");
+  }
   toastRegion?.replaceChildren(toast);
   finishToast(toast);
 }
 
-const manageMenus = [...document.querySelectorAll("[data-manage-menu]")];
-for (const menu of manageMenus) {
-  menu.addEventListener("toggle", () => {
-    if (menu.open) {
-      for (const other of manageMenus) if (other !== menu) other.open = false;
-    }
-  });
+function manageMenus() {
+  return document.querySelectorAll("[data-manage-menu]");
 }
+document.addEventListener("toggle", (event) => {
+  const menu = event.target.closest("[data-manage-menu]");
+  if (menu?.open) {
+    for (const other of manageMenus()) if (other !== menu) other.open = false;
+  }
+}, true);
 document.addEventListener("click", (event) => {
   if (!event.target.closest("[data-manage-menu]")) {
-    for (const menu of manageMenus) menu.open = false;
+    for (const menu of manageMenus()) menu.open = false;
   }
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") for (const menu of manageMenus) menu.open = false;
+  if (event.key === "Escape") for (const menu of manageMenus()) menu.open = false;
 });
 
-for (const form of document.querySelectorAll("[data-role-form]")) {
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const toggle = form.querySelector("[data-role-toggle]");
-    if (!toggle || toggle.disabled) return;
-    const username = new FormData(form).get("identifier");
-    const desiredRole = toggle.value;
-    const role = desiredRole === "admin" ? "Administrator" : "Member";
-    const data = new FormData(form);
-    data.set("role", desiredRole);
-    toggle.disabled = true;
-    try {
-      const response = await fetch(form.action, {
-        method: "POST",
-        body: data,
-        headers: { "X-Zotero-In-Place": "role" },
-      });
-      if (!response.ok || response.redirected) throw new Error(`role update returned ${response.status}`);
-      const isAdministrator = desiredRole === "admin";
-      toggle.value = isAdministrator ? "member" : "admin";
-      toggle.dataset.currentRole = desiredRole;
-      toggle.setAttribute("aria-pressed", String(isAdministrator));
-      toggle.setAttribute("aria-label", `Administrator is ${isAdministrator ? "on. Toggle off." : "off. Toggle on."}`);
-      toggle.querySelector("[data-role-state]").textContent = isAdministrator ? "On" : "Off";
-      form.closest("li")?.querySelector("[data-member-role-label]")?.replaceChildren(role);
-      showRoleToast(username, role, "success");
-    } catch {
-      showRoleToast(username, role, "error");
-    } finally {
-      toggle.disabled = false;
+document.addEventListener("submit", async (event) => {
+  const form = event.target.closest("[data-member-picker]");
+  if (!form) return;
+  event.preventDefault();
+  const submit = form.querySelector('button[type="submit"]');
+  if (!submit || submit.disabled) return;
+  const data = new URLSearchParams(new FormData(form));
+  const identifier = data.get("identifier");
+  const role = data.get("role") === "admin" ? "Administrator" : "Member";
+  submit.disabled = true;
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body: data,
+      headers: { "X-Zotero-In-Place": "members" },
+    });
+    if (response.redirected) throw new Error("member add redirected");
+    if (!response.ok) {
+      const error = new Error(`member add returned ${response.status}`);
+      error.outcome = response.headers.get("X-Zotero-Outcome") ?? await response.text();
+      throw error;
     }
-  });
-}
 
-const dialog = document.querySelector("[data-confirm-dialog]");
-const message = dialog?.querySelector("[data-confirm-message]");
-const cancel = dialog?.querySelector("[data-confirm-cancel]");
-const submit = dialog?.querySelector("[data-confirm-submit]");
-let pendingForm;
-
-for (const form of document.querySelectorAll("form[data-confirm]")) {
-  form.addEventListener("submit", (event) => {
-    if (form.dataset.confirmed === "true") {
-      delete form.dataset.confirmed;
-      return;
-    }
-    event.preventDefault();
-    pendingForm = form;
-    message.textContent = form.dataset.confirm;
-    submit.textContent = form.dataset.confirmAction ?? "Confirm";
-    dialog.showModal();
-  });
-}
-
-cancel?.addEventListener("click", () => dialog.close());
-submit?.addEventListener("click", () => {
-  const form = pendingForm;
-  pendingForm = undefined;
-  dialog.close();
-  if (form) {
-    form.dataset.confirmed = "true";
-    form.requestSubmit();
+    form.reset();
+    form.querySelector("[data-member-search]")?.dispatchEvent(new Event("input"));
+    const refresh = document.querySelector("[data-members-refresh]");
+    if (!refresh) throw new Error("member list refresh control is missing");
+    refresh.checked = !refresh.checked;
+    refresh.dispatchEvent(new Event("change"));
+    showMemberToast(identifier, role, "success");
+  } catch (error) {
+    showMemberToast(identifier, role, "error", error.outcome?.trim());
+  } finally {
+    submit.disabled = false;
   }
-});
-
-dialog?.addEventListener("close", () => {
-  pendingForm = undefined;
 });

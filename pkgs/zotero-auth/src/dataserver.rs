@@ -1,9 +1,10 @@
 use anyhow::Context as _;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
+use topcoat::runtime::{BoolSurrogate, Surrogate, Surrogated};
 
-use crate::{config::Config, oidc::value_string};
+use crate::{config::Config, id::UserId, oidc::value_string};
 
 pub struct Dataserver {
     http_client: reqwest::Client,
@@ -11,9 +12,10 @@ pub struct Dataserver {
     url: String,
 }
 
+#[derive(Clone)]
 pub struct LoginSessionInfo {
     pub status: String,
-    pub user_id: Option<u64>,
+    pub user_id: Option<UserId>,
     pub access: Option<Value>,
 }
 
@@ -29,7 +31,7 @@ pub struct ConnectedClient {
 struct ApiKey {
     key: String,
     #[serde(rename = "userID")]
-    user_id: u64,
+    user_id: UserId,
     name: String,
     #[serde(rename = "dateAdded")]
     date_added: String,
@@ -51,7 +53,7 @@ pub enum GroupRole {
 }
 
 impl GroupRole {
-    pub fn as_str(self) -> &'static str {
+    fn wire_name(self) -> &'static str {
         match self {
             Self::Owner => "owner",
             Self::Admin => "admin",
@@ -80,13 +82,124 @@ impl GroupRole {
     }
 }
 
+impl std::fmt::Display for GroupRole {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.wire_name())
+    }
+}
+
+impl std::str::FromStr for GroupRole {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "owner" => Ok(Self::Owner),
+            "admin" => Ok(Self::Admin),
+            "member" => Ok(Self::Member),
+            _ => Err("unknown group role"),
+        }
+    }
+}
+
+/// The runtime represents group roles as its built-in tagged string value.
+/// Rust code still exchanges the closed `GroupRole` enum, never that string.
+#[derive(Clone, Debug)]
+pub struct GroupRoleSurrogate(GroupRole);
+
+impl GroupRoleSurrogate {
+    pub fn eq(&self, other: &Self) -> BoolSurrogate {
+        (self.0 == other.0).into_surrogate()
+    }
+
+    pub fn ne(&self, other: &Self) -> BoolSurrogate {
+        (self.0 != other.0).into_surrogate()
+    }
+}
+
+impl Serialize for GroupRoleSurrogate {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct TaggedRole<'a> {
+            t: &'static str,
+            v: &'a str,
+        }
+
+        TaggedRole {
+            t: "str",
+            v: self.0.wire_name(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GroupRoleSurrogate {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Topcoat uses the tagged representation above to hydrate the browser
+        // surrogate, then dehydrates that surrogate to its raw string value
+        // when it is passed back to a procedure.
+        String::deserialize(deserializer)?
+            .parse()
+            .map(Self)
+            .map_err(de::Error::custom)
+    }
+}
+
+impl Surrogated for GroupRole {
+    type Surrogate = GroupRoleSurrogate;
+
+    fn into_surrogate(self) -> Self::Surrogate {
+        GroupRoleSurrogate(self)
+    }
+}
+
+impl Surrogate for GroupRoleSurrogate {
+    type Real = GroupRole;
+
+    fn into_real(self) -> Self::Real {
+        self.0
+    }
+}
+
+pub struct GroupRoleRefSurrogate<'a>(&'a GroupRole);
+
+impl Serialize for GroupRoleRefSurrogate<'_> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        GroupRoleSurrogate(*self.0).serialize(serializer)
+    }
+}
+
+impl<'a> Surrogated for &'a GroupRole {
+    type Surrogate = GroupRoleRefSurrogate<'a>;
+
+    fn into_surrogate(self) -> Self::Surrogate {
+        GroupRoleRefSurrogate(self)
+    }
+}
+
+impl<'a> Surrogate for GroupRoleRefSurrogate<'a> {
+    type Real = &'a GroupRole;
+
+    fn into_real(self) -> Self::Real {
+        self.0
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Group {
     pub id: u64,
     pub name: String,
-    pub owner: u64,
-    pub admins: Vec<u64>,
-    pub members: Vec<u64>,
+    pub owner: UserId,
+    pub admins: Vec<UserId>,
+    pub members: Vec<UserId>,
     pub group_type: String,
     pub library_editing: String,
     pub library_reading: String,
@@ -97,7 +210,7 @@ pub struct Group {
 }
 
 impl Group {
-    pub fn role(&self, user_id: u64) -> Option<GroupRole> {
+    pub fn role(&self, user_id: UserId) -> Option<GroupRole> {
         if self.owner == user_id {
             Some(GroupRole::Owner)
         } else if self.admins.contains(&user_id) {
@@ -109,7 +222,7 @@ impl Group {
         }
     }
 
-    pub fn user_ids(&self) -> Vec<u64> {
+    pub fn user_ids(&self) -> Vec<UserId> {
         let mut ids = Vec::with_capacity(1 + self.admins.len() + self.members.len());
         for user_id in std::iter::once(&self.owner)
             .chain(&self.admins)
@@ -132,11 +245,11 @@ struct GroupEnvelope {
 #[derive(Deserialize)]
 struct GroupData {
     name: String,
-    owner: u64,
+    owner: UserId,
     #[serde(default)]
-    admins: Vec<u64>,
+    admins: Vec<UserId>,
     #[serde(default)]
-    members: Vec<u64>,
+    members: Vec<UserId>,
     #[serde(rename = "type")]
     group_type: String,
     #[serde(rename = "libraryEditing")]
@@ -203,7 +316,7 @@ impl Dataserver {
             status: value_string(&value, "status")
                 .unwrap_or_default()
                 .to_owned(),
-            user_id: value.get("userID").and_then(Value::as_u64),
+            user_id: value.get("userID").and_then(Value::as_u64).map(UserId::new),
             access: value
                 .get("access")
                 .cloned()
@@ -214,7 +327,7 @@ impl Dataserver {
     pub async fn complete_login_session(
         &self,
         token: &str,
-        user_id: u64,
+        user_id: UserId,
         access: Option<Value>,
     ) -> anyhow::Result<()> {
         let access = access.unwrap_or_else(|| {
@@ -235,7 +348,7 @@ impl Dataserver {
         Ok(())
     }
 
-    pub async fn set_unlimited_storage(&self, user_id: u64) -> anyhow::Result<()> {
+    pub async fn set_unlimited_storage(&self, user_id: UserId) -> anyhow::Result<()> {
         self.http_client
             .post(format!("{}/users/{user_id}/storageadmin", self.url))
             .basic_auth("zotero-auth", Some(&self.super_password))
@@ -248,7 +361,7 @@ impl Dataserver {
         Ok(())
     }
 
-    pub async fn storage_usage(&self, user_id: u64) -> anyhow::Result<StorageUsage> {
+    pub async fn storage_usage(&self, user_id: UserId) -> anyhow::Result<StorageUsage> {
         let response = self
             .http_client
             .get(format!("{}/users/{user_id}/storageadmin", self.url))
@@ -270,7 +383,7 @@ impl Dataserver {
         })
     }
 
-    async fn api_keys(&self, user_id: u64) -> anyhow::Result<Vec<ApiKey>> {
+    async fn api_keys(&self, user_id: UserId) -> anyhow::Result<Vec<ApiKey>> {
         let response = self
             .http_client
             .get(format!("{}/users/{user_id}/keys", self.url))
@@ -291,7 +404,7 @@ impl Dataserver {
         serde_json::from_str(&body).context("decoding connected-client listing")
     }
 
-    pub async fn connected_clients(&self, user_id: u64) -> anyhow::Result<Vec<ConnectedClient>> {
+    pub async fn connected_clients(&self, user_id: UserId) -> anyhow::Result<Vec<ConnectedClient>> {
         Ok(self
             .api_keys(user_id)
             .await?
@@ -307,7 +420,7 @@ impl Dataserver {
 
     pub async fn revoke_connected_client(
         &self,
-        user_id: u64,
+        user_id: UserId,
         handle: &str,
     ) -> anyhow::Result<bool> {
         if handle.len() != 64 || !handle.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -333,7 +446,25 @@ impl Dataserver {
         Ok(true)
     }
 
-    pub async fn groups_for_user(&self, user_id: u64) -> anyhow::Result<Vec<Group>> {
+    pub async fn revoke_all_connected_clients(&self, user_id: UserId) -> anyhow::Result<usize> {
+        let keys = self.api_keys(user_id).await?;
+        let mut revoked = 0;
+        for key in keys.into_iter().filter(|key| key.user_id == user_id) {
+            self.http_client
+                .delete(format!("{}/keys/{}", self.url, key.key))
+                .basic_auth("zotero-auth", Some(&self.super_password))
+                .header("Zotero-API-Version", "3")
+                .send()
+                .await
+                .context("revoking connected Zotero client")?
+                .error_for_status()
+                .context("Dataserver rejected connected-client revocation")?;
+            revoked += 1;
+        }
+        Ok(revoked)
+    }
+
+    pub async fn groups_for_user(&self, user_id: UserId) -> anyhow::Result<Vec<Group>> {
         let response = self
             .http_client
             .get(format!("{}/users/{user_id}/groups", self.url))
@@ -369,7 +500,7 @@ impl Dataserver {
         Ok(Some(group.into()))
     }
 
-    pub async fn create_private_group(&self, user_id: u64, name: &str) -> anyhow::Result<u64> {
+    pub async fn create_private_group(&self, user_id: UserId, name: &str) -> anyhow::Result<u64> {
         let name = xml_escape(name);
         let body = format!(
             r#"<group owner="{user_id}" name="{name}" type="Private" libraryEditing="members" libraryReading="members" fileEditing="members" hasImage="0"><description></description><url></url></group>"#
@@ -403,10 +534,10 @@ impl Dataserver {
     pub async fn set_group_user(
         &self,
         group_id: u64,
-        user_id: u64,
+        user_id: UserId,
         role: GroupRole,
     ) -> anyhow::Result<()> {
-        let body = format!(r#"<user id="{user_id}" role="{}"/>"#, role.as_str());
+        let body = format!(r#"<user id="{user_id}" role="{role}"/>"#);
         self.http_client
             .put(format!("{}/groups/{group_id}/users/{user_id}", self.url))
             .basic_auth("zotero-auth", Some(&self.super_password))
@@ -447,7 +578,7 @@ impl Dataserver {
         Ok(())
     }
 
-    pub async fn remove_group_user(&self, group_id: u64, user_id: u64) -> anyhow::Result<()> {
+    pub async fn remove_group_user(&self, group_id: u64, user_id: UserId) -> anyhow::Result<()> {
         self.http_client
             .delete(format!("{}/groups/{group_id}/users/{user_id}", self.url))
             .basic_auth("zotero-auth", Some(&self.super_password))
@@ -513,9 +644,9 @@ mod tests {
         let group = Group {
             id: 1,
             name: "Research".to_owned(),
-            owner: 1,
-            admins: vec![1, 2],
-            members: vec![1, 2, 3],
+            owner: UserId::new(1),
+            admins: vec![UserId::new(1), UserId::new(2)],
+            members: vec![UserId::new(1), UserId::new(2), UserId::new(3)],
             group_type: "Private".to_owned(),
             library_editing: "members".to_owned(),
             library_reading: "members".to_owned(),
@@ -525,14 +656,29 @@ mod tests {
             has_image: false,
         };
 
-        assert_eq!(group.user_ids(), [1, 2, 3]);
+        assert_eq!(
+            group.user_ids(),
+            [UserId::new(1), UserId::new(2), UserId::new(3)]
+        );
     }
 
     #[test]
     fn parses_storage_usage_numbers() {
-        let response = "<storage><usage><total>1536.5</total><library>512</library></usage></storage>";
+        let response =
+            "<storage><usage><total>1536.5</total><library>512</library></usage></storage>";
         assert_eq!(xml_number(response, "total"), Some(1536.5));
         assert_eq!(xml_number(response, "library"), Some(512.0));
         assert_eq!(xml_number(response, "missing"), None);
+    }
+
+    #[test]
+    fn group_role_surrogate_matches_topcoat_browser_round_trip() {
+        let serialized = serde_json::to_string(&GroupRole::Admin.into_surrogate())
+            .expect("group role must serialize");
+        assert_eq!(serialized, r#"{"t":"str","v":"admin"}"#);
+
+        let deserialized: GroupRoleSurrogate =
+            serde_json::from_str(r#""member""#).expect("browser role must deserialize");
+        assert_eq!(deserialized.into_real(), GroupRole::Member);
     }
 }

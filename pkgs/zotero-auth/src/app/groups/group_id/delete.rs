@@ -3,55 +3,27 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        HeaderValue, StatusCode,
+        StatusCode,
         content::Form,
         error::{bad_request, forbidden},
-        header, page,
+        header, headers, page,
     },
     view::view,
 };
 
-use crate::{
-    app::{AppState, is_topcoat_dev},
-    dataserver::GroupRole,
-};
+use crate::{app::AppState, dataserver::GroupRole};
 
-use super::current_group;
+use super::{super::groups_notice_location, current_group};
 
 #[derive(Deserialize)]
 struct DeleteGroup {
     confirmation: String,
 }
 
-#[page]
-async fn delete_group_confirmation(cx: &Cx) -> Result {
-    let (_, group, role) = current_group(cx).await?;
-    if role != GroupRole::Owner {
-        return Err(forbidden().into());
-    }
-    let action = format!("/groups/{}/delete", group.id);
-    view! {
-        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <h1 class="text-2xl font-semibold text-red-900 dark:text-red-300">"Delete group"</h1>
-            <p class="mt-4 leading-7">
-                "This permanently deletes the group library “" (group.name.as_str()) "”, including its synced items and files. This cannot be undone."
-            </p>
-            <form class="mt-6 space-y-4" method="post" action=(action)>
-                <label class="block font-medium" for="confirmation">
-                    "Type the group name to confirm: " <strong>(group.name.as_str())</strong>
-                </label>
-                <input class="w-full rounded-lg border border-red-300 bg-white px-3 py-2 dark:border-red-900 dark:bg-stone-950" id="confirmation" name="confirmation" required="required" autocomplete="off">
-                <div class="flex flex-wrap gap-3">
-                    <button class="rounded-lg bg-red-800 px-4 py-3 font-semibold text-white hover:bg-red-700" type="submit">
-                        "Permanently delete group"
-                    </button>
-                    <a class="rounded-lg border border-stone-300 px-4 py-3 dark:border-stone-700" href=(format!("/groups/{}", group.id))>
-                        "Cancel"
-                    </a>
-                </div>
-            </form>
-        </main>
-    }
+fn confirmed(cx: &Cx) -> bool {
+    headers(cx)
+        .get("x-zotero-confirmed")
+        .is_some_and(|value| value == "true")
 }
 
 #[page(POST)]
@@ -63,17 +35,25 @@ async fn delete_group(cx: &Cx, Form(input): Form<DeleteGroup>) -> Result {
     if input.confirmation != group.name {
         return Err(bad_request("group name confirmation did not match").into());
     }
-    if is_topcoat_dev() {
-        return view! {
-            (StatusCode::SEE_OTHER)
-            ((header::LOCATION, HeaderValue::from_static("/groups")))
-        };
+    let result = app_context::<AppState>(cx)
+        .backend
+        .delete_group(group.id)
+        .await;
+    let notice = if let Err(error) = result {
+        eprintln!("failed to delete group: {error:#}");
+        if confirmed(cx) {
+            return view! { (StatusCode::BAD_GATEWAY) };
+        }
+        "group-delete-failed"
+    } else {
+        "group-deleted"
+    };
+    let location = groups_notice_location(notice, &group.name)?;
+    if confirmed(cx) {
+        return view! { (StatusCode::NO_CONTENT) ((header::LOCATION, location)) };
     }
-
-    let app = app_context::<AppState>(cx);
-    app.dataserver.delete_group(group.id).await?;
     view! {
         (StatusCode::SEE_OTHER)
-        ((header::LOCATION, HeaderValue::from_static("/groups")))
+        ((header::LOCATION, location))
     }
 }

@@ -1,12 +1,12 @@
 use std::{env, path::PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
-use zotero_auth::{Config, is_topcoat_dev, migrate, routes, serve};
+use zotero_auth::{Config, migrate, serve, serve_development};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if is_topcoat_dev() {
-        return topcoat::start(routes().build())
+    if env::var_os("TOPCOAT_DEV_URL").is_some() {
+        return serve_development()
             .await
             .context("UI development server failed");
     }

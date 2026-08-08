@@ -206,6 +206,13 @@
     Z_CONFIG::$AWS_ACCESS_KEY = trim(file_get_contents($credentialDirectory . '/s3-access-key-id'));
     Z_CONFIG::$AWS_SECRET_KEY = trim(file_get_contents($credentialDirectory . '/s3-secret-access-key'));
     Z_CONFIG::$API_SUPER_PASSWORD = trim(file_get_contents($credentialDirectory . '/dataserver-super-password'));
+    $apiPath = parse_url(Z_CONFIG::$API_BASE_URI, PHP_URL_PATH);
+    if ($apiPath && $apiPath !== '/') {
+      $apiPrefix = rtrim($apiPath, '/');
+      Z_CONFIG::$URI_PREFIX_DOMAIN_MAP = [
+        '^' . preg_quote($apiPrefix, '%') => parse_url(Z_CONFIG::$API_BASE_URI, PHP_URL_HOST),
+      ] + Z_CONFIG::$URI_PREFIX_DOMAIN_MAP;
+    }
     ?>
   '';
 
@@ -643,7 +650,7 @@ in {
               }
 
               redir ${removeSuffix "/" cfg.apiPath} ${cfg.apiPath} 308
-              handle_path ${removeSuffix "/" cfg.apiPath}/* {
+              handle ${removeSuffix "/" cfg.apiPath}/* {
                 root * ${package}/share/php/zotero-dataserver/htdocs
                 php_fastcgi unix/${config.services.phpfpm.pools.zotero-dataserver.socket} {
                   capture_stderr

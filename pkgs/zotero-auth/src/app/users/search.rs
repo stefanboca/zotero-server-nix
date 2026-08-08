@@ -1,16 +1,16 @@
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{query_params, route},
+    router::{StatusCode, query_params, route},
     view::{View, component, view},
 };
 
 use crate::{
-    app::{AppState, authenticated_user, is_topcoat_dev, username_label},
-    store::{self, UserSummary},
+    app::{AppState, authenticated_user, username_label},
+    store::UserSummary,
 };
 
-#[query_params(error = topcoat::router::error::bad_request)]
+#[query_params(error = bad_request)]
 struct SearchQuery {
     q: String,
 }
@@ -19,18 +19,20 @@ struct SearchQuery {
 async fn search(cx: &Cx) -> Result<View> {
     let parameters = query_params::<SearchQuery>(cx)?;
     let query = parameters.q.trim();
-    authenticated_user(cx).await?;
-    if is_topcoat_dev() {
-        let candidates = vec![UserSummary {
-            user_id: 4,
-            username: "researcher".to_owned(),
-            email: "researcher@example.com".to_owned(),
-            real_name: Some("New Researcher".to_owned()),
-        }];
-        return view! { cx => search_results(query: query, candidates: &candidates) };
+    let user_id = authenticated_user(cx).await?;
+    if query.chars().count() < 3 || query.chars().count() > 128 {
+        return view! { cx => search_results(query: query, candidates: &[]) };
     }
     let app = app_context::<AppState>(cx);
-    let candidates = store::search_oidc_users(&app.database, query, &[], 20).await?;
+    if !app.backend.allow_user_search(user_id).await? {
+        return view! { cx =>
+            (StatusCode::TOO_MANY_REQUESTS)
+            <div class="p-5 text-stone-600 dark:text-stone-400" role="status">
+                "Too many searches. Wait a minute, or enter an exact username or email and select Add."
+            </div>
+        };
+    }
+    let candidates = app.backend.search_users(query, &[], 10).await?;
     view! { cx => search_results(query: query, candidates: &candidates) }
 }
 

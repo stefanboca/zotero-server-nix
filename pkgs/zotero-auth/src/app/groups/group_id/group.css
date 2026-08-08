@@ -19,12 +19,30 @@
   width: 1rem;
 }
 
-.role-toggle[data-current-role="admin"] .role-toggle-track {
+.role-toggle[data-current-role="admin"] .role-toggle-track,
+.role-toggle[aria-pressed="true"] .role-toggle-track {
   background: #991b1b;
 }
 
-.role-toggle[data-current-role="admin"] .role-toggle-knob {
+.role-toggle[data-current-role="admin"] .role-toggle-knob,
+.role-toggle[aria-pressed="true"] .role-toggle-knob {
   transform: translateX(1rem);
+}
+
+.administrator-checkbox:checked + .role-toggle .role-toggle-track {
+  background: #991b1b;
+}
+
+.administrator-checkbox:checked + .role-toggle .role-toggle-knob {
+  transform: translateX(1rem);
+}
+
+.administrator-checkbox:checked + .role-toggle .role-toggle-state-off {
+  display: none;
+}
+
+.administrator-checkbox:checked + .role-toggle .role-toggle-state-on {
+  display: inline;
 }
 
 @media (prefers-reduced-motion: reduce) {

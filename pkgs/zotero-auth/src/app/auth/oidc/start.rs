@@ -1,4 +1,3 @@
-use openidconnect::{CsrfToken, Nonce, PkceCodeChallenge, Scope, core::CoreAuthenticationFlow};
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -9,12 +8,8 @@ use topcoat::{
     },
     session,
 };
-use url::Url;
 
-use crate::{
-    app::{AppState, FLOW_LIFETIME, epoch_seconds, is_topcoat_dev, valid_session_token},
-    store,
-};
+use crate::app::{AppState, FLOW_LIFETIME, epoch_seconds, valid_session_token};
 
 #[query_params(error = bad_request)]
 struct StartQuery {
@@ -24,10 +19,6 @@ struct StartQuery {
 
 #[route(POST)]
 async fn start(cx: &Cx) -> Result<Response> {
-    if is_topcoat_dev() {
-        return see_other("/auth/oidc/callback").into_response(cx);
-    }
-
     let query = query_params::<StartQuery>(cx)?;
     let dataserver_session = query
         .dataserver_session
@@ -38,10 +29,7 @@ async fn start(cx: &Cx) -> Result<Response> {
     }
 
     let app = app_context::<AppState>(cx);
-    let info = app
-        .dataserver
-        .login_session_info(dataserver_session)
-        .await?;
+    let info = app.backend.login_session_info(dataserver_session).await?;
     if info.status != "pending" {
         return Err(bad_request("Zotero login session is no longer pending").into());
     }
@@ -57,58 +45,54 @@ pub(crate) async fn begin_oidc_flow(
     dataserver_session: Option<&str>,
     return_path: &str,
     browser_session: Option<session::Session>,
-) -> Result<Url> {
+) -> Result<String> {
     let app = app_context::<AppState>(cx);
     if let Some(token_hash) = session::token_hash(cx).await?
-        && !store::clear_oidc_flow(&app.database, &*token_hash).await?
+        && !app.backend.clear_oidc_flow(&*token_hash).await?
     {
         return Err(bad_request("the current OIDC login is already being completed").into());
     }
 
-    let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
-    let mut authorization = app.oidc.client.authorize_url(
-        CoreAuthenticationFlow::AuthorizationCode,
-        CsrfToken::new_random,
-        Nonce::new_random,
-    );
-    for scope in &app.config.oidc.scopes {
-        if scope != "openid" {
-            authorization = authorization.add_scope(Scope::new(scope.clone()));
-        }
-    }
-    let (url, csrf, nonce) = authorization.set_pkce_challenge(challenge).url();
+    let authorization = app.backend.begin_oidc_authorization().await?;
     let new_browser_session = browser_session.is_none();
     let browser_session = match browser_session {
         Some(browser_session) => browser_session,
         None => session::start(cx).await?,
     };
     let now = epoch_seconds()?;
-    store::delete_expired_oidc_flows(&app.database, now).await?;
+    app.backend.delete_expired_oidc_flows(now).await?;
     let expires = now
         .checked_add(FLOW_LIFETIME.as_secs())
         .ok_or_else(|| anyhow::anyhow!("OIDC flow expiry is out of range"))?;
-    let inserted = store::create_oidc_flow(
-        &app.database,
-        &*browser_session.token_hash,
-        csrf.secret(),
-        nonce.secret(),
-        verifier.secret(),
-        dataserver_session,
-        return_path,
-        expires,
-    )
-    .await;
-    if let Err(error) = inserted {
+    let inserted = app
+        .backend
+        .create_oidc_flow(
+            &*browser_session.token_hash,
+            &authorization.state,
+            &authorization.nonce,
+            &authorization.pkce_verifier,
+            dataserver_session,
+            return_path,
+            expires,
+        )
+        .await;
+    let inserted = match inserted {
+        Ok(inserted) => inserted,
+        Err(error) => {
+            if new_browser_session {
+                session::stop(cx).await?;
+            }
+            return Err(error.into());
+        }
+    };
+    if !inserted {
         if new_browser_session {
             session::stop(cx).await?;
         }
-        if store::is_duplicate_key(&error) {
-            return Err(bad_request(
-                "an OIDC login is already being completed for this Zotero session",
-            )
-            .into());
-        }
-        return Err(error.into());
+        return Err(bad_request(
+            "an OIDC login is already being completed for this Zotero session",
+        )
+        .into());
     }
-    Ok(url)
+    Ok(authorization.url)
 }

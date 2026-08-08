@@ -5,9 +5,11 @@ use sqlx::{
     mysql::{MySqlConnectOptions, MySqlPoolOptions},
 };
 
-use crate::config::DatabaseConfig;
+use crate::{config::DatabaseConfig, id::UserId};
 
+#[derive(Clone)]
 pub struct OidcFlow {
+    pub state: String,
     pub nonce: String,
     pub pkce_verifier: String,
     pub session_token: Option<String>,
@@ -15,6 +17,7 @@ pub struct OidcFlow {
     pub expires: u64,
 }
 
+#[derive(Clone)]
 pub struct OidcProfile {
     pub issuer: String,
     pub subject: String,
@@ -26,7 +29,7 @@ pub struct OidcProfile {
 
 #[derive(Clone, Debug)]
 pub struct UserSummary {
-    pub user_id: u64,
+    pub user_id: UserId,
     pub username: String,
     pub email: String,
     pub real_name: Option<String>,
@@ -110,6 +113,7 @@ pub async fn consume_oidc_flow(
         return Ok(None);
     }
     let flow = OidcFlow {
+        state: row.try_get("state")?,
         nonce: row.try_get("nonce")?,
         pkce_verifier: row.try_get("pkceVerifier")?,
         session_token: row.try_get("sessionToken")?,
@@ -163,12 +167,12 @@ pub async fn refresh_browser_session(
     pool: &MySqlPool,
     token_hash: &[u8],
     expires: u64,
-) -> sqlx::Result<Option<u64>> {
+) -> sqlx::Result<Option<UserId>> {
     let mut transaction = pool.begin().await?;
     sqlx::query("DELETE FROM oidc_browser_sessions WHERE expiresAt <= CURRENT_TIMESTAMP(6)")
         .execute(&mut *transaction)
         .await?;
-    let user_id = sqlx::query_scalar::<_, u64>(
+    let user_id = sqlx::query_scalar::<_, UserId>(
         "SELECT userID FROM oidc_browser_sessions WHERE tokenHash = ? FOR UPDATE",
     )
     .bind(token_hash)
@@ -191,7 +195,7 @@ pub async fn replace_browser_session(
     pool: &MySqlPool,
     old_token_hash: &[u8],
     new_token_hash: &[u8],
-    user_id: u64,
+    user_id: UserId,
     expires: u64,
 ) -> sqlx::Result<()> {
     let mut transaction = pool.begin().await?;
@@ -214,7 +218,7 @@ pub async fn replace_browser_session(
 
 pub async fn browser_sessions_for_user(
     pool: &MySqlPool,
-    user_id: u64,
+    user_id: UserId,
 ) -> sqlx::Result<Vec<BrowserSession>> {
     let mut transaction = pool.begin().await?;
     sqlx::query("DELETE FROM oidc_browser_sessions WHERE expiresAt <= CURRENT_TIMESTAMP(6)")
@@ -245,21 +249,31 @@ pub async fn browser_sessions_for_user(
 
 pub async fn revoke_browser_session(
     pool: &MySqlPool,
-    user_id: u64,
+    user_id: UserId,
     handle: &str,
 ) -> sqlx::Result<bool> {
     if handle.len() != 64 || !handle.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Ok(false);
     }
-    Ok(sqlx::query(
-        "DELETE FROM oidc_browser_sessions WHERE userID = ? AND tokenHash = UNHEX(?)",
+    Ok(
+        sqlx::query("DELETE FROM oidc_browser_sessions WHERE userID = ? AND tokenHash = UNHEX(?)")
+            .bind(user_id)
+            .bind(handle)
+            .execute(pool)
+            .await?
+            .rows_affected()
+            == 1,
     )
-    .bind(user_id)
-    .bind(handle)
-    .execute(pool)
-    .await?
-    .rows_affected()
-        == 1)
+}
+
+pub async fn revoke_all_browser_sessions(pool: &MySqlPool, user_id: UserId) -> sqlx::Result<u64> {
+    Ok(
+        sqlx::query("DELETE FROM oidc_browser_sessions WHERE userID = ?")
+            .bind(user_id)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+    )
 }
 
 pub fn session_handle(token_hash: &[u8]) -> String {
@@ -269,7 +283,7 @@ pub fn session_handle(token_hash: &[u8]) -> String {
         .collect()
 }
 
-pub async fn user_by_id(pool: &MySqlPool, user_id: u64) -> sqlx::Result<Option<UserSummary>> {
+pub async fn user_by_id(pool: &MySqlPool, user_id: UserId) -> sqlx::Result<Option<UserSummary>> {
     let row = sqlx::query(
         "SELECT U.userID, U.username, U.email, UM.metaValue AS realName \
          FROM users U \
@@ -282,7 +296,7 @@ pub async fn user_by_id(pool: &MySqlPool, user_id: u64) -> sqlx::Result<Option<U
     row.map(user_summary).transpose()
 }
 
-pub async fn users_by_ids(pool: &MySqlPool, user_ids: &[u64]) -> sqlx::Result<Vec<UserSummary>> {
+pub async fn users_by_ids(pool: &MySqlPool, user_ids: &[UserId]) -> sqlx::Result<Vec<UserSummary>> {
     if user_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -330,7 +344,7 @@ pub async fn oidc_user_by_identifier(
 pub async fn search_oidc_users(
     pool: &MySqlPool,
     query: &str,
-    excluded_user_ids: &[u64],
+    excluded_user_ids: &[UserId],
     limit: usize,
 ) -> sqlx::Result<Vec<UserSummary>> {
     let rows = sqlx::query(
@@ -362,17 +376,45 @@ pub async fn search_oidc_users(
     Ok(matches.into_iter().map(|(_, user)| user).collect())
 }
 
-fn user_search_score(query: &str, user: &UserSummary) -> Option<usize> {
+pub async fn allow_user_search(pool: &MySqlPool, user_id: UserId) -> sqlx::Result<bool> {
+    sqlx::query(
+        "INSERT INTO oidc_user_search_limits (userID, windowStartedAt, requestCount) \
+         VALUES (?, CURRENT_TIMESTAMP(6), 1) \
+         ON DUPLICATE KEY UPDATE \
+         requestCount = IF(windowStartedAt <= CURRENT_TIMESTAMP(6) - INTERVAL 1 MINUTE, 1, requestCount + 1), \
+         windowStartedAt = IF(windowStartedAt <= CURRENT_TIMESTAMP(6) - INTERVAL 1 MINUTE, CURRENT_TIMESTAMP(6), windowStartedAt)",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    let request_count = sqlx::query_scalar::<_, u32>(
+        "SELECT requestCount FROM oidc_user_search_limits WHERE userID = ?",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(request_count <= 30)
+}
+
+pub(crate) fn user_search_score(query: &str, user: &UserSummary) -> Option<usize> {
     let query = normalize_search(query);
-    if query.chars().count() < 2 {
+    if query.chars().count() < 3 {
         return None;
     }
 
-    let values = vec![
-        normalize_search(&user.username),
-        normalize_search(&user.email),
-        normalize_search(user.real_name.as_deref().unwrap_or_default()),
-    ];
+    let mut values = Vec::new();
+    for value in [
+        user.username.as_str(),
+        user.email.as_str(),
+        user.real_name.as_deref().unwrap_or_default(),
+    ] {
+        values.push(normalize_search(value));
+        values.extend(
+            value
+                .split(|character: char| !character.is_alphanumeric())
+                .map(normalize_search),
+        );
+    }
     values
         .into_iter()
         .filter(|value| !value.is_empty())
@@ -417,37 +459,6 @@ fn edit_distance(left: &str, right: &str) -> usize {
     previous[right.len()]
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn user() -> UserSummary {
-        UserSummary {
-            user_id: 1,
-            username: "scauchy".to_owned(),
-            email: "stefan.cauchy@example.com".to_owned(),
-            real_name: Some("Stefan Cauchy".to_owned()),
-        }
-    }
-
-    #[test]
-    fn user_search_matches_names_usernames_emails_and_typos() {
-        let user = user();
-        assert!(user_search_score("Stefan", &user).is_some());
-        assert!(user_search_score("scau", &user).is_some());
-        assert!(user_search_score("example.com", &user).is_some());
-        assert!(user_search_score("stefn", &user).is_some());
-        assert!(user_search_score("caucy", &user).is_some());
-    }
-
-    #[test]
-    fn user_search_rejects_short_and_unrelated_queries() {
-        let user = user();
-        assert_eq!(user_search_score("s", &user), None);
-        assert_eq!(user_search_score("completely unrelated", &user), None);
-    }
-}
-
 fn user_summary(row: sqlx::mysql::MySqlRow) -> sqlx::Result<UserSummary> {
     Ok(UserSummary {
         user_id: row.try_get("userID")?,
@@ -460,7 +471,7 @@ fn user_summary(row: sqlx::mysql::MySqlRow) -> sqlx::Result<UserSummary> {
 pub async fn provision_user(
     pool: &MySqlPool,
     profile: &OidcProfile,
-) -> anyhow::Result<Option<u64>> {
+) -> anyhow::Result<Option<UserId>> {
     sqlx::query(
         "INSERT INTO oidc_identities (issuer, subject, userID) VALUES (?, ?, NULL) ON DUPLICATE KEY UPDATE subject = VALUES(subject)",
     )
@@ -477,7 +488,7 @@ pub async fn provision_user(
     .bind(&profile.subject)
     .fetch_one(&mut *transaction)
     .await?;
-    let existing = row.try_get::<Option<u64>, _>("userID")?;
+    let existing = row.try_get::<Option<UserId>, _>("userID")?;
     let user_id = if let Some(user_id) = existing {
         let role =
             sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE userID = ? FOR UPDATE")
@@ -559,10 +570,10 @@ pub async fn provision_user(
 pub async fn lock_identity_for_login_completion<'a>(
     pool: &'a MySqlPool,
     profile: &OidcProfile,
-    user_id: u64,
+    user_id: UserId,
 ) -> anyhow::Result<Option<Transaction<'a, MySql>>> {
     let mut transaction = pool.begin().await?;
-    let locked_user_id = sqlx::query_scalar::<_, Option<u64>>(
+    let locked_user_id = sqlx::query_scalar::<_, Option<UserId>>(
         "SELECT userID FROM oidc_identities WHERE issuer = ? AND subject = ? FOR UPDATE",
     )
     .bind(&profile.issuer)
@@ -581,7 +592,7 @@ async fn insert_user(
     issuer: &str,
     subject: &str,
     email: &str,
-) -> anyhow::Result<u64> {
+) -> anyhow::Result<UserId> {
     let base: String = requested
         .trim()
         .chars()
@@ -614,7 +625,7 @@ async fn insert_user(
         .execute(&mut **transaction)
         .await
         {
-            Ok(result) => return Ok(result.last_insert_id()),
+            Ok(result) => return Ok(UserId::new(result.last_insert_id())),
             Err(error) if is_duplicate_username(&error) => continue,
             Err(error) => return Err(error.into()),
         }
@@ -638,4 +649,36 @@ fn is_duplicate_username(error: &sqlx::Error) -> bool {
 
 pub fn is_duplicate_key(error: &sqlx::Error) -> bool {
     matches!(error, sqlx::Error::Database(error) if error.code().as_deref() == Some("1062"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user() -> UserSummary {
+        UserSummary {
+            user_id: UserId::new(1),
+            username: "scauchy".to_owned(),
+            email: "stefan.cauchy@example.com".to_owned(),
+            real_name: Some("Stefan Cauchy".to_owned()),
+        }
+    }
+
+    #[test]
+    fn user_search_matches_names_usernames_emails_and_typos() {
+        let user = user();
+        assert!(user_search_score("Stefan", &user).is_some());
+        assert!(user_search_score("scau", &user).is_some());
+        assert!(user_search_score("example.com", &user).is_some());
+        assert!(user_search_score("stefn", &user).is_some());
+        assert!(user_search_score("caucy", &user).is_some());
+    }
+
+    #[test]
+    fn user_search_rejects_short_and_unrelated_queries() {
+        let user = user();
+        assert_eq!(user_search_score("s", &user), None);
+        assert_eq!(user_search_score("sc", &user), None);
+        assert_eq!(user_search_score("completely unrelated", &user), None);
+    }
 }

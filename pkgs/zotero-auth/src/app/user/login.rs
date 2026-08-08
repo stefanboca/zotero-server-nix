@@ -1,19 +1,16 @@
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, CxBuilder, app_context},
     router::{
-        IntoResponse, Response,
+        Body, IntoResponse, Next, Response,
         error::{bad_request, redirect, see_other},
-        page, query_params, route,
+        layer, page, query_params, route,
     },
     session,
     view::view,
 };
 
-use crate::{
-    app::{AppState, current_user, is_topcoat_dev, normalized_return_path, valid_session_token},
-    store,
-};
+use crate::app::{AppState, BareLayout, current_user, normalized_return_path, valid_session_token};
 
 use super::super::auth::begin_oidc_flow;
 
@@ -29,21 +26,22 @@ fn return_path(query: &LoginQuery) -> Result<String> {
     normalized_return_path(value).ok_or_else(|| bad_request("invalid login return path").into())
 }
 
+#[layer]
+async fn bare_login_layout(cx: &mut CxBuilder, body: Body, next: Next<'_>) -> Result<Response> {
+    cx.insert(BareLayout);
+    next.run(cx, body).await
+}
+
 #[page]
 async fn login(cx: &Cx) -> Result {
     let query = query_params::<LoginQuery>(cx)?;
-    let action = if is_topcoat_dev() {
-        "/auth/oidc/start?session=preview".to_owned()
-    } else if let Some(dataserver_session) = query.session.as_deref() {
+    let action = if let Some(dataserver_session) = query.session.as_deref() {
         if !valid_session_token(dataserver_session) {
             return Err(bad_request("invalid Zotero login-session token").into());
         }
 
         let app = app_context::<AppState>(cx);
-        let info = app
-            .dataserver
-            .login_session_info(dataserver_session)
-            .await?;
+        let info = app.backend.login_session_info(dataserver_session).await?;
         if info.status != "pending" {
             return Err(bad_request("Zotero login session is no longer pending").into());
         }
@@ -52,12 +50,10 @@ async fn login(cx: &Cx) -> Result {
                 .expires_at
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs();
-            let authenticated = store::refresh_browser_session(
-                &app.database,
-                &*browser_session.token_hash,
-                expires,
-            )
-            .await?;
+            let authenticated = app
+                .backend
+                .refresh_browser_session(&*browser_session.token_hash, expires)
+                .await?;
             if authenticated.is_some() {
                 let url = begin_oidc_flow(cx, Some(dataserver_session), "/", Some(browser_session))
                     .await?;
@@ -79,19 +75,18 @@ async fn login(cx: &Cx) -> Result {
         format!("/user/login?{query}")
     };
     view! {
-        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <h1 class="text-2xl font-semibold">"Sign in to Zotero"</h1>
-            <p class="mt-3 leading-7 text-stone-700 dark:text-stone-300">
-                "Use your OpenID Connect account to continue."
-            </p>
-            <form class="mt-6" method="post" action=(action)>
-                <button
-                    class="w-full cursor-pointer rounded-lg bg-red-800 px-4 py-3 font-semibold text-white hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-800 dark:bg-red-700 dark:hover:bg-red-600"
-                    type="submit"
-                >
-                    "Continue with OpenID Connect"
-                </button>
-            </form>
+        <main class="mx-auto flex min-h-screen w-full max-w-lg items-center px-4 py-12 sm:px-6">
+            <section class="w-full">
+                <h1 class="text-2xl font-semibold">"Sign in to Zotero"</h1>
+                <form class="mt-5" method="post" action=(action)>
+                    <button
+                        class="cursor-pointer bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-800 dark:bg-red-700 dark:hover:bg-red-600"
+                        type="submit"
+                    >
+                        "Continue with OpenID Connect"
+                    </button>
+                </form>
+            </section>
         </main>
     }
 }
@@ -103,9 +98,6 @@ async fn start(cx: &Cx) -> Result<Response> {
         return Err(bad_request("desktop login must use the OIDC start endpoint").into());
     }
     let return_path = return_path(query)?;
-    if is_topcoat_dev() {
-        return see_other(&return_path).into_response(cx);
-    }
     if current_user(cx).await?.is_some() {
         return see_other(&return_path).into_response(cx);
     }
