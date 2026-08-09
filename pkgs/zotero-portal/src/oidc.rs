@@ -89,10 +89,10 @@ pub fn merge_claims(base: &mut Value, overlay: Value) -> anyhow::Result<()> {
     let base = base
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("ID-token claims were not an object"))?;
-    let overlay = overlay
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("UserInfo claims were not an object"))?;
-    base.extend(overlay.clone());
+    let Value::Object(overlay) = overlay else {
+        anyhow::bail!("UserInfo claims were not an object");
+    };
+    base.extend(overlay);
     Ok(())
 }
 

@@ -6,45 +6,21 @@ use topcoat::{
         HeaderValue, StatusCode,
         content::Form,
         error::{bad_request, forbidden, not_found},
-        header, headers, page,
+        header, page,
     },
     session,
     view::view,
 };
 
 use crate::{
-    app::{AppState, signed_in_user},
-    id::UserId,
-    store::{self, BrowserSession},
+    app::{AppState, request_confirmed, signed_in_user},
+    store,
 };
 
 #[derive(Deserialize)]
 struct RevokeSession {
     operation: String,
     handle: Option<String>,
-}
-
-async fn browser_session(cx: &Cx, user_id: UserId, handle: &str) -> Result<BrowserSession> {
-    app_context::<AppState>(cx)
-        .backend
-        .browser_sessions_for_user(user_id)
-        .await?
-        .into_iter()
-        .find(|browser_session| browser_session.handle == handle)
-        .ok_or_else(|| not_found().into())
-}
-
-async fn current_session_handle(cx: &Cx) -> Result<String> {
-    Ok(session::token_hash(cx)
-        .await?
-        .map(|hash| store::session_handle(&*hash))
-        .unwrap_or_default())
-}
-
-fn confirmed(cx: &Cx) -> bool {
-    headers(cx)
-        .get("x-zotero-confirmed")
-        .is_some_and(|value| value == "true")
 }
 
 #[page(POST)]
@@ -57,7 +33,7 @@ async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) -> Result {
             .await?;
         session::stop(cx).await?;
         let location = HeaderValue::from_static("/user/login");
-        if confirmed(cx) {
+        if request_confirmed(cx) {
             return view! { (StatusCode::NO_CONTENT) ((header::LOCATION, location)) };
         }
         return view! { (StatusCode::SEE_OTHER) ((header::LOCATION, location)) };
@@ -69,8 +45,18 @@ async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) -> Result {
         .handle
         .as_deref()
         .ok_or_else(|| bad_request("a browser session is required"))?;
-    let browser_session = browser_session(cx, user.user_id, handle).await?;
-    if browser_session.handle == current_session_handle(cx).await? {
+    let browser_session = app_context::<AppState>(cx)
+        .backend
+        .browser_sessions_for_user(user.user_id)
+        .await?
+        .into_iter()
+        .find(|browser_session| browser_session.handle == handle)
+        .ok_or_else(not_found)?;
+    let current_handle = session::token_hash(cx)
+        .await?
+        .map(|hash| store::session_handle(&*hash))
+        .unwrap_or_default();
+    if browser_session.handle == current_handle {
         return Err(forbidden().into());
     }
     if !app_context::<AppState>(cx)
@@ -80,7 +66,7 @@ async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) -> Result {
     {
         return Err(not_found().into());
     }
-    if confirmed(cx) {
+    if request_confirmed(cx) {
         return view! { (StatusCode::NO_CONTENT) };
     }
     view! { (StatusCode::SEE_OTHER) ((header::LOCATION, HeaderValue::from_static("/settings?notice=browser-session-revoked#sessions"))) }

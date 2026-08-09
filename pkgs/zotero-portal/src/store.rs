@@ -5,7 +5,7 @@ use sqlx::{
     mysql::{MySqlConnectOptions, MySqlPoolOptions},
 };
 
-use crate::{config::DatabaseConfig, id::UserId};
+use crate::{config::DatabaseConfig, hex_string, id::UserId};
 
 #[derive(Clone)]
 pub struct OidcFlow {
@@ -72,23 +72,18 @@ pub async fn delete_expired_oidc_flows(pool: &MySqlPool, now: u64) -> sqlx::Resu
 pub async fn create_oidc_flow(
     pool: &MySqlPool,
     token_hash: &[u8],
-    state: &str,
-    nonce: &str,
-    pkce_verifier: &str,
-    session_token: Option<&str>,
-    return_path: &str,
-    expires: u64,
+    flow: &OidcFlow,
 ) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO oidc_flows (tokenHash, state, nonce, pkceVerifier, sessionToken, returnPath, expires) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(token_hash)
-    .bind(state)
-    .bind(nonce)
-    .bind(pkce_verifier)
-    .bind(session_token)
-    .bind(return_path)
-    .bind(expires)
+    .bind(&flow.state)
+    .bind(&flow.nonce)
+    .bind(&flow.pkce_verifier)
+    .bind(&flow.session_token)
+    .bind(&flow.return_path)
+    .bind(flow.expires)
     .execute(pool)
     .await?;
     Ok(())
@@ -277,10 +272,7 @@ pub async fn revoke_all_browser_sessions(pool: &MySqlPool, user_id: UserId) -> s
 }
 
 pub fn session_handle(token_hash: &[u8]) -> String {
-    token_hash
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex_string(token_hash)
 }
 
 pub async fn user_by_id(pool: &MySqlPool, user_id: UserId) -> sqlx::Result<Option<UserSummary>> {
@@ -581,10 +573,7 @@ async fn insert_user(
         .collect();
     let base = if base.is_empty() { "user" } else { &base };
     let digest = Sha256::digest(format!("{issuer}\0{subject}"));
-    let suffix = digest[..6]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
+    let suffix = hex_string(&digest[..6]);
     for attempt in 0..100 {
         let suffix = match attempt {
             0 => String::new(),

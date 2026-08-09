@@ -1,7 +1,6 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context as _, anyhow};
@@ -18,7 +17,13 @@ use crate::{
     id::UserId,
     oidc::{Oidc, jwt_claims, merge_claims, value_at_path, value_string},
     store::{self, BrowserSession, OidcFlow, OidcProfile, UserSummary},
+    epoch_seconds,
 };
+
+const DEVELOPMENT_USER_ID: UserId = UserId::new(1);
+const DEVELOPMENT_API_KEY: &str = "development-api-key";
+const DEVELOPMENT_OIDC_ISSUER: &str = "https://mock-oidc.invalid";
+const DEVELOPMENT_OIDC_SUBJECT: &str = "researcher";
 
 #[derive(Clone)]
 pub struct Backend {
@@ -27,7 +32,7 @@ pub struct Backend {
 
 enum BackendInner {
     Production(ProductionBackend),
-    Development(Mutex<DevelopmentState>),
+    Development(Box<Mutex<DevelopmentState>>),
 }
 
 struct ProductionBackend {
@@ -40,16 +45,12 @@ struct ProductionBackend {
 
 struct DevelopmentState {
     users: BTreeMap<UserId, UserSummary>,
-    identities: HashMap<(String, String), UserId>,
     groups: BTreeMap<u64, Group>,
-    next_group_id: u64,
-    storage: HashMap<UserId, StorageUsage>,
-    connected_clients: HashMap<UserId, Vec<ConnectedClient>>,
+    connected_clients: Vec<ConnectedClient>,
     browser_sessions: HashMap<Vec<u8>, DevelopmentBrowserSession>,
     oidc_flows: HashMap<Vec<u8>, OidcFlow>,
-    authorization_codes: HashMap<String, OidcProfile>,
+    authorization_codes: HashSet<String>,
     login_sessions: HashMap<String, LoginSessionInfo>,
-    web_library_api_keys: HashMap<String, UserId>,
 }
 
 struct DevelopmentBrowserSession {
@@ -142,13 +143,13 @@ impl Backend {
 
     pub fn development() -> Self {
         Self {
-            inner: Arc::new(BackendInner::Development(Mutex::new(
+            inner: Arc::new(BackendInner::Development(Box::new(Mutex::new(
                 DevelopmentState::seeded(),
-            ))),
+            )))),
         }
     }
 
-    pub async fn begin_oidc_authorization(&self) -> anyhow::Result<OidcAuthorization> {
+    pub fn begin_oidc_authorization(&self) -> anyhow::Result<OidcAuthorization> {
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         match &*self.inner {
             BackendInner::Production(backend) => {
@@ -174,10 +175,11 @@ impl Backend {
                 let state = CsrfToken::new_random();
                 let nonce = Nonce::new_random();
                 let code = CsrfToken::new_random();
-                development.lock().unwrap().authorization_codes.insert(
-                    code.secret().to_owned(),
-                    DevelopmentState::researcher_profile(),
-                );
+                development
+                    .lock()
+                    .unwrap()
+                    .authorization_codes
+                    .insert(code.secret().to_owned());
                 let query = url::form_urlencoded::Serializer::new(String::new())
                     .append_pair("code", code.secret())
                     .append_pair("state", state.secret())
@@ -198,13 +200,13 @@ impl Backend {
         flow: &OidcFlow,
     ) -> anyhow::Result<Option<OidcProfile>> {
         match &*self.inner {
-            BackendInner::Development(state) => state
-                .lock()
-                .unwrap()
-                .authorization_codes
-                .remove(code)
-                .map(Some)
-                .ok_or_else(|| anyhow!("unknown or already-used mock authorization code")),
+            BackendInner::Development(state) => {
+                if state.lock().unwrap().authorization_codes.remove(code) {
+                    Ok(Some(development_oidc_profile()))
+                } else {
+                    Err(anyhow!("unknown or already-used mock authorization code"))
+                }
+            }
             BackendInner::Production(backend) => {
                 let token_response = backend
                     .oidc
@@ -293,31 +295,14 @@ impl Backend {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn create_oidc_flow(
         &self,
         token_hash: &[u8],
-        state: &str,
-        nonce: &str,
-        pkce_verifier: &str,
-        session_token: Option<&str>,
-        return_path: &str,
-        expires: u64,
+        flow: &OidcFlow,
     ) -> anyhow::Result<bool> {
         match &*self.inner {
             BackendInner::Production(backend) => {
-                match store::create_oidc_flow(
-                    &backend.database,
-                    token_hash,
-                    state,
-                    nonce,
-                    pkce_verifier,
-                    session_token,
-                    return_path,
-                    expires,
-                )
-                .await
-                {
+                match store::create_oidc_flow(&backend.database, token_hash, flow).await {
                     Ok(()) => Ok(true),
                     Err(error) if store::is_duplicate_key(&error) => Ok(false),
                     Err(error) => Err(error.into()),
@@ -330,14 +315,7 @@ impl Backend {
                 }
                 backend.oidc_flows.insert(
                     token_hash.to_vec(),
-                    OidcFlow {
-                        nonce: nonce.to_owned(),
-                        pkce_verifier: pkce_verifier.to_owned(),
-                        session_token: session_token.map(str::to_owned),
-                        return_path: return_path.to_owned(),
-                        expires,
-                        state: state.to_owned(),
-                    },
+                    flow.clone(),
                 );
                 Ok(true)
             }
@@ -399,34 +377,24 @@ impl Backend {
             }
             BackendInner::Development(state) => {
                 let mut backend = state.lock().unwrap();
-                let identity = (profile.issuer.clone(), profile.subject.clone());
-                let user_id = backend
-                    .identities
-                    .get(&identity)
-                    .copied()
-                    .unwrap_or_else(|| {
-                        let user_id = UserId::new(
-                            backend
-                                .users
-                                .last_key_value()
-                                .map_or(1, |(user_id, _)| user_id.get() + 1),
-                        );
-                        backend.identities.insert(identity, user_id);
-                        user_id
-                    });
+                if profile.issuer != DEVELOPMENT_OIDC_ISSUER
+                    || profile.subject != DEVELOPMENT_OIDC_SUBJECT
+                {
+                    return Ok(None);
+                }
                 let username = profile.username.clone().unwrap_or_else(|| {
                     profile.email.split('@').next().unwrap_or("user").to_owned()
                 });
                 backend.users.insert(
-                    user_id,
+                    DEVELOPMENT_USER_ID,
                     UserSummary {
-                        user_id,
+                        user_id: DEVELOPMENT_USER_ID,
                         username,
                         email: profile.email.clone(),
                         real_name: profile.real_name.clone(),
                     },
                 );
-                Ok(Some(user_id))
+                Ok(Some(DEVELOPMENT_USER_ID))
             }
         }
     }
@@ -444,13 +412,12 @@ impl Backend {
                         .map(IdentityLock::Production),
                 )
             }
-            BackendInner::Development(state) => Ok((state
-                .lock()
-                .unwrap()
-                .identities
-                .get(&(profile.issuer.clone(), profile.subject.clone()))
-                == Some(&user_id))
-            .then_some(IdentityLock::Development)),
+            BackendInner::Development(_) => {
+                Ok((user_id == DEVELOPMENT_USER_ID
+                    && profile.issuer == DEVELOPMENT_OIDC_ISSUER
+                    && profile.subject == DEVELOPMENT_OIDC_SUBJECT)
+                    .then_some(IdentityLock::Development))
+            }
         }
     }
 
@@ -495,7 +462,7 @@ impl Backend {
                     user_id,
                     expires,
                 )
-                .await?
+                .await?;
             }
             BackendInner::Development(state) => {
                 let now = epoch_seconds()?;
@@ -734,13 +701,10 @@ impl Backend {
                 state
                     .lock()
                     .unwrap()
-                    .storage
-                    .entry(user_id)
-                    .or_insert(StorageUsage {
-                        total_mb: 0.0,
-                        library_mb: 0.0,
-                    });
-                Ok(())
+                    .users
+                    .contains_key(&user_id)
+                    .then_some(())
+                    .ok_or_else(|| anyhow!("development user does not exist"))
             }
         }
     }
@@ -748,16 +712,17 @@ impl Backend {
     pub async fn storage_usage(&self, user_id: UserId) -> anyhow::Result<StorageUsage> {
         match &*self.inner {
             BackendInner::Production(backend) => backend.dataserver.storage_usage(user_id).await,
-            BackendInner::Development(state) => Ok(state
-                .lock()
-                .unwrap()
-                .storage
-                .get(&user_id)
-                .copied()
-                .unwrap_or(StorageUsage {
+            BackendInner::Development(_) => Ok(if user_id == DEVELOPMENT_USER_ID {
+                StorageUsage {
+                    total_mb: 1280.0,
+                    library_mb: 1024.0,
+                }
+            } else {
+                StorageUsage {
                     total_mb: 0.0,
                     library_mb: 0.0,
-                })),
+                }
+            }),
         }
     }
 
@@ -766,13 +731,11 @@ impl Backend {
             BackendInner::Production(backend) => {
                 backend.dataserver.connected_clients(user_id).await
             }
-            BackendInner::Development(state) => Ok(state
-                .lock()
-                .unwrap()
-                .connected_clients
-                .get(&user_id)
-                .cloned()
-                .unwrap_or_default()),
+            BackendInner::Development(state) => Ok(if user_id == DEVELOPMENT_USER_ID {
+                state.lock().unwrap().connected_clients.clone()
+            } else {
+                Vec::new()
+            }),
         }
     }
 
@@ -784,28 +747,12 @@ impl Backend {
                 read_only: false,
                 streaming_url: backend.config.streaming.url.clone(),
             }),
-            BackendInner::Development(state) => {
-                let mut state = state.lock().unwrap();
-                if !state.users.contains_key(&user_id) {
+            BackendInner::Development(_) => {
+                if user_id != DEVELOPMENT_USER_ID {
                     return Err(anyhow!("development user does not exist"));
                 }
-                let existing_api_key =
-                    state
-                        .web_library_api_keys
-                        .iter()
-                        .find_map(|(api_key, candidate)| {
-                            (*candidate == user_id).then(|| api_key.clone())
-                        });
-                let api_key = match existing_api_key {
-                    Some(api_key) => api_key,
-                    None => {
-                        let api_key = CsrfToken::new_random().secret().to_owned();
-                        state.web_library_api_keys.insert(api_key.clone(), user_id);
-                        api_key
-                    }
-                };
                 Ok(WebLibraryAccess {
-                    api_key,
+                    api_key: DEVELOPMENT_API_KEY.to_owned(),
                     api_url: "http://127.0.0.1:3000/api/".to_owned(),
                     read_only: true,
                     streaming_url: String::new(),
@@ -814,22 +761,20 @@ impl Backend {
         }
     }
 
-    pub async fn web_library_api_response(
+    pub fn web_library_api_response(
         &self,
         api_key: &str,
         path: &str,
         query: Option<&str>,
-    ) -> anyhow::Result<Option<WebLibraryApiResponse>> {
+    ) -> Option<WebLibraryApiResponse> {
         let BackendInner::Development(state) = &*self.inner else {
-            return Ok(None);
+            return None;
         };
-        let state = state.lock().unwrap();
-        let Some(user_id) = state.web_library_api_keys.get(api_key).copied() else {
-            return Ok(None);
-        };
-        if !state.users.contains_key(&user_id) {
-            return Ok(None);
+        if api_key != DEVELOPMENT_API_KEY {
+            return None;
         }
+        let state = state.lock().unwrap();
+        let user_id = DEVELOPMENT_USER_ID;
 
         let segments = path
             .split('/')
@@ -839,28 +784,7 @@ impl Backend {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(name, value)| (name == "itemKey").then(|| value.into_owned()))
         });
-        let response = match segments.as_slice() {
-            ["users", id, "settings", "tagColors"] if parse_user_id(id) == Some(user_id) => {
-                mock_api_json(serde_json::json!({
-                    "key": "tagColors",
-                    "version": 1,
-                    "value": []
-                }))
-            }
-            ["users", id, "settings", key] if parse_user_id(id) == Some(user_id) => {
-                mock_api_json(serde_json::json!({
-                    "key": key,
-                    "version": 1,
-                    "value": if *key == "readerCustomThemes" {
-                        Value::Array(Vec::new())
-                    } else {
-                        Value::Null
-                    }
-                }))
-            }
-            ["users", id, "collections"] if parse_user_id(id) == Some(user_id) => {
-                mock_api_list(Vec::new())
-            }
+        match segments.as_slice() {
             ["users", id, "groups"] if parse_user_id(id) == Some(user_id) => {
                 let groups = state
                     .groups
@@ -868,173 +792,37 @@ impl Backend {
                     .filter(|group| group.role(user_id).is_some())
                     .map(mock_api_group)
                     .collect();
-                mock_api_list(groups)
+                Some(mock_api_list(groups))
             }
-            ["users", id, "items", "top"] if parse_user_id(id) == Some(user_id) => {
-                let user = state.users.get(&user_id).expect("development user exists");
-                mock_api_list(vec![mock_api_item(
-                    "user",
-                    user_id.get(),
-                    &user.username,
-                    "DEVUSER1",
-                    "A local Zotero library",
-                )])
+            ["users", id, path @ ..] if parse_user_id(id) == Some(user_id) => {
+                let user = state.users.get(&user_id)?;
+                mock_library_api_response(
+                    api_key,
+                    &MockLibrary {
+                        library_type: "user",
+                        id: user_id.get(),
+                        name: &user.username,
+                        parent_key: "DEVUSER1".to_owned(),
+                        title: "A local Zotero library".to_owned(),
+                    },
+                    path,
+                    requested_item_key.as_deref(),
+                )
             }
-            ["users", id, "items"] if parse_user_id(id) == Some(user_id) => {
-                let user = state.users.get(&user_id).expect("development user exists");
-                let attachment_key = mock_attachment_key(user_id.get());
-                let values = match requested_item_key.as_deref() {
-                    Some(key) if key == attachment_key => vec![mock_api_attachment(
-                        "user",
-                        user_id.get(),
-                        &user.username,
-                        "DEVUSER1",
-                    )],
-                    Some("DEVUSER1") => vec![mock_api_item(
-                        "user",
-                        user_id.get(),
-                        &user.username,
-                        "DEVUSER1",
-                        "A local Zotero library",
-                    )],
-                    _ => Vec::new(),
-                };
-                mock_api_list(values)
-            }
-            ["users", id, "items", key]
-                if parse_user_id(id) == Some(user_id)
-                    && *key == mock_attachment_key(user_id.get()) =>
-            {
-                let user = state.users.get(&user_id).expect("development user exists");
-                mock_api_json(mock_api_attachment(
-                    "user",
-                    user_id.get(),
-                    &user.username,
-                    "DEVUSER1",
-                ))
-            }
-            ["users", id, "items", key, "children"]
-                if parse_user_id(id) == Some(user_id)
-                    && *key == mock_attachment_key(user_id.get()) =>
-            {
-                mock_api_list(Vec::new())
-            }
-            ["users", id, "items", key, "file", "view", "url"]
-                if parse_user_id(id) == Some(user_id)
-                    && *key == mock_attachment_key(user_id.get()) =>
-            {
-                mock_attachment_url(api_key, key)
-            }
-            ["users", id, "items", "top", "tags"] if parse_user_id(id) == Some(user_id) => {
-                mock_api_list(Vec::new())
-            }
-            ["groups", id, "settings", "tagColors"] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                let _ = group;
-                mock_api_json(serde_json::json!({
-                    "key": "tagColors",
-                    "version": 1,
-                    "value": []
-                }))
-            }
-            ["groups", id, "settings", key] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                let _ = group;
-                mock_api_json(serde_json::json!({
-                    "key": key,
-                    "version": 1,
-                    "value": if *key == "readerCustomThemes" {
-                        Value::Array(Vec::new())
-                    } else {
-                        Value::Null
-                    }
-                }))
-            }
-            ["groups", id, "collections"] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                let _ = group;
-                mock_api_list(Vec::new())
-            }
-            ["groups", id, "items", "top"] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                mock_api_list(vec![mock_api_item(
-                    "group",
-                    group.id,
-                    &group.name,
-                    &format!("DEVGRP{:02}", group.id),
-                    &format!("A paper shared with {}", group.name),
-                )])
-            }
-            ["groups", id, "items"] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                let attachment_key = mock_attachment_key(group.id);
-                let parent_key = format!("DEVGRP{:02}", group.id);
-                let values = match requested_item_key.as_deref() {
-                    Some(key) if key == attachment_key => vec![mock_api_attachment(
-                        "group",
-                        group.id,
-                        &group.name,
-                        &parent_key,
-                    )],
-                    Some(key) if key == parent_key => vec![mock_api_item(
-                        "group",
-                        group.id,
-                        &group.name,
-                        &parent_key,
-                        &format!("A paper shared with {}", group.name),
-                    )],
-                    _ => Vec::new(),
-                };
-                mock_api_list(values)
-            }
-            ["groups", id, "items", key] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                if *key != mock_attachment_key(group.id) {
-                    return Ok(None);
-                }
-                mock_api_json(mock_api_attachment(
-                    "group",
-                    group.id,
-                    &group.name,
-                    &format!("DEVGRP{:02}", group.id),
-                ))
-            }
-            ["groups", id, "items", key, "children"] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                if *key != mock_attachment_key(group.id) {
-                    return Ok(None);
-                }
-                mock_api_list(Vec::new())
-            }
-            ["groups", id, "items", key, "file", "view", "url"] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                if *key != mock_attachment_key(group.id) {
-                    return Ok(None);
-                }
-                mock_attachment_url(api_key, key)
-            }
-            ["groups", id, "items", "top", "tags"] => {
-                let Some(group) = parse_group(&state, id, user_id) else {
-                    return Ok(None);
-                };
-                let _ = group;
-                mock_api_list(Vec::new())
+            ["groups", id, path @ ..] => {
+                let group = parse_group(&state, id, user_id)?;
+                mock_library_api_response(
+                    api_key,
+                    &MockLibrary {
+                        library_type: "group",
+                        id: group.id,
+                        name: &group.name,
+                        parent_key: format!("DEVGRP{:02}", group.id),
+                        title: format!("A paper shared with {}", group.name),
+                    },
+                    path,
+                    requested_item_key.as_deref(),
+                )
             }
             ["mock-files", key]
                 if *key == mock_attachment_key(user_id.get())
@@ -1042,11 +830,10 @@ impl Backend {
                         group.role(user_id).is_some() && *key == mock_attachment_key(group.id)
                     }) =>
             {
-                mock_api_raw("application/pdf", mock_pdf())
+                Some(mock_api_raw("application/pdf", mock_pdf()))
             }
-            _ => return Ok(None),
-        };
-        Ok(Some(response))
+            _ => None,
+        }
     }
 
     pub async fn translate(
@@ -1126,11 +913,15 @@ impl Backend {
                     .await
             }
             BackendInner::Development(state) => {
+                if user_id != DEVELOPMENT_USER_ID {
+                    return Ok(false);
+                }
                 let mut backend = state.lock().unwrap();
-                let clients = backend.connected_clients.entry(user_id).or_default();
-                let before = clients.len();
-                clients.retain(|client| client.handle != handle);
-                Ok(clients.len() != before)
+                let before = backend.connected_clients.len();
+                backend
+                    .connected_clients
+                    .retain(|client| client.handle != handle);
+                Ok(backend.connected_clients.len() != before)
             }
         }
     }
@@ -1143,12 +934,15 @@ impl Backend {
                     .revoke_all_connected_clients(user_id)
                     .await
             }
-            BackendInner::Development(state) => Ok(state
-                .lock()
-                .unwrap()
-                .connected_clients
-                .remove(&user_id)
-                .map_or(0, |clients| clients.len())),
+            BackendInner::Development(state) => {
+                if user_id != DEVELOPMENT_USER_ID {
+                    return Ok(0);
+                }
+                let mut state = state.lock().unwrap();
+                let revoked = state.connected_clients.len();
+                state.connected_clients.clear();
+                Ok(revoked)
+            }
         }
     }
 
@@ -1182,24 +976,13 @@ impl Backend {
             }
             BackendInner::Development(state) => {
                 let mut backend = state.lock().unwrap();
-                let group_id = backend.next_group_id;
-                backend.next_group_id += 1;
+                let group_id = backend
+                    .groups
+                    .last_key_value()
+                    .map_or(1, |(group_id, _)| *group_id + 1);
                 backend.groups.insert(
                     group_id,
-                    Group {
-                        id: group_id,
-                        name: name.to_owned(),
-                        owner: user_id,
-                        admins: Vec::new(),
-                        members: Vec::new(),
-                        group_type: "Private".to_owned(),
-                        library_editing: "members".to_owned(),
-                        library_reading: "members".to_owned(),
-                        file_editing: "members".to_owned(),
-                        description: String::new(),
-                        url: String::new(),
-                        has_image: false,
-                    },
+                    development_group(group_id, name, user_id, &[], &[]),
                 );
                 Ok(group_id)
             }
@@ -1304,6 +1087,75 @@ fn parse_user_id(value: &str) -> Option<UserId> {
 fn parse_group<'a>(state: &'a DevelopmentState, value: &str, user_id: UserId) -> Option<&'a Group> {
     let group = state.groups.get(&value.parse().ok()?)?;
     group.role(user_id).is_some().then_some(group)
+}
+
+struct MockLibrary<'a> {
+    library_type: &'static str,
+    id: u64,
+    name: &'a str,
+    parent_key: String,
+    title: String,
+}
+
+fn mock_library_api_response(
+    api_key: &str,
+    library: &MockLibrary<'_>,
+    path: &[&str],
+    requested_item_key: Option<&str>,
+) -> Option<WebLibraryApiResponse> {
+    let attachment_key = mock_attachment_key(library.id);
+    let response = match path {
+        ["settings", key] => mock_api_json(serde_json::json!({
+            "key": key,
+            "version": 1,
+            "value": if matches!(*key, "tagColors" | "readerCustomThemes") {
+                Value::Array(Vec::new())
+            } else {
+                Value::Null
+            }
+        })),
+        ["collections"] | ["items", "top", "tags"] => mock_api_list(Vec::new()),
+        ["items", "top"] => mock_api_list(vec![mock_api_item(
+            library.library_type,
+            library.id,
+            library.name,
+            &library.parent_key,
+            &library.title,
+        )]),
+        ["items"] => {
+            let values = match requested_item_key {
+                Some(key) if key == attachment_key => vec![mock_api_attachment(
+                    library.library_type,
+                    library.id,
+                    library.name,
+                    &library.parent_key,
+                )],
+                Some(key) if key == library.parent_key => vec![mock_api_item(
+                    library.library_type,
+                    library.id,
+                    library.name,
+                    &library.parent_key,
+                    &library.title,
+                )],
+                _ => Vec::new(),
+            };
+            mock_api_list(values)
+        }
+        ["items", key] if *key == attachment_key => mock_api_json(mock_api_attachment(
+            library.library_type,
+            library.id,
+            library.name,
+            &library.parent_key,
+        )),
+        ["items", key, "children"] if *key == attachment_key => {
+            mock_api_list(Vec::new())
+        }
+        ["items", key, "file", "view", "url"] if *key == attachment_key => {
+            mock_attachment_url(api_key, key)
+        }
+        _ => return None,
+    };
+    Some(response)
 }
 
 fn mock_api_json(body: Value) -> WebLibraryApiResponse {
@@ -1548,12 +1400,46 @@ fn mock_api_attachment(
     })
 }
 
+fn development_group(
+    id: u64,
+    name: &str,
+    owner: UserId,
+    admins: &[UserId],
+    members: &[UserId],
+) -> Group {
+    Group {
+        id,
+        name: name.to_owned(),
+        owner,
+        admins: admins.to_vec(),
+        members: members.to_vec(),
+        group_type: "Private".to_owned(),
+        library_editing: "members".to_owned(),
+        library_reading: "members".to_owned(),
+        file_editing: "members".to_owned(),
+        description: String::new(),
+        url: String::new(),
+        has_image: false,
+    }
+}
+
+fn development_oidc_profile() -> OidcProfile {
+    OidcProfile {
+        issuer: DEVELOPMENT_OIDC_ISSUER.to_owned(),
+        subject: DEVELOPMENT_OIDC_SUBJECT.to_owned(),
+        email: "researcher@example.com".to_owned(),
+        username: Some("researcher".to_owned()),
+        real_name: Some("Example Researcher".to_owned()),
+        email_verified: true,
+    }
+}
+
 impl DevelopmentState {
     fn seeded() -> Self {
         let now = epoch_seconds().unwrap_or(0);
         let users = [
             UserSummary {
-                user_id: UserId::new(1),
+                user_id: DEVELOPMENT_USER_ID,
                 username: "researcher".to_owned(),
                 email: "researcher@example.com".to_owned(),
                 real_name: Some("Example Researcher".to_owned()),
@@ -1580,95 +1466,52 @@ impl DevelopmentState {
         .into_iter()
         .map(|user| (user.user_id, user))
         .collect();
-        let profile = Self::researcher_profile();
         Self {
             users,
-            identities: [(
-                (profile.issuer.clone(), profile.subject.clone()),
-                UserId::new(1),
-            )]
-            .into_iter()
-            .collect(),
             groups: [
                 (
                     1,
-                    Group {
-                        id: 1,
-                        name: "Research group".to_owned(),
-                        owner: UserId::new(1),
-                        admins: vec![UserId::new(2)],
-                        members: vec![UserId::new(3)],
-                        group_type: "Private".to_owned(),
-                        library_editing: "members".to_owned(),
-                        library_reading: "members".to_owned(),
-                        file_editing: "members".to_owned(),
-                        description: String::new(),
-                        url: String::new(),
-                        has_image: false,
-                    },
+                    development_group(
+                        1,
+                        "Research group",
+                        DEVELOPMENT_USER_ID,
+                        &[UserId::new(2)],
+                        &[UserId::new(3)],
+                    ),
                 ),
                 (
                     2,
-                    Group {
-                        id: 2,
-                        name: "Administered group".to_owned(),
-                        owner: UserId::new(2),
-                        admins: vec![UserId::new(1)],
-                        members: vec![UserId::new(3)],
-                        group_type: "Private".to_owned(),
-                        library_editing: "members".to_owned(),
-                        library_reading: "members".to_owned(),
-                        file_editing: "members".to_owned(),
-                        description: String::new(),
-                        url: String::new(),
-                        has_image: false,
-                    },
+                    development_group(
+                        2,
+                        "Administered group",
+                        UserId::new(2),
+                        &[DEVELOPMENT_USER_ID],
+                        &[UserId::new(3)],
+                    ),
                 ),
                 (
                     3,
-                    Group {
-                        id: 3,
-                        name: "Member group".to_owned(),
-                        owner: UserId::new(2),
-                        admins: Vec::new(),
-                        members: vec![UserId::new(1), UserId::new(3)],
-                        group_type: "Private".to_owned(),
-                        library_editing: "members".to_owned(),
-                        library_reading: "members".to_owned(),
-                        file_editing: "members".to_owned(),
-                        description: String::new(),
-                        url: String::new(),
-                        has_image: false,
-                    },
+                    development_group(
+                        3,
+                        "Member group",
+                        UserId::new(2),
+                        &[],
+                        &[DEVELOPMENT_USER_ID, UserId::new(3)],
+                    ),
                 ),
             ]
             .into_iter()
             .collect(),
-            next_group_id: 4,
-            storage: [(
-                UserId::new(1),
-                StorageUsage {
-                    total_mb: 1280.0,
-                    library_mb: 1024.0,
-                },
-            )]
-            .into_iter()
-            .collect(),
-            connected_clients: [(
-                UserId::new(1),
-                vec![ConnectedClient {
-                    handle: "22".repeat(32),
-                    name: "Zotero Desktop".to_owned(),
-                    date_added: "2026-08-01T10:00:00Z".to_owned(),
-                    last_used: Some("2026-08-08T09:30:00Z".to_owned()),
-                }],
-            )]
-            .into_iter()
-            .collect(),
+            connected_clients: vec![ConnectedClient {
+                handle: "22".repeat(32),
+                name: "Zotero Desktop".to_owned(),
+                date_added: "2026-08-01T10:00:00Z".to_owned(),
+                last_used: Some("2026-08-08T09:30:00Z".to_owned()),
+            }],
             browser_sessions: [(
                 vec![0x11; 32],
                 DevelopmentBrowserSession {
-                    user_id: UserId::new(1),
+                    user_id: DEVELOPMENT_USER_ID,
                     created_at: now.saturating_sub(14 * 24 * 60 * 60),
                     last_seen_at: now.saturating_sub(2 * 60 * 60),
                     expires_at: now + 29 * 24 * 60 * 60,
@@ -1677,26 +1520,10 @@ impl DevelopmentState {
             .into_iter()
             .collect(),
             oidc_flows: HashMap::new(),
-            authorization_codes: HashMap::new(),
+            authorization_codes: HashSet::new(),
             login_sessions: HashMap::new(),
-            web_library_api_keys: HashMap::new(),
         }
     }
-
-    fn researcher_profile() -> OidcProfile {
-        OidcProfile {
-            issuer: "https://mock-oidc.invalid".to_owned(),
-            subject: "researcher".to_owned(),
-            email: "researcher@example.com".to_owned(),
-            username: Some("researcher".to_owned()),
-            real_name: Some("Example Researcher".to_owned()),
-            email_verified: true,
-        }
-    }
-}
-
-fn epoch_seconds() -> anyhow::Result<u64> {
-    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
 #[cfg(test)]
@@ -1707,13 +1534,13 @@ mod tests {
     async fn development_groups_cover_each_role() {
         let backend = Backend::development();
         let groups = backend
-            .groups_for_user(UserId::new(1))
+            .groups_for_user(DEVELOPMENT_USER_ID)
             .await
             .expect("development groups must load");
         let roles = groups
             .into_iter()
             .map(|group| {
-                let role = group.role(UserId::new(1));
+                let role = group.role(DEVELOPMENT_USER_ID);
                 (group.name, role)
             })
             .collect::<BTreeMap<_, _>>();
@@ -1729,7 +1556,7 @@ mod tests {
     #[tokio::test]
     async fn development_web_library_api_uses_live_group_state() {
         let backend = Backend::development();
-        let user_id = UserId::new(1);
+        let user_id = DEVELOPMENT_USER_ID;
         let access = backend
             .web_library_access(user_id)
             .await
@@ -1737,8 +1564,6 @@ mod tests {
 
         let initial = backend
             .web_library_api_response(&access.api_key, "users/1/groups", None)
-            .await
-            .expect("development groups API must load")
             .expect("development groups API must be enabled");
         assert!(initial.body.to_string().contains("Research group"));
 
@@ -1754,8 +1579,6 @@ mod tests {
 
         let updated = backend
             .web_library_api_response(&access.api_key, "users/1/groups", None)
-            .await
-            .expect("development groups API must reload")
             .expect("development groups API must remain enabled");
         assert!(
             updated
@@ -1767,8 +1590,6 @@ mod tests {
         assert!(
             backend
                 .web_library_api_response("invalid", "users/1/groups", None)
-                .await
-                .expect("invalid API key lookup must not fail")
                 .is_none()
         );
     }
@@ -1777,7 +1598,7 @@ mod tests {
     async fn development_web_library_api_filters_items_by_item_key() {
         let backend = Backend::development();
         let access = backend
-            .web_library_access(UserId::new(1))
+            .web_library_access(DEVELOPMENT_USER_ID)
             .await
             .expect("development Web Library access must load");
 
@@ -1787,8 +1608,6 @@ mod tests {
                 "groups/2/items",
                 Some("format=json&includeTrashed=0&itemKey=PDF00002"),
             )
-            .await
-            .expect("development items API must load")
             .expect("development items API must be enabled");
 
         assert_eq!(response.total_results, Some(1));
@@ -1800,7 +1619,7 @@ mod tests {
     async fn development_group_mutations_are_persistent() {
         let backend = Backend::development();
         let group_id = backend
-            .create_private_group(UserId::new(1), "New group")
+            .create_private_group(DEVELOPMENT_USER_ID, "New group")
             .await
             .expect("group creation must succeed");
         let group = backend
@@ -1840,10 +1659,10 @@ mod tests {
             .expect("group lookup must succeed")
             .expect("new group must still exist");
         assert_eq!(group.owner, UserId::new(4));
-        assert_eq!(group.role(UserId::new(1)), Some(GroupRole::Admin));
+        assert_eq!(group.role(DEVELOPMENT_USER_ID), Some(GroupRole::Admin));
 
         backend
-            .remove_group_user(group_id, UserId::new(1))
+            .remove_group_user(group_id, DEVELOPMENT_USER_ID)
             .await
             .expect("member removal must succeed");
         assert_eq!(
@@ -1852,7 +1671,7 @@ mod tests {
                 .await
                 .expect("group lookup must succeed")
                 .expect("new group must still exist")
-                .role(UserId::new(1)),
+                .role(DEVELOPMENT_USER_ID),
             None
         );
 
@@ -1872,7 +1691,7 @@ mod tests {
     #[tokio::test]
     async fn development_session_and_client_mutations_are_persistent() {
         let backend = Backend::development();
-        let user_id = UserId::new(1);
+        let user_id = DEVELOPMENT_USER_ID;
         let old_token = vec![0x33; 32];
         let new_token = vec![0x44; 32];
         backend
@@ -1934,7 +1753,7 @@ mod tests {
         assert_eq!(pending.status, "pending");
 
         backend
-            .complete_login_session(token, UserId::new(1), None)
+            .complete_login_session(token, DEVELOPMENT_USER_ID, None)
             .await
             .expect("login session completion must succeed");
         let completed = backend
@@ -1942,7 +1761,7 @@ mod tests {
             .await
             .expect("completed login session lookup must succeed");
         assert_eq!(completed.status, "complete");
-        assert_eq!(completed.user_id, Some(UserId::new(1)));
+        assert_eq!(completed.user_id, Some(DEVELOPMENT_USER_ID));
     }
 
     #[tokio::test]
@@ -1950,7 +1769,6 @@ mod tests {
         let backend = Backend::development();
         let authorization = backend
             .begin_oidc_authorization()
-            .await
             .expect("authorization must start");
         let url = url::Url::parse(&format!("http://localhost{}", authorization.url))
             .expect("mock callback URL must be valid");

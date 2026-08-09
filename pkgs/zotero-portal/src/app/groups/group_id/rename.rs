@@ -6,12 +6,12 @@ use topcoat::{
         HeaderValue, StatusCode,
         content::Form,
         error::{bad_request, forbidden},
-        header, headers, page,
+        header, page,
     },
     view::view,
 };
 
-use crate::app::AppState;
+use crate::app::{AppState, request_confirmed};
 
 use super::current_group;
 
@@ -54,10 +54,7 @@ async fn rename_group(cx: &Cx, Form(input): Form<RenameGroup>) -> Result {
         .append_pair("name", name)
         .finish();
     let location = HeaderValue::try_from(format!("/groups/{}?{query}", group.id))?;
-    if headers(cx)
-        .get("x-zotero-confirmed")
-        .is_some_and(|value| value == "true")
-    {
+    if request_confirmed(cx) {
         if !succeeded {
             return view! { (StatusCode::BAD_GATEWAY) };
         }

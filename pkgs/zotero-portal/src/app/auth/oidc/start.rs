@@ -9,7 +9,11 @@ use topcoat::{
     session,
 };
 
-use crate::app::{AppState, FLOW_LIFETIME, epoch_seconds, valid_session_token};
+use crate::{
+    app::{AppState, FLOW_LIFETIME, valid_session_token},
+    epoch_seconds,
+    store::OidcFlow,
+};
 
 #[query_params(error = bad_request)]
 struct StartQuery {
@@ -53,7 +57,7 @@ pub(crate) async fn begin_oidc_flow(
         return Err(bad_request("the current OIDC login is already being completed").into());
     }
 
-    let authorization = app.backend.begin_oidc_authorization().await?;
+    let authorization = app.backend.begin_oidc_authorization()?;
     let new_browser_session = browser_session.is_none();
     let browser_session = match browser_session {
         Some(browser_session) => browser_session,
@@ -64,17 +68,17 @@ pub(crate) async fn begin_oidc_flow(
     let expires = now
         .checked_add(FLOW_LIFETIME.as_secs())
         .ok_or_else(|| anyhow::anyhow!("OIDC flow expiry is out of range"))?;
+    let flow = OidcFlow {
+        state: authorization.state,
+        nonce: authorization.nonce,
+        pkce_verifier: authorization.pkce_verifier,
+        session_token: dataserver_session.map(str::to_owned),
+        return_path: return_path.to_owned(),
+        expires,
+    };
     let inserted = app
         .backend
-        .create_oidc_flow(
-            &*browser_session.token_hash,
-            &authorization.state,
-            &authorization.nonce,
-            &authorization.pkce_verifier,
-            dataserver_session,
-            return_path,
-            expires,
-        )
+        .create_oidc_flow(&*browser_session.token_hash, &flow)
         .await;
     let inserted = match inserted {
         Ok(inserted) => inserted,

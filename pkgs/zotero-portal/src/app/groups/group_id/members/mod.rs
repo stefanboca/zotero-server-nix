@@ -6,29 +6,22 @@ use topcoat::{
         HeaderName, HeaderValue, StatusCode,
         content::Form,
         error::{bad_request, forbidden},
-        header, headers, page, path_param,
+        header, headers, page,
     },
     view::view,
 };
 
-use crate::{app::AppState, dataserver::GroupRole};
+use crate::{
+    app::{AppState, request_confirmed},
+    dataserver::GroupRole,
+};
 
-use super::{GroupId, current_group};
+use super::current_group;
 
 #[derive(Deserialize)]
 struct MemberAction {
     operation: String,
     identifier: Option<String>,
-}
-
-fn identifier(input: &MemberAction) -> Result<&str> {
-    input
-        .identifier
-        .as_deref()
-        .map(str::trim)
-        .map(|identifier| identifier.strip_prefix('@').unwrap_or(identifier))
-        .filter(|identifier| !identifier.is_empty())
-        .ok_or_else(|| bad_request("member username or email is required").into())
 }
 
 fn action_location(
@@ -52,14 +45,6 @@ fn action_location(
     HeaderValue::try_from(format!("/groups/{group_id}?{}", query.finish())).map_err(Into::into)
 }
 
-fn left_group_location(group_name: &str) -> Result<HeaderValue> {
-    let query = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("notice", "left-group")
-        .append_pair("name", group_name)
-        .finish();
-    HeaderValue::try_from(format!("/groups?{query}")).map_err(Into::into)
-}
-
 async fn action_response(
     cx: &Cx,
     status: StatusCode,
@@ -69,11 +54,7 @@ async fn action_response(
     role: Option<&str>,
     manage: Option<&str>,
 ) -> Result {
-    if headers(cx).get("x-zotero-in-place").is_some()
-        || headers(cx)
-            .get("x-zotero-confirmed")
-            .is_some_and(|value| value == "true")
-    {
+    if headers(cx).get("x-zotero-in-place").is_some() || request_confirmed(cx) {
         let outcome = HeaderValue::try_from(notice)?;
         return view! { cx =>
             (status)
@@ -92,8 +73,8 @@ async fn action_response(
 
 #[page]
 async fn members(cx: &Cx) -> Result {
-    current_group(cx).await?;
-    let location = HeaderValue::try_from(format!("/groups/{}", path_param::<GroupId>(cx)?))?;
+    let (_, group, _) = current_group(cx).await?;
+    let location = HeaderValue::try_from(format!("/groups/{}", group.id))?;
     view! {
         (StatusCode::TEMPORARY_REDIRECT)
         ((header::LOCATION, location))
@@ -123,11 +104,12 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
                 )
                 .await;
             }
-            let location = left_group_location(&group.name)?;
-            if headers(cx)
-                .get("x-zotero-confirmed")
-                .is_some_and(|value| value == "true")
-            {
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("notice", "left-group")
+                .append_pair("name", &group.name)
+                .finish();
+            let location = HeaderValue::try_from(format!("/groups?{query}"))?;
+            if request_confirmed(cx) {
                 return view! {
                     (StatusCode::NO_CONTENT)
                     ((header::LOCATION, location))
@@ -171,10 +153,7 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
                 Some(GroupRole::Member.display_name()),
                 None,
             )?;
-            if headers(cx)
-                .get("x-zotero-confirmed")
-                .is_some_and(|value| value == "true")
-            {
+            if request_confirmed(cx) {
                 return view! {
                     (StatusCode::NO_CONTENT)
                     ((header::LOCATION, location))
@@ -186,9 +165,16 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
             }
         }
         "remove" => {
+            let identifier = input
+                .identifier
+                .as_deref()
+                .map(str::trim)
+                .map(|identifier| identifier.strip_prefix('@').unwrap_or(identifier))
+                .filter(|identifier| !identifier.is_empty())
+                .ok_or_else(|| bad_request("member username or email is required"))?;
             let target = app
                 .backend
-                .user_by_identifier(identifier(&input)?)
+                .user_by_identifier(identifier)
                 .await?
                 .ok_or_else(|| bad_request("user is not a group member"))?;
             match group.role(target.user_id) {
@@ -227,6 +213,6 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
             )
             .await
         }
-        _ => return Err(bad_request("unknown member operation").into()),
+        _ => Err(bad_request("unknown member operation").into()),
     }
 }

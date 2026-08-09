@@ -18,7 +18,7 @@ use std::{
     os::unix::fs::PermissionsExt as _,
     path::Path,
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, UNIX_EPOCH},
 };
 
 use anyhow::Context as _;
@@ -137,12 +137,14 @@ pub fn routes() -> RouterBuilder {
         .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
 }
 
-pub(crate) fn epoch_seconds() -> anyhow::Result<u64> {
-    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
-}
-
 pub(crate) fn valid_session_token(token: &str) -> bool {
     token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+pub(crate) fn request_confirmed(cx: &Cx) -> bool {
+    headers(cx)
+        .get("x-zotero-confirmed")
+        .is_some_and(|value| value == "true")
 }
 
 pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
@@ -473,6 +475,8 @@ async fn index(cx: &Cx) -> Result {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use topcoat::router::Request;
 
     use super::*;

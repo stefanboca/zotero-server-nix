@@ -6,24 +6,21 @@ use topcoat::{
         StatusCode,
         content::Form,
         error::{bad_request, forbidden},
-        header, headers, page,
+        header, page,
     },
     view::view,
 };
 
-use crate::{app::AppState, dataserver::GroupRole};
+use crate::{
+    app::{AppState, request_confirmed},
+    dataserver::GroupRole,
+};
 
 use super::{super::groups_notice_location, current_group};
 
 #[derive(Deserialize)]
 struct DeleteGroup {
     confirmation: String,
-}
-
-fn confirmed(cx: &Cx) -> bool {
-    headers(cx)
-        .get("x-zotero-confirmed")
-        .is_some_and(|value| value == "true")
 }
 
 #[page(POST)]
@@ -41,7 +38,7 @@ async fn delete_group(cx: &Cx, Form(input): Form<DeleteGroup>) -> Result {
         .await;
     let notice = if let Err(error) = result {
         eprintln!("failed to delete group: {error:#}");
-        if confirmed(cx) {
+        if request_confirmed(cx) {
             return view! { (StatusCode::BAD_GATEWAY) };
         }
         "group-delete-failed"
@@ -49,7 +46,7 @@ async fn delete_group(cx: &Cx, Form(input): Form<DeleteGroup>) -> Result {
         "group-deleted"
     };
     let location = groups_notice_location(notice, &group.name)?;
-    if confirmed(cx) {
+    if request_confirmed(cx) {
         return view! { (StatusCode::NO_CONTENT) ((header::LOCATION, location)) };
     }
     view! {

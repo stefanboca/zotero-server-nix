@@ -28,7 +28,6 @@ async fn development_api(cx: &Cx) -> Result<Response> {
     let response = app_context::<AppState>(cx)
         .backend
         .web_library_api_response(&api_key, path, uri(cx).query())
-        .await?
         .ok_or_else(not_found)?;
 
     let mut builder = Response::builder()

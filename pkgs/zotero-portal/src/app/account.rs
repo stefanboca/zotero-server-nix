@@ -2,22 +2,14 @@ use topcoat::{
     Result,
     context::Cx,
     router::page,
-    view::{component, view},
+    view::view,
 };
 
-use crate::{
-    app::{signed_in_user, username_label},
-    store::UserSummary,
-};
+use crate::app::{signed_in_user, username_label};
 
 #[page]
 async fn account(cx: &Cx) -> Result {
     let user = signed_in_user(cx).await?;
-    view! { account_page(user: &user) }
-}
-
-#[component]
-async fn account_page(user: &UserSummary) -> Result {
     view! {
         <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
             <h1 class="text-2xl font-semibold">"Account"</h1>

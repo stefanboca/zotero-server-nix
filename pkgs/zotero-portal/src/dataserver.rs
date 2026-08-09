@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 use topcoat::runtime::{BoolSurrogate, Surrogate, Surrogated};
 
-use crate::{config::Config, id::UserId, oidc::value_string};
+use crate::{config::Config, hex_string, id::UserId, oidc::value_string};
 
 pub struct Dataserver {
     http_client: reqwest::Client,
@@ -175,7 +175,7 @@ impl Surrogate for GroupRole {
     }
 }
 
-impl<'a> Surrogated for &'a GroupRole {
+impl Surrogated for &GroupRole {
     type Surrogate = Self;
 
     fn into_surrogate(self) -> Self::Surrogate {
@@ -183,8 +183,8 @@ impl<'a> Surrogated for &'a GroupRole {
     }
 }
 
-impl<'a> Surrogate for &'a GroupRole {
-    type Real = &'a GroupRole;
+impl Surrogate for &GroupRole {
+    type Real = Self;
 
     fn into_real(self) -> Self::Real {
         self
@@ -489,15 +489,7 @@ impl Dataserver {
         else {
             return Ok(false);
         };
-        self.http_client
-            .delete(format!("{}/keys/{}", self.url, key.key))
-            .basic_auth("zotero-portal", Some(&self.super_password))
-            .header("Zotero-API-Version", "3")
-            .send()
-            .await
-            .context("revoking connected Zotero client")?
-            .error_for_status()
-            .context("Dataserver rejected connected-client revocation")?;
+        self.delete_api_key(&key.key).await?;
         Ok(true)
     }
 
@@ -505,15 +497,7 @@ impl Dataserver {
         let keys = self.api_keys(user_id).await?;
         let mut revoked = 0;
         for key in keys.into_iter().filter(|key| key.user_id == user_id) {
-            self.http_client
-                .delete(format!("{}/keys/{}", self.url, key.key))
-                .basic_auth("zotero-portal", Some(&self.super_password))
-                .header("Zotero-API-Version", "3")
-                .send()
-                .await
-                .context("revoking connected Zotero client")?
-                .error_for_status()
-                .context("Dataserver rejected connected-client revocation")?;
+            self.delete_api_key(&key.key).await?;
             revoked += 1;
         }
         Ok(revoked)
@@ -682,10 +666,7 @@ fn xml_escape(value: &str) -> String {
 }
 
 fn secret_handle(secret: &str) -> String {
-    Sha256::digest(secret.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    hex_string(&Sha256::digest(secret.as_bytes()))
 }
 
 fn xml_number(value: &str, element: &str) -> Option<f64> {

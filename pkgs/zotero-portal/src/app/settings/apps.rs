@@ -6,37 +6,17 @@ use topcoat::{
         HeaderValue, StatusCode,
         content::Form,
         error::{bad_request, not_found},
-        header, headers, page,
+        header, page,
     },
     view::view,
 };
 
-use crate::{
-    app::{AppState, signed_in_user},
-    dataserver::ConnectedClient,
-    id::UserId,
-};
+use crate::app::{AppState, request_confirmed, signed_in_user};
 
 #[derive(Deserialize)]
 struct RevokeClient {
     operation: String,
     handle: Option<String>,
-}
-
-async fn connected_client(cx: &Cx, user_id: UserId, handle: &str) -> Result<ConnectedClient> {
-    app_context::<AppState>(cx)
-        .backend
-        .connected_clients(user_id)
-        .await?
-        .into_iter()
-        .find(|client| client.handle == handle)
-        .ok_or_else(|| not_found().into())
-}
-
-fn confirmed(cx: &Cx) -> bool {
-    headers(cx)
-        .get("x-zotero-confirmed")
-        .is_some_and(|value| value == "true")
 }
 
 #[page(POST)]
@@ -47,7 +27,7 @@ async fn revoke_client(cx: &Cx, Form(input): Form<RevokeClient>) -> Result {
             .backend
             .revoke_all_connected_clients(user.user_id)
             .await?;
-        if confirmed(cx) {
+        if request_confirmed(cx) {
             return view! { (StatusCode::NO_CONTENT) };
         }
         return view! { (StatusCode::SEE_OTHER) ((header::LOCATION, HeaderValue::from_static("/settings?notice=clients-revoked#apps"))) };
@@ -59,7 +39,13 @@ async fn revoke_client(cx: &Cx, Form(input): Form<RevokeClient>) -> Result {
         .handle
         .as_deref()
         .ok_or_else(|| bad_request("a connected app is required"))?;
-    let client = connected_client(cx, user.user_id, handle).await?;
+    let client = app_context::<AppState>(cx)
+        .backend
+        .connected_clients(user.user_id)
+        .await?
+        .into_iter()
+        .find(|client| client.handle == handle)
+        .ok_or_else(not_found)?;
     if !app_context::<AppState>(cx)
         .backend
         .revoke_connected_client(user.user_id, &client.handle)
@@ -67,7 +53,7 @@ async fn revoke_client(cx: &Cx, Form(input): Form<RevokeClient>) -> Result {
     {
         return Err(not_found().into());
     }
-    if confirmed(cx) {
+    if request_confirmed(cx) {
         return view! { (StatusCode::NO_CONTENT) };
     }
     let query = url::form_urlencoded::Serializer::new(String::new())

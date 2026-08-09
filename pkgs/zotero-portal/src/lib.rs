@@ -6,5 +6,22 @@ mod id;
 mod oidc;
 mod store;
 
+use std::{
+    fmt::Write as _,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 pub use app::{migrate, routes, serve, serve_development};
 pub use config::Config;
+
+fn epoch_seconds() -> anyhow::Result<u64> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
+
+fn hex_string(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
+}

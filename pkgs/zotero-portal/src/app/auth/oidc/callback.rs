@@ -12,9 +12,10 @@ use topcoat::{
 };
 
 use crate::{
-    app::{AppState, epoch_seconds},
+    app::AppState,
     id::UserId,
     store::OidcProfile,
+    epoch_seconds,
 };
 
 #[query_params(error = bad_request)]

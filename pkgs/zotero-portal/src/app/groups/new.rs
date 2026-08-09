@@ -2,11 +2,11 @@ use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{HeaderValue, StatusCode, content::Form, error::bad_request, header, headers, page},
+    router::{HeaderValue, StatusCode, content::Form, error::bad_request, header, page},
     view::view,
 };
 
-use crate::app::{AppState, authenticated_user};
+use crate::app::{AppState, authenticated_user, request_confirmed};
 
 use super::groups_notice_location;
 
@@ -48,10 +48,7 @@ async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result {
         "group-create-failed"
     };
     let location = groups_notice_location(notice, name)?;
-    if headers(cx)
-        .get("x-zotero-confirmed")
-        .is_some_and(|value| value == "true")
-    {
+    if request_confirmed(cx) {
         if !succeeded {
             return view! { (StatusCode::BAD_GATEWAY) };
         }
