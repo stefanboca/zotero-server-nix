@@ -26,6 +26,16 @@
   };
   restartOnFailure = restartAlways // {Restart = "on-failure";};
 
+  minimalOpenSearch = pkgs.opensearch.overrideAttrs (old: {
+    pname = "opensearch-minimal";
+    postInstall =
+      (old.postInstall or "")
+      + ''
+        find "$out/plugins" -mindepth 1 -maxdepth 1 \
+          ! -name opensearch-security -exec rm -r -- {} +
+      '';
+  });
+
   credentialFiles = {
     authSalt = "${generatedCredentialDir}/auth-salt";
     attachmentProxySecret = "${generatedCredentialDir}/attachment-proxy-secret";
@@ -87,6 +97,24 @@
     else "https://${cfg.virtualHost}";
   publicBaseUri = normalizeUri virtualHostUri;
   publicApiBaseUri = "${removeSuffix "/" publicBaseUri}${cfg.apiPath}";
+  fulltextIndexName = "item_fulltext_index";
+  fulltextIndexUrl = "http://127.0.0.1:${toString cfg.fulltext-search.settings.port}/${fulltextIndexName}";
+  fulltextIndex = json.generate "zotero-fulltext-index.json" {
+    settings = {
+      number_of_shards = 1;
+      number_of_replicas = 0;
+      refresh_interval = "1s";
+    };
+    mappings = {
+      dynamic = false;
+      _source.enabled = false;
+      _routing.required = true;
+      properties = {
+        libraryID.type = "integer";
+        content.type = "text";
+      };
+    };
+  };
 
   defaultConfig = ''
     <?
@@ -120,7 +148,6 @@
       public static $S3_BUCKET = ${phpString cfg.storage.bucket};
       public static $S3_BUCKET_CACHE = ${phpString cfg.storage.cacheBucket};
       public static $S3_BUCKET_FULLTEXT = ${phpString cfg.storage.fulltextBucket};
-      public static $FULLTEXT_INDEXING_TABLE = ${phpString cfg.php.settings.fulltextIndexingTable};
       public static $S3_BUCKET_ERRORS = ${phpString cfg.storage.errorsBucket};
       public static $SNS_ALERT_TOPIC = ${phpString cfg.php.settings.snsAlertTopic};
 
@@ -197,7 +224,6 @@
       public static $CACHE_VERSION_RESPONSE_JSON_ITEM = 1;
       public static $CACHE_ENABLED_ITEM_RESPONSE_JSON = true;
 
-      public static $REINDEX_QUEUE_URL = ${phpString cfg.php.settings.reindexQueueUrl};
     }
 
     $credentialDirectory = getenv('CREDENTIALS_DIRECTORY');
@@ -310,9 +336,7 @@ in {
         ttsAudioDomain = settingOption str "" "Optional public domain from which generated TTS audio is served.";
         ttsDevUsers = settingOption (listOf int) [] "Zotero user IDs that receive text-to-speech development access.";
         errorPath = settingOption str "" "Optional directory in which Dataserver writes error reports; an empty value uses the configured S3 error bucket only.";
-        searchHosts = settingOption (listOf str) [] "Elasticsearch hosts used for server-side metadata and full-text search. An empty list disables external search.";
-        fulltextIndexingTable = settingOption str "FullTextIndexing" "DynamoDB table shared with Zotero's optional external full-text indexer.";
-        reindexQueueUrl = settingOption str "" "SQS queue URL used by Zotero's optional external full-text reindexer. Leave this empty when external indexing is not deployed.";
+        searchHosts = settingOption (listOf str) ["127.0.0.1:${toString cfg.fulltext-search.settings.port}"] "OpenSearch-compatible hosts used for server-side full-text search.";
 
         statsd = {
           enable = settingOption bool false "Enable StatsD metrics from Dataserver.";
@@ -353,6 +377,16 @@ in {
       ttsBucket = settingOption str "zotero-tts" "S3 bucket containing generated TTS audio.";
       accessKeyIdFile = settingOption (nullOr path) null "File containing the S3 access key ID. A persistent random key is generated for the managed backend when unset.";
       secretAccessKeyFile = settingOption (nullOr path) null "File containing the S3 secret access key. A persistent random key is generated for the managed backend when unset.";
+    };
+
+    fulltext-search = {
+      settings = {
+        port = mkOption {
+          type = port;
+          default = config.services.opensearch.settings."http.port";
+          description = "OpenSearch HTTP port used for full-text search.";
+        };
+      };
     };
 
     portal = {
@@ -545,6 +579,20 @@ in {
     };
 
     services = {
+      opensearch = {
+        enable = true;
+        package = mkDefault minimalOpenSearch;
+        settings = {
+          "network.host" = mkDefault "127.0.0.1";
+          "cluster.name" = mkDefault "zotero";
+          "discovery.type" = mkDefault "single-node";
+          "plugins.security.disabled" = mkDefault true;
+        };
+        extraJavaOptions = mkDefault [
+          "-Xms128m"
+          "-Xmx512m"
+        ];
+      };
       memcached.enable = true;
       redis.servers.zotero-dataserver = {
         enable = true;
@@ -675,6 +723,8 @@ in {
             require_verified_email = cfg.portal.requireVerifiedEmail;
           };
           dataserver.url = publicApiBaseUri;
+          streaming.url = cfg.stream-server.publicUri;
+          translation_server.url = "http://127.0.0.1:${toString cfg.translation-server.settings.port}";
         }
         // optionalAttrs (cfg.portal.browserSessionLifetimeSeconds != null) {
           browser_session_lifetime_seconds = cfg.portal.browserSessionLifetimeSeconds;
@@ -726,6 +776,31 @@ in {
           };
           translatorsDirectory = "./modules/translators";
         });
+    };
+
+    systemd.targets.zotero = {
+      description = "Zotero local cloud services";
+      wantedBy = ["multi-user.target"];
+      wants =
+        [
+          credentialUnit
+          "memcached.service"
+          "redis-zotero-dataserver.service"
+          "mysql.service"
+          "opensearch.service"
+          "zotero-portal-migrate.service"
+          "zotero-dataserver-schema.service"
+          "zotero-fulltext-index.service"
+          "zotero-portal.service"
+          "phpfpm-zotero-dataserver.service"
+          "zotero-attachment-proxy.service"
+          "zotero-citeproc-js-server.service"
+          "zotero-stream-server.service"
+          "zotero-tinymce-clean-server.service"
+          "zotero-translation-server.service"
+          "caddy.service"
+        ]
+        ++ optional cfg.storage.manageBackend "versitygw.service";
     };
 
     systemd.services = {
@@ -797,7 +872,8 @@ in {
           "zotero-tinymce-clean-server.service"
           "zotero-translation-server.service"
         ];
-        after = ["zotero-dataserver-schema.service"];
+        requires = ["zotero-fulltext-index.service"];
+        after = ["zotero-dataserver-schema.service" "zotero-fulltext-index.service"];
         serviceConfig = {
           User = "zotero-dataserver";
           Group = "zotero-dataserver";
@@ -833,6 +909,49 @@ in {
               "s3-secret-access-key:${credentialFiles.s3SecretAccessKey}"
             ];
           };
+      };
+
+      zotero-fulltext-index = {
+        description = "Initialize Zotero's local full-text search index";
+        requires = ["opensearch.service"];
+        wants = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
+        after = [credentialUnit "opensearch.service"] ++ optional cfg.storage.manageBackend "versitygw.service";
+        before = ["phpfpm-zotero-dataserver.service"];
+        serviceConfig =
+          restartOnFailure
+          // {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            User = "zotero-dataserver";
+            Group = "zotero-dataserver";
+            StateDirectory = "zotero-fulltext";
+            StateDirectoryMode = "0700";
+            WorkingDirectory = "${package}/share/php/zotero-dataserver/admin";
+            LoadCredential = [
+              "auth-salt:${credentialFiles.authSalt}"
+              "attachment-proxy-secret:${credentialFiles.attachmentProxySecret}"
+              "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
+              "s3-access-key-id:${credentialFiles.s3AccessKeyId}"
+              "s3-secret-access-key:${credentialFiles.s3SecretAccessKey}"
+            ];
+          };
+        script = ''
+          index_created=
+          if ! ${getExe pkgs.curl} --fail --silent --output /dev/null ${fulltextIndexUrl}; then
+            ${getExe pkgs.curl} --fail-with-body --silent \
+              --request PUT \
+              --header 'Content-Type: application/json' \
+              --data-binary @${fulltextIndex} \
+              '${fulltextIndexUrl}'
+            index_created=1
+          fi
+
+          index_marker="$STATE_DIRECTORY/index-v1"
+          if test -n "$index_created" || ! test -e "$index_marker"; then
+            ${getExe package.php} ${package}/share/php/zotero-dataserver/admin/reindex_fulltext
+            touch "$index_marker"
+          fi
+        '';
       };
 
       versitygw = mkIf cfg.storage.manageBackend {

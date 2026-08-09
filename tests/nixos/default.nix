@@ -72,6 +72,7 @@ in {
         };
         memcached.port = 11212;
         mysql.settings.mysqld.port = 13336;
+        opensearch.settings."http.port" = 19200;
         redis.servers.zotero-dataserver.port = 16389;
         versitygw = {
           package = versitygw;
@@ -122,15 +123,19 @@ in {
       start_all()
       public_url = "https://${testDomain}"
       api_url = public_url + "/api"
+      opensearch_port = 19200
 
       for unit in [
+          "zotero.target",
           "zotero-dataserver-credentials.service",
           "memcached.service",
           "redis-zotero-dataserver.service",
           "mysql.service",
+          "opensearch.service",
           "versitygw.service",
           "oidc-mock.service",
           "zotero-portal-migrate.service",
+          "zotero-fulltext-index.service",
           "zotero-portal.service",
           "phpfpm-zotero-dataserver.service",
           "zotero-attachment-proxy.service",
@@ -144,6 +149,7 @@ in {
 
       for port in [
           443,
+          opensearch_port,
           11000,
           11212,
           11969,
@@ -156,6 +162,30 @@ in {
       ]:
           machine.wait_for_open_port(port)
 
+      fulltext_index = json.loads(
+          machine.succeed(
+              "curl --silent --show-error --fail-with-body "
+              f"http://127.0.0.1:{opensearch_port}/item_fulltext_index"
+          )
+      )["item_fulltext_index"]
+      assert fulltext_index["settings"]["index"]["number_of_shards"] == "1"
+      assert fulltext_index["settings"]["index"]["number_of_replicas"] == "0"
+      assert fulltext_index["mappings"]["_routing"]["required"] is True
+      assert fulltext_index["mappings"]["properties"]["libraryID"]["type"] == "integer"
+      assert fulltext_index["mappings"]["properties"]["content"]["type"] == "text"
+      assert machine.succeed(
+          "ls -1 /var/lib/opensearch/plugins"
+      ).splitlines() == ["opensearch-security"]
+      opensearch_nodes = json.loads(
+          machine.succeed(
+              "curl --silent --show-error --fail-with-body "
+              f"http://127.0.0.1:{opensearch_port}/_nodes/_local/jvm"
+          )
+      )["nodes"]
+      opensearch_heap = next(iter(opensearch_nodes.values()))["jvm"]["mem"]
+      assert opensearch_heap["heap_init_in_bytes"] == 128 * 1024 * 1024
+      assert opensearch_heap["heap_max_in_bytes"] == 512 * 1024 * 1024
+
       failed_units = machine.succeed(
           "systemctl list-units --state=failed --no-legend --plain"
       )
@@ -167,11 +197,30 @@ in {
           "systemctl show -P Group zotero-portal.service"
       ).strip() == "zotero-portal"
       assert "zotero-portal" in machine.succeed("id -nG caddy").split()
+      assert machine.succeed(
+          "stat -c %a /run/zotero-portal/zotero-portal.sock"
+      ).strip() == "660"
+      zotero_target_wants = machine.succeed(
+          "systemctl show -P Wants zotero.target"
+      ).split()
+      for unit in [
+          "mysql.service",
+          "opensearch.service",
+          "versitygw.service",
+          "zotero-fulltext-index.service",
+          "zotero-portal.service",
+          "phpfpm-zotero-dataserver.service",
+          "zotero-stream-server.service",
+          "zotero-translation-server.service",
+          "caddy.service",
+      ]:
+          assert unit in zotero_target_wants, (unit, zotero_target_wants)
 
       for unit in [
           "zotero-dataserver-credentials.service",
           "zotero-portal-migrate.service",
           "zotero-dataserver-schema.service",
+          "zotero-fulltext-index.service",
       ]:
           assert machine.succeed(
               f"systemctl show -P Restart {unit}"
@@ -484,8 +533,8 @@ in {
           + shlex.quote(public_url + "/")
       )
       assert "Signed in as OIDC User" in account_page, account_page
-      assert "Welcome, OIDC User" in account_page, account_page
-      assert "This portal manages the server-side parts of your Zotero account" in account_page, account_page
+      assert 'src="/library"' in account_page, account_page
+      assert 'title="Zotero library"' in account_page, account_page
       assert 'href="/groups"' in account_page, account_page
       assert 'action="/user/logout"' in account_page, account_page
       assert "Your groups" not in account_page, account_page
@@ -1356,6 +1405,54 @@ in {
           + shlex.quote(f"{api_url}/users/1/items/{attachment_key}/file")
       )
       assert downloaded == client_file, downloaded
+
+      fulltext_phrase = "quasar marmalade integration marker"
+      fulltext_payload = {
+          "content": fulltext_phrase,
+          "indexedChars": len(fulltext_phrase),
+          "totalChars": len(fulltext_phrase),
+      }
+      fulltext_status = machine.succeed(
+          "curl --silent --show-error --fail-with-body --output /dev/null "
+          "--write-out='%{http_code}' --request PUT "
+          "--header 'Content-Type: application/json' --header "
+          + shlex.quote(f"Zotero-API-Key: {key['key']}")
+          + " --data "
+          + shlex.quote(json.dumps(fulltext_payload))
+          + " "
+          + shlex.quote(
+              f"{api_url}/users/1/items/{attachment_key}/fulltext"
+          )
+      ).strip()
+      assert fulltext_status == "204", fulltext_status
+
+      fulltext_search_url = api_url + "/users/1/items?" + urllib.parse.urlencode(
+          {"q": "quasar marmalade", "qmode": "everything"}
+      )
+      for _ in range(30):
+          fulltext_results = json.loads(
+              machine.succeed(
+                  "curl --silent --show-error --fail-with-body --header "
+                  + shlex.quote(f"Zotero-API-Key: {key['key']}")
+                  + " "
+                  + shlex.quote(fulltext_search_url)
+              )
+          )
+          if any(item["key"] == attachment_key for item in fulltext_results):
+              break
+          time.sleep(1)
+      else:
+          raise AssertionError(fulltext_results)
+
+      fulltext_index_status = json.loads(
+          machine.succeed(
+              "curl --silent --show-error --fail-with-body --header "
+              + shlex.quote(f"Zotero-API-Key: {key['key']}")
+              + " "
+              + shlex.quote(api_url + "/users/1/fulltext/index")
+          )
+      )
+      assert fulltext_index_status == {"status": "indexed"}, fulltext_index_status
 
       try:
           machine.wait_until_succeeds("test -e /tmp/stream-event", timeout=20)

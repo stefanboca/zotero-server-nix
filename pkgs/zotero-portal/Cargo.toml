@@ -22,7 +22,7 @@ sqlx = {
 time = { version = "0.3.55", features = ["formatting", "parsing"] }
 tokio = {
   version = "1.53.1",
-  features = ["macros", "net", "rt-multi-thread", "signal"]
+  features = ["fs", "macros", "net", "rt-multi-thread", "signal"]
 }
 toml = "1.1.4"
 topcoat = {

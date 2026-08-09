@@ -33,7 +33,10 @@
     in {
       default = pkgs.mkShellNoCC {
         packages = [pkgs.sqlx-cli pkgs.tailwindcss_4 self.packages.${system}.topcoat-cli];
-        env.TAILWIND_CLI = getExe pkgs.tailwindcss_4;
+        env = {
+          TAILWIND_CLI = getExe pkgs.tailwindcss_4;
+          ZOTERO_WEB_LIBRARY = self.packages.${system}.zotero-web-library;
+        };
       };
     });
 

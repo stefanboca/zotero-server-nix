@@ -35,6 +35,7 @@ struct ProductionBackend {
     database: MySqlPool,
     dataserver: Arc<Dataserver>,
     oidc: Arc<Oidc>,
+    http_client: reqwest::Client,
 }
 
 struct DevelopmentState {
@@ -48,6 +49,7 @@ struct DevelopmentState {
     oidc_flows: HashMap<Vec<u8>, OidcFlow>,
     authorization_codes: HashMap<String, OidcProfile>,
     login_sessions: HashMap<String, LoginSessionInfo>,
+    web_library_api_keys: HashMap<String, UserId>,
 }
 
 struct DevelopmentBrowserSession {
@@ -62,6 +64,48 @@ pub struct OidcAuthorization {
     pub state: String,
     pub nonce: String,
     pub pkce_verifier: String,
+}
+
+pub struct WebLibraryAccess {
+    pub api_key: String,
+    pub api_url: String,
+    pub read_only: bool,
+    pub streaming_url: String,
+}
+
+pub struct WebLibraryApiResponse {
+    pub status: u16,
+    pub body: Value,
+    pub raw_body: Option<Vec<u8>>,
+    pub content_type: &'static str,
+    pub total_results: Option<usize>,
+    pub last_modified_version: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+pub enum TranslationEndpoint {
+    Export,
+    Import,
+    Search,
+    Web,
+}
+
+impl TranslationEndpoint {
+    fn path(self) -> &'static str {
+        match self {
+            Self::Export => "export",
+            Self::Import => "import",
+            Self::Search => "search",
+            Self::Web => "web",
+        }
+    }
+}
+
+pub struct TranslationResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+    pub content_type: Option<String>,
+    pub link: Option<String>,
 }
 
 pub enum IdentityLock<'a> {
@@ -91,6 +135,7 @@ impl Backend {
                 database,
                 dataserver,
                 oidc,
+                http_client: reqwest::Client::new(),
             })),
         }
     }
@@ -731,6 +776,343 @@ impl Backend {
         }
     }
 
+    pub async fn web_library_access(&self, user_id: UserId) -> anyhow::Result<WebLibraryAccess> {
+        match &*self.inner {
+            BackendInner::Production(backend) => Ok(WebLibraryAccess {
+                api_key: backend.dataserver.web_library_api_key(user_id).await?,
+                api_url: backend.config.dataserver.url.clone(),
+                read_only: false,
+                streaming_url: backend.config.streaming.url.clone(),
+            }),
+            BackendInner::Development(state) => {
+                let mut state = state.lock().unwrap();
+                if !state.users.contains_key(&user_id) {
+                    return Err(anyhow!("development user does not exist"));
+                }
+                let existing_api_key =
+                    state
+                        .web_library_api_keys
+                        .iter()
+                        .find_map(|(api_key, candidate)| {
+                            (*candidate == user_id).then(|| api_key.clone())
+                        });
+                let api_key = match existing_api_key {
+                    Some(api_key) => api_key,
+                    None => {
+                        let api_key = CsrfToken::new_random().secret().to_owned();
+                        state.web_library_api_keys.insert(api_key.clone(), user_id);
+                        api_key
+                    }
+                };
+                Ok(WebLibraryAccess {
+                    api_key,
+                    api_url: "http://127.0.0.1:3000/api/".to_owned(),
+                    read_only: true,
+                    streaming_url: String::new(),
+                })
+            }
+        }
+    }
+
+    pub async fn web_library_api_response(
+        &self,
+        api_key: &str,
+        path: &str,
+        query: Option<&str>,
+    ) -> anyhow::Result<Option<WebLibraryApiResponse>> {
+        let BackendInner::Development(state) = &*self.inner else {
+            return Ok(None);
+        };
+        let state = state.lock().unwrap();
+        let Some(user_id) = state.web_library_api_keys.get(api_key).copied() else {
+            return Ok(None);
+        };
+        if !state.users.contains_key(&user_id) {
+            return Ok(None);
+        }
+
+        let segments = path
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        let requested_item_key = query.and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find_map(|(name, value)| (name == "itemKey").then(|| value.into_owned()))
+        });
+        let response = match segments.as_slice() {
+            ["users", id, "settings", "tagColors"] if parse_user_id(id) == Some(user_id) => {
+                mock_api_json(serde_json::json!({
+                    "key": "tagColors",
+                    "version": 1,
+                    "value": []
+                }))
+            }
+            ["users", id, "settings", key] if parse_user_id(id) == Some(user_id) => {
+                mock_api_json(serde_json::json!({
+                    "key": key,
+                    "version": 1,
+                    "value": if *key == "readerCustomThemes" {
+                        Value::Array(Vec::new())
+                    } else {
+                        Value::Null
+                    }
+                }))
+            }
+            ["users", id, "collections"] if parse_user_id(id) == Some(user_id) => {
+                mock_api_list(Vec::new())
+            }
+            ["users", id, "groups"] if parse_user_id(id) == Some(user_id) => {
+                let groups = state
+                    .groups
+                    .values()
+                    .filter(|group| group.role(user_id).is_some())
+                    .map(mock_api_group)
+                    .collect();
+                mock_api_list(groups)
+            }
+            ["users", id, "items", "top"] if parse_user_id(id) == Some(user_id) => {
+                let user = state.users.get(&user_id).expect("development user exists");
+                mock_api_list(vec![mock_api_item(
+                    "user",
+                    user_id.get(),
+                    &user.username,
+                    "DEVUSER1",
+                    "A local Zotero library",
+                )])
+            }
+            ["users", id, "items"] if parse_user_id(id) == Some(user_id) => {
+                let user = state.users.get(&user_id).expect("development user exists");
+                let attachment_key = mock_attachment_key(user_id.get());
+                let values = match requested_item_key.as_deref() {
+                    Some(key) if key == attachment_key => vec![mock_api_attachment(
+                        "user",
+                        user_id.get(),
+                        &user.username,
+                        "DEVUSER1",
+                    )],
+                    Some("DEVUSER1") => vec![mock_api_item(
+                        "user",
+                        user_id.get(),
+                        &user.username,
+                        "DEVUSER1",
+                        "A local Zotero library",
+                    )],
+                    _ => Vec::new(),
+                };
+                mock_api_list(values)
+            }
+            ["users", id, "items", key]
+                if parse_user_id(id) == Some(user_id)
+                    && *key == mock_attachment_key(user_id.get()) =>
+            {
+                let user = state.users.get(&user_id).expect("development user exists");
+                mock_api_json(mock_api_attachment(
+                    "user",
+                    user_id.get(),
+                    &user.username,
+                    "DEVUSER1",
+                ))
+            }
+            ["users", id, "items", key, "children"]
+                if parse_user_id(id) == Some(user_id)
+                    && *key == mock_attachment_key(user_id.get()) =>
+            {
+                mock_api_list(Vec::new())
+            }
+            ["users", id, "items", key, "file", "view", "url"]
+                if parse_user_id(id) == Some(user_id)
+                    && *key == mock_attachment_key(user_id.get()) =>
+            {
+                mock_attachment_url(api_key, key)
+            }
+            ["users", id, "items", "top", "tags"] if parse_user_id(id) == Some(user_id) => {
+                mock_api_list(Vec::new())
+            }
+            ["groups", id, "settings", "tagColors"] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                let _ = group;
+                mock_api_json(serde_json::json!({
+                    "key": "tagColors",
+                    "version": 1,
+                    "value": []
+                }))
+            }
+            ["groups", id, "settings", key] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                let _ = group;
+                mock_api_json(serde_json::json!({
+                    "key": key,
+                    "version": 1,
+                    "value": if *key == "readerCustomThemes" {
+                        Value::Array(Vec::new())
+                    } else {
+                        Value::Null
+                    }
+                }))
+            }
+            ["groups", id, "collections"] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                let _ = group;
+                mock_api_list(Vec::new())
+            }
+            ["groups", id, "items", "top"] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                mock_api_list(vec![mock_api_item(
+                    "group",
+                    group.id,
+                    &group.name,
+                    &format!("DEVGRP{:02}", group.id),
+                    &format!("A paper shared with {}", group.name),
+                )])
+            }
+            ["groups", id, "items"] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                let attachment_key = mock_attachment_key(group.id);
+                let parent_key = format!("DEVGRP{:02}", group.id);
+                let values = match requested_item_key.as_deref() {
+                    Some(key) if key == attachment_key => vec![mock_api_attachment(
+                        "group",
+                        group.id,
+                        &group.name,
+                        &parent_key,
+                    )],
+                    Some(key) if key == parent_key => vec![mock_api_item(
+                        "group",
+                        group.id,
+                        &group.name,
+                        &parent_key,
+                        &format!("A paper shared with {}", group.name),
+                    )],
+                    _ => Vec::new(),
+                };
+                mock_api_list(values)
+            }
+            ["groups", id, "items", key] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                if *key != mock_attachment_key(group.id) {
+                    return Ok(None);
+                }
+                mock_api_json(mock_api_attachment(
+                    "group",
+                    group.id,
+                    &group.name,
+                    &format!("DEVGRP{:02}", group.id),
+                ))
+            }
+            ["groups", id, "items", key, "children"] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                if *key != mock_attachment_key(group.id) {
+                    return Ok(None);
+                }
+                mock_api_list(Vec::new())
+            }
+            ["groups", id, "items", key, "file", "view", "url"] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                if *key != mock_attachment_key(group.id) {
+                    return Ok(None);
+                }
+                mock_attachment_url(api_key, key)
+            }
+            ["groups", id, "items", "top", "tags"] => {
+                let Some(group) = parse_group(&state, id, user_id) else {
+                    return Ok(None);
+                };
+                let _ = group;
+                mock_api_list(Vec::new())
+            }
+            ["mock-files", key]
+                if *key == mock_attachment_key(user_id.get())
+                    || state.groups.values().any(|group| {
+                        group.role(user_id).is_some() && *key == mock_attachment_key(group.id)
+                    }) =>
+            {
+                mock_api_raw("application/pdf", mock_pdf())
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(response))
+    }
+
+    pub async fn translate(
+        &self,
+        endpoint: TranslationEndpoint,
+        query: Option<&str>,
+        content_type: Option<&str>,
+        body: Vec<u8>,
+    ) -> anyhow::Result<TranslationResponse> {
+        let BackendInner::Production(backend) = &*self.inner else {
+            return Ok(TranslationResponse {
+                status: 503,
+                body: br#"{"message":"Translation is unavailable in development mode."}"#.to_vec(),
+                content_type: Some("application/json; charset=utf-8".to_owned()),
+                link: None,
+            });
+        };
+
+        let mut url = url::Url::parse(&backend.config.translation_server.url)
+            .context("parsing the translation server URL")?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(anyhow!(
+                "the translation server URL must be an HTTP URL without credentials or a query"
+            ));
+        }
+        url.set_path(endpoint.path());
+        url.set_query(query);
+
+        let mut request = backend.http_client.post(url).body(body);
+        if let Some(content_type) = content_type {
+            request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+        }
+        let response = request
+            .send()
+            .await
+            .context("requesting Zotero translation")?;
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let link = response
+            .headers()
+            .get(reqwest::header::LINK)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = response
+            .bytes()
+            .await
+            .context("reading the Zotero translation response")?
+            .to_vec();
+        Ok(TranslationResponse {
+            status,
+            body,
+            content_type,
+            link,
+        })
+    }
+
     pub async fn revoke_connected_client(
         &self,
         user_id: UserId,
@@ -911,6 +1293,261 @@ impl Backend {
     }
 }
 
+fn parse_user_id(value: &str) -> Option<UserId> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value != 0)
+        .map(UserId::new)
+}
+
+fn parse_group<'a>(state: &'a DevelopmentState, value: &str, user_id: UserId) -> Option<&'a Group> {
+    let group = state.groups.get(&value.parse().ok()?)?;
+    group.role(user_id).is_some().then_some(group)
+}
+
+fn mock_api_json(body: Value) -> WebLibraryApiResponse {
+    WebLibraryApiResponse {
+        status: 200,
+        body,
+        raw_body: None,
+        content_type: "application/json; charset=utf-8",
+        total_results: None,
+        last_modified_version: Some(1),
+    }
+}
+
+fn mock_api_list(values: Vec<Value>) -> WebLibraryApiResponse {
+    WebLibraryApiResponse {
+        status: 200,
+        total_results: Some(values.len()),
+        body: Value::Array(values),
+        raw_body: None,
+        content_type: "application/json; charset=utf-8",
+        last_modified_version: Some(1),
+    }
+}
+
+fn mock_api_raw(content_type: &'static str, body: Vec<u8>) -> WebLibraryApiResponse {
+    WebLibraryApiResponse {
+        status: 200,
+        body: Value::Null,
+        raw_body: Some(body),
+        content_type,
+        total_results: None,
+        last_modified_version: None,
+    }
+}
+
+fn mock_attachment_key(library_id: u64) -> String {
+    format!("PDF{:05}", library_id % 100_000)
+}
+
+fn mock_attachment_url(api_key: &str, attachment_key: &str) -> WebLibraryApiResponse {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("key", api_key)
+        .finish();
+    mock_api_raw(
+        "text/plain; charset=utf-8",
+        format!("/api/mock-files/{attachment_key}?{query}").into_bytes(),
+    )
+}
+
+fn mock_pdf() -> Vec<u8> {
+    let stream = b"BT\n/F1 24 Tf\n72 720 Td\n(Zotero Local Cloud development attachment) Tj\nET\n";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{}endstream",
+            stream.len(),
+            String::from_utf8_lossy(stream)
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+    ];
+
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::with_capacity(objects.len());
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref_offset = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    pdf
+}
+
+fn mock_api_group(group: &Group) -> Value {
+    serde_json::json!({
+        "id": group.id,
+        "version": 1,
+        "links": {},
+        "meta": {
+            "created": "2026-08-01T00:00:00Z",
+            "lastModified": "2026-08-08T00:00:00Z",
+            "numItems": 1
+        },
+        "data": {
+            "id": group.id,
+            "version": 1,
+            "name": group.name,
+            "owner": group.owner,
+            "type": group.group_type,
+            "description": group.description,
+            "url": group.url,
+            "libraryEditing": group.library_editing,
+            "libraryReading": group.library_reading,
+            "fileEditing": group.file_editing,
+            "admins": group.admins,
+            "members": group.members
+        }
+    })
+}
+
+fn mock_api_item(
+    library_type: &str,
+    library_id: u64,
+    library_name: &str,
+    key: &str,
+    title: &str,
+) -> Value {
+    let attachment_key = mock_attachment_key(library_id);
+    let library_path = if library_type == "group" {
+        "groups"
+    } else {
+        "users"
+    };
+    serde_json::json!({
+        "key": key,
+        "version": 1,
+        "library": {
+            "type": library_type,
+            "id": library_id,
+            "name": library_name,
+            "links": {}
+        },
+        "links": {
+            "attachment": {
+                "href": format!("https://api.zotero.test/{library_path}/{library_id}/items/{attachment_key}"),
+                "attachmentType": "application/pdf"
+            }
+        },
+        "meta": {
+            "creatorSummary": "Example Researcher",
+            "parsedDate": "2026",
+            "numChildren": 1
+        },
+        "data": {
+            "key": key,
+            "version": 1,
+            "itemType": "journalArticle",
+            "title": title,
+            "creators": [{
+                "creatorType": "author",
+                "firstName": "Example",
+                "lastName": "Researcher"
+            }],
+            "abstractNote": "",
+            "publicationTitle": "Local Research",
+            "volume": "1",
+            "issue": "1",
+            "pages": "1-8",
+            "date": "2026",
+            "series": "",
+            "seriesTitle": "",
+            "seriesText": "",
+            "journalAbbreviation": "",
+            "language": "en",
+            "DOI": "",
+            "ISSN": "",
+            "shortTitle": "",
+            "url": "",
+            "accessDate": "",
+            "archive": "",
+            "archiveLocation": "",
+            "libraryCatalog": "",
+            "callNumber": "",
+            "rights": "",
+            "extra": "",
+            "tags": [{ "tag": "development" }],
+            "collections": [],
+            "relations": {},
+            "dateAdded": "2026-08-01T00:00:00Z",
+            "dateModified": "2026-08-08T00:00:00Z"
+        }
+    })
+}
+
+fn mock_api_attachment(
+    library_type: &str,
+    library_id: u64,
+    library_name: &str,
+    parent_key: &str,
+) -> Value {
+    let key = mock_attachment_key(library_id);
+    let library_path = if library_type == "group" {
+        "groups"
+    } else {
+        "users"
+    };
+    serde_json::json!({
+        "key": key,
+        "version": 1,
+        "library": {
+            "type": library_type,
+            "id": library_id,
+            "name": library_name,
+            "links": {}
+        },
+        "links": {
+            "self": {
+                "href": format!("https://api.zotero.test/{library_path}/{library_id}/items/{key}"),
+                "type": "application/json"
+            },
+            "enclosure": {
+                "href": format!("https://api.zotero.test/{library_path}/{library_id}/items/{key}/file"),
+                "type": "application/pdf",
+                "title": "development-paper.pdf",
+                "length": 1024
+            }
+        },
+        "meta": {
+            "numChildren": 0
+        },
+        "data": {
+            "key": key,
+            "version": 1,
+            "itemType": "attachment",
+            "linkMode": "imported_file",
+            "title": "Development paper PDF",
+            "accessDate": "",
+            "note": "",
+            "contentType": "application/pdf",
+            "charset": "",
+            "filename": "development-paper.pdf",
+            "md5": "",
+            "mtime": 0,
+            "parentItem": parent_key,
+            "tags": [],
+            "relations": {},
+            "dateAdded": "2026-08-01T00:00:00Z",
+            "dateModified": "2026-08-08T00:00:00Z"
+        }
+    })
+}
+
 impl DevelopmentState {
     fn seeded() -> Self {
         let now = epoch_seconds().unwrap_or(0);
@@ -1042,6 +1679,7 @@ impl DevelopmentState {
             oidc_flows: HashMap::new(),
             authorization_codes: HashMap::new(),
             login_sessions: HashMap::new(),
+            web_library_api_keys: HashMap::new(),
         }
     }
 
@@ -1086,6 +1724,76 @@ mod tests {
             Some(&Some(GroupRole::Admin))
         );
         assert_eq!(roles.get("Member group"), Some(&Some(GroupRole::Member)));
+    }
+
+    #[tokio::test]
+    async fn development_web_library_api_uses_live_group_state() {
+        let backend = Backend::development();
+        let user_id = UserId::new(1);
+        let access = backend
+            .web_library_access(user_id)
+            .await
+            .expect("development Web Library access must load");
+
+        let initial = backend
+            .web_library_api_response(&access.api_key, "users/1/groups", None)
+            .await
+            .expect("development groups API must load")
+            .expect("development groups API must be enabled");
+        assert!(initial.body.to_string().contains("Research group"));
+
+        let group = backend
+            .group(1)
+            .await
+            .expect("group lookup must succeed")
+            .expect("seeded group must exist");
+        backend
+            .rename_group(&group, "Renamed through shared state")
+            .await
+            .expect("group rename must succeed");
+
+        let updated = backend
+            .web_library_api_response(&access.api_key, "users/1/groups", None)
+            .await
+            .expect("development groups API must reload")
+            .expect("development groups API must remain enabled");
+        assert!(
+            updated
+                .body
+                .to_string()
+                .contains("Renamed through shared state")
+        );
+        assert!(!updated.body.to_string().contains("Research group"));
+        assert!(
+            backend
+                .web_library_api_response("invalid", "users/1/groups", None)
+                .await
+                .expect("invalid API key lookup must not fail")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn development_web_library_api_filters_items_by_item_key() {
+        let backend = Backend::development();
+        let access = backend
+            .web_library_access(UserId::new(1))
+            .await
+            .expect("development Web Library access must load");
+
+        let response = backend
+            .web_library_api_response(
+                &access.api_key,
+                "groups/2/items",
+                Some("format=json&includeTrashed=0&itemKey=PDF00002"),
+            )
+            .await
+            .expect("development items API must load")
+            .expect("development items API must be enabled");
+
+        assert_eq!(response.total_results, Some(1));
+        assert_eq!(response.body[0]["key"], "PDF00002");
+        assert_eq!(response.body[0]["data"]["itemType"], "attachment");
     }
 
     #[tokio::test]

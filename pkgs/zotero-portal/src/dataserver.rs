@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize, Serializer};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 use topcoat::runtime::{BoolSurrogate, Surrogate, Surrogated};
 
@@ -11,6 +11,8 @@ pub struct Dataserver {
     super_password: String,
     url: String,
 }
+
+const WEB_LIBRARY_KEY_NAME: &str = "Zotero Web Library (this portal)";
 
 #[derive(Clone)]
 pub struct LoginSessionInfo {
@@ -37,6 +39,26 @@ struct ApiKey {
     date_added: String,
     #[serde(default, rename = "lastUsed")]
     last_used: Option<String>,
+    #[serde(default)]
+    access: ApiKeyAccess,
+}
+
+#[derive(Default, Deserialize)]
+struct ApiKeyAccess {
+    #[serde(default)]
+    user: ApiKeyLibraryAccess,
+    #[serde(default)]
+    groups: Map<String, Value>,
+}
+
+#[derive(Default, Deserialize)]
+struct ApiKeyLibraryAccess {
+    #[serde(default)]
+    library: bool,
+    #[serde(default)]
+    notes: bool,
+    #[serde(default)]
+    write: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -380,6 +402,63 @@ impl Dataserver {
         serde_json::from_str(&body).context("decoding connected-client listing")
     }
 
+    pub async fn web_library_api_key(&self, user_id: UserId) -> anyhow::Result<String> {
+        let keys = self.api_keys(user_id).await?;
+        if let Some(key) = keys.iter().find(|key| {
+            key.user_id == user_id
+                && key.name == WEB_LIBRARY_KEY_NAME
+                && key.is_web_library_key()
+        }) {
+            return Ok(key.key.clone());
+        }
+
+        for key in keys
+            .iter()
+            .filter(|key| key.user_id == user_id && key.name == WEB_LIBRARY_KEY_NAME)
+        {
+            self.delete_api_key(&key.key).await?;
+        }
+
+        let response = self
+            .http_client
+            .post(format!("{}/users/{user_id}/keys", self.url))
+            .basic_auth("zotero-portal", Some(&self.super_password))
+            .header("Zotero-API-Version", "3")
+            .json(&json!({
+                "name": WEB_LIBRARY_KEY_NAME,
+                "access": {
+                    "user": {"library": true, "notes": true, "write": true},
+                    "groups": {"all": {"library": true, "write": true}}
+                }
+            }))
+            .send()
+            .await
+            .context("creating the Zotero Web Library API key")?
+            .error_for_status()
+            .context("Dataserver rejected the Zotero Web Library API key")?;
+        let key: ApiKey = response
+            .json()
+            .await
+            .context("decoding the Zotero Web Library API key")?;
+        if key.user_id != user_id || !key.is_web_library_key() {
+            anyhow::bail!("Dataserver created an invalid Zotero Web Library API key");
+        }
+        Ok(key.key)
+    }
+
+    async fn delete_api_key(&self, key: &str) -> anyhow::Result<()> {
+        self.http_client
+            .delete(format!("{}/keys/{key}", self.url))
+            .basic_auth("zotero-portal", Some(&self.super_password))
+            .header("Zotero-API-Version", "3")
+            .send()
+            .await
+            .context("removing a Zotero API key")?
+            .error_for_status()
+            .context("Dataserver rejected Zotero API key removal")?;
+        Ok(())
+    }
+
     pub async fn connected_clients(&self, user_id: UserId) -> anyhow::Result<Vec<ConnectedClient>> {
         Ok(self
             .api_keys(user_id)
@@ -579,6 +658,20 @@ impl Dataserver {
     }
 }
 
+impl ApiKey {
+    fn is_web_library_key(&self) -> bool {
+        let Some(all_groups) = self.access.groups.get("all").and_then(Value::as_object) else {
+            return false;
+        };
+        self.access.user.library
+            && self.access.user.notes
+            && self.access.user.write
+            && self.access.groups.len() == 1
+            && all_groups.get("library").and_then(Value::as_bool) == Some(true)
+            && all_groups.get("write").and_then(Value::as_bool) == Some(true)
+    }
+}
+
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -645,6 +738,26 @@ mod tests {
         assert_eq!(xml_number(response, "total"), Some(1536.5));
         assert_eq!(xml_number(response, "library"), Some(512.0));
         assert_eq!(xml_number(response, "missing"), None);
+    }
+
+    #[test]
+    fn web_library_key_requires_write_access() {
+        let key = |write| {
+            serde_json::from_value::<ApiKey>(json!({
+                "key": "secret",
+                "userID": 1,
+                "name": WEB_LIBRARY_KEY_NAME,
+                "dateAdded": "2026-08-08T00:00:00Z",
+                "access": {
+                    "user": {"library": true, "notes": true, "write": write},
+                    "groups": {"all": {"library": true, "write": write}}
+                }
+            }))
+            .expect("valid API key fixture")
+        };
+
+        assert!(key(true).is_web_library_key());
+        assert!(!key(false).is_web_library_key());
     }
 
     #[test]

@@ -1,0 +1,342 @@
+--- a/model/FullText.inc.php
++++ b/model/FullText.inc.php
+@@ -29,6 +29,26 @@
+ 	private static $minFileSizeStandardIA = 75 * 1024;
+ 	private static $elasticsearchType = "item_fulltext";
+ 	public static $metadata = ['indexedChars', 'totalChars', 'indexedPages', 'totalPages'];
++
++	private static function hasSearchBackend() {
++		return !empty(Z_CONFIG::$SEARCH_HOSTS);
++	}
++
++	private static function indexItemContent($libraryID, $key, $content) {
++		if (!self::hasSearchBackend()) {
++			return;
++		}
++
++		Z_Core::$ES->index([
++			'index' => self::$elasticsearchType . "_index",
++			'id' => $libraryID . "/" . $key,
++			'routing' => $libraryID,
++			'body' => [
++				'libraryID' => $libraryID,
++				'content' => $content
++			]
++		]);
++	}
+ 	
+ 	public static function indexItem(Zotero_Item $item, $data) {
+ 		if (!$item->isAttachment()) {
+@@ -82,6 +102,10 @@
+ 			'StorageClass' => strlen($json) < self::$minFileSizeStandardIA ? 'STANDARD' : 'STANDARD_IA'
+ 		]);
+ 		StatsD::timing("s3.fulltext.put", (microtime(true) - $start) * 1000);
++
++		// A private single-host installation indexes synchronously instead of
++		// relying on S3 notifications, Lambda, DynamoDB, and SQS.
++		self::indexItemContent($libraryID, $key, (string) $data->content);
+ 		
+ 		Zotero_DB::commit();
+ 	}
+@@ -243,9 +267,12 @@
+ 	 * @return {Array<String>|null} An array of item keys, or null if no results
+ 	 */
+ 	public static function searchInLibrary($libraryID, $searchText) {
++		if (!self::hasSearchBackend()) {
++			return [];
++		}
++
+ 		$params = [
+ 			'index' => self::$elasticsearchType . "_index",
+-			'type' => self::$elasticsearchType,
+ 			'routing' => $libraryID,
+ 			'size' => 300,
+ 			"body" => [
+@@ -292,6 +319,10 @@
+ 	 * Number of full-text documents currently in Elasticsearch for a library
+ 	 */
+ 	public static function countIndexedInLibrary($libraryID) {
++		if (!self::hasSearchBackend()) {
++			return 0;
++		}
++
+ 		$params = [
+ 			'index' => self::$elasticsearchType . "_index",
+ 			'routing' => $libraryID,
+@@ -311,52 +342,52 @@
+ 		return $resp['count'];
+ 	}
+ 
+-	// How long an enqueued rebuild is presumed to still be running. If 'reindexing' is
+-	// older than this, assume the refill stalled (or its completion was never recorded)
+-	// and let the next search re-enqueue it.
+-	const REINDEXING_STALE_AGE = 21600; // 6 hours
+-
+-	/**
+-	 * Whether a rebuild enqueued at the given time is presumed to still be running
+-	 */
+-	public static function isReindexing($reindexingTime) {
+-		return $reindexingTime !== null
+-			&& time() - $reindexingTime < self::REINDEXING_STALE_AGE;
+-	}
+-
+-	/**
+-	 * If the library's full text was removed from the index, clear the deindexed
+-	 * flag and enqueue a rebuild from stored content.
+-	 *
+-	 * Returns true if a rebuild is now underway, whether triggered by this request
+-	 * or earlier, or false if the index is intact
+-	 */
+ 	public static function reindexLibraryIfDeindexed($libraryID) {
+-		$state = Zotero_Libraries::getFullTextIndexState($libraryID);
++		return false;
++	}
++
++	public static function isReindexing($reindexingTime) {
++		return false;
++	}
+ 
+-		if ($state['deindexed']) {
+-			// Clearing the deindexed flag before enqueuing keeps the indexer's gate
+-			// from skipping the refill we're about to request. The claim is
+-			// conditional on the flag still being set, so concurrent searches can't
+-			// enqueue duplicate rebuilds -- a failed claim means another request
+-			// just triggered the rebuild.
+-			if (Zotero_Libraries::claimFullTextReindex($libraryID)) {
+-				Z_SQS::send(Z_CONFIG::$REINDEX_QUEUE_URL, json_encode(['libraryID' => $libraryID]));
+-			}
+-			return true;
++	public static function reindexAll() {
++		if (!self::hasSearchBackend()) {
++			throw new Exception("Full-text search backend is not configured");
+ 		}
+ 
+-		if ($state['reindexing'] !== null) {
+-			// Re-enqueue a rebuild that stalled or whose completion was never
+-			// recorded, conditionally on the stale timestamp so only one request does
+-			if (!self::isReindexing($state['reindexing'])
+-					&& Zotero_Libraries::claimFullTextReindex($libraryID, $state['reindexing'])) {
+-				Z_SQS::send(Z_CONFIG::$REINDEX_QUEUE_URL, json_encode(['libraryID' => $libraryID]));
++		$s3Client = Z_Core::$AWS->createS3();
++		$continuationToken = null;
++		$count = 0;
++		do {
++			$params = ['Bucket' => Z_CONFIG::$S3_BUCKET_FULLTEXT];
++			if ($continuationToken !== null) {
++				$params['ContinuationToken'] = $continuationToken;
+ 			}
+-			return true;
++			$result = $s3Client->listObjectsV2($params);
++			foreach ($result['Contents'] ?? [] as $object) {
++				$parts = explode('/', (string) $object['Key'], 2);
++				if (count($parts) != 2 || !ctype_digit($parts[0]) || $parts[1] === '') {
++					continue;
++				}
++				$data = self::getItemData((int) $parts[0], $parts[1]);
++				if (!$data) {
++					continue;
++				}
++				self::indexItemContent($data['libraryID'], $data['key'], $data['content']);
++				$count++;
++				if ($count % 100 == 0) {
++					echo "Indexed $count full-text documents\n";
++				}
++			}
++			$continuationToken = !empty($result['IsTruncated'])
++				? (string) $result['NextContinuationToken'] : null;
+ 		}
++		while ($continuationToken !== null);
+ 
+-		return false;
++		Z_Core::$ES->indices()->refresh([
++			'index' => self::$elasticsearchType . "_index"
++		]);
++		return $count;
+ 	}
+ 
+ 	public static function deleteItemContent(Zotero_Item $item) {
+@@ -381,6 +408,18 @@
+ 			'Key' => $libraryID . '/' . $key
+ 		]);
+ 		StatsD::timing("s3.fulltext.delete", (microtime(true) - $start) * 1000);
++
++		if (self::hasSearchBackend()) {
++			try {
++				Z_Core::$ES->delete([
++					'index' => self::$elasticsearchType . "_index",
++					'id' => $libraryID . "/" . $key,
++					'routing' => $libraryID
++				]);
++			}
++			catch (\Elasticsearch\Common\Exceptions\Missing404Exception $e) {
++			}
++		}
+ 		
+ 		Zotero_DB::commit();
+ 	}
+@@ -397,6 +436,19 @@
+ 		// Potentially slow, because internally it lists objects and then deletes by batches of 1000
+ 		$s3Client->deleteMatchingObjects(Z_CONFIG::$S3_BUCKET_FULLTEXT, $libraryID . '/');
+ 		StatsD::timing("s3.fulltext.bulk_delete", (microtime(true) - $start) * 1000);
++
++		if (self::hasSearchBackend()) {
++			Z_Core::$ES->deleteByQuery([
++				'index' => self::$elasticsearchType . "_index",
++				'routing' => $libraryID,
++				'conflicts' => 'proceed',
++				'body' => [
++					'query' => [
++						'term' => ['libraryID' => $libraryID]
++					]
++				]
++			]);
++		}
+ 		
+ 		Zotero_DB::commit();
+ 	}
+--- a/model/Libraries.inc.php
++++ b/model/Libraries.inc.php
+@@ -54,128 +54,19 @@
+ 		return !!Zotero_DB::valueQuery($sql, $libraryID);
+ 	}
+ 
+-	/**
+-	 * Per-library full-text index state lives in the shared DynamoDB table
+-	 * (Z_CONFIG::$FULLTEXT_INDEXING_TABLE), since the full-text indexer Lambda gates
+-	 * indexing on it and can't reach the MySQL master.
+-	 *
+-	 * - 'deindexed' (BOOL): the library's full text was removed from the index by an
+-	 *   external producer (the purge script). Absent item or absent/false attribute
+-	 *   means not deindexed.
+-	 * - 'reindexing' (N, Unix timestamp): when a rebuild was last enqueued. Set here
+-	 *   via claimFullTextReindex() and removed by the reindexer Lambda when the
+-	 *   refill completes.
+-	 */
+ 	public static function getFullTextIndexState($libraryID) {
+-		$ddb = Z_Core::$AWS->createDynamoDb();
+-		$result = $ddb->getItem([
+-			'TableName' => Z_CONFIG::$FULLTEXT_INDEXING_TABLE,
+-			'Key' => [
+-				'pk' => ['S' => "LIBRARY#$libraryID"],
+-				'sk' => ['S' => "STATE"]
+-			],
+-			'ProjectionExpression' => 'deindexed, reindexing, indexableCount',
+-			'ConsistentRead' => true
+-		]);
+ 		return [
+-			'deindexed' => isset($result['Item']['deindexed']['BOOL'])
+-				&& $result['Item']['deindexed']['BOOL'] === true,
+-			'reindexing' => isset($result['Item']['reindexing']['N'])
+-				? (int) $result['Item']['reindexing']['N'] : null,
+-			// Objects the last reindex enqueued (= what's actually in S3); null if never reindexed
+-			'indexableCount' => isset($result['Item']['indexableCount']['N'])
+-				? (int) $result['Item']['indexableCount']['N'] : null
++			'deindexed' => false,
++			'reindexing' => null,
++			'indexableCount' => null
+ 		];
+ 	}
+ 
+-	/**
+-	 * Atomically claim a full-text rebuild -- clear the deindexed flag and stamp
+-	 * 'reindexing' with the current time, so concurrent requests can't enqueue
+-	 * duplicate rebuilds. By default the claim succeeds only if the library is
+-	 * currently deindexed. To re-claim a stalled rebuild instead, pass the stale
+-	 * timestamp, and the claim succeeds only if 'reindexing' still holds that value.
+-	 *
+-	 * Returns false if another request claimed the rebuild first
+-	 */
+ 	public static function claimFullTextReindex($libraryID, $staleReindexTime = null) {
+-		$ddb = Z_Core::$AWS->createDynamoDb();
+-		$params = [
+-			'TableName' => Z_CONFIG::$FULLTEXT_INDEXING_TABLE,
+-			'Key' => [
+-				'pk' => ['S' => "LIBRARY#$libraryID"],
+-				'sk' => ['S' => "STATE"]
+-			],
+-			// UpdateItem (not PutItem) so other attributes on the STATE item -- e.g.
+-			// the reindex checkpoint -- survive. Clearing sets deindexed=false; never
+-			// delete.
+-			'UpdateExpression' => 'SET deindexed = :false, reindexing = :now',
+-			'ExpressionAttributeValues' => [
+-				':false' => ['BOOL' => false],
+-				':now' => ['N' => (string) time()]
+-			]
+-		];
+-		if ($staleReindexTime !== null) {
+-			$params['ConditionExpression'] = 'reindexing = :stale';
+-			$params['ExpressionAttributeValues'][':stale'] = ['N' => (string) $staleReindexTime];
+-		}
+-		else {
+-			$params['ConditionExpression'] = 'deindexed = :true';
+-			$params['ExpressionAttributeValues'][':true'] = ['BOOL' => true];
+-		}
+-		try {
+-			$ddb->updateItem($params);
+-		}
+-		catch (\Aws\DynamoDb\Exception\DynamoDbException $e) {
+-			if ($e->getAwsErrorCode() == 'ConditionalCheckFailedException') {
+-				return false;
+-			}
+-			throw $e;
+-		}
+-		return true;
++		return false;
+ 	}
+ 
+-
+-	/**
+-	 * Record that a library's items were searched, for search-index eviction
+-	 *
+-	 * Stamps lastMetadataSearch (any quick search) and lastFullTextSearch (everything-mode
+-	 * searches) on the library's indexing STATE item in DynamoDB. Eviction windows are months,
+-	 * so throttle to one write per library/mode per day via memcached.
+-	 */
+ 	public static function recordItemSearch($libraryID, $fullText = false) {
+-		$attrs = [];
+-		if (Z_Core::$MC->add("lastMetadataSearchStamped_$libraryID", 1, 86400)) {
+-			$attrs[] = 'lastMetadataSearch';
+-		}
+-		if ($fullText && Z_Core::$MC->add("lastFullTextSearchStamped_$libraryID", 1, 86400)) {
+-			$attrs[] = 'lastFullTextSearch';
+-		}
+-		if (!$attrs) {
+-			return;
+-		}
+-		try {
+-			$ddb = Z_Core::$AWS->createDynamoDb();
+-			$ddb->updateItem([
+-				'TableName' => Z_CONFIG::$FULLTEXT_INDEXING_TABLE,
+-				'Key' => [
+-					'pk' => ['S' => "LIBRARY#$libraryID"],
+-					'sk' => ['S' => "STATE"]
+-				],
+-				'UpdateExpression' => 'SET ' . implode(', ', array_map(
+-					function ($attr) {
+-						return "$attr = :now";
+-					},
+-					$attrs
+-				)),
+-				'ExpressionAttributeValues' => [
+-					':now' => ['N' => (string) time()]
+-				]
+-			]);
+-		}
+-		catch (Exception $e) {
+-			Z_Core::logError("WARNING: Failed to stamp " . implode("/", $attrs)
+-				. " for library $libraryID: " . $e->getMessage());
+-		}
+ 	}
+ 
+ 
+--- /dev/null
++++ b/admin/reindex_fulltext
+@@ -0,0 +1,8 @@
++#!/usr/bin/php
++<?php
++
++set_include_path("../include");
++require("header.inc.php");
++
++$count = Zotero_FullText::reindexAll();
++echo "Indexed $count full-text documents\n";

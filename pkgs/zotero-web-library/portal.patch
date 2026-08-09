@@ -1,0 +1,141 @@
+diff --git a/src/js/component/item-details/tag-picker.jsx b/src/js/component/item-details/tag-picker.jsx
+index 62a212e..00d4874 100644
+--- a/src/js/component/item-details/tag-picker.jsx
++++ b/src/js/component/item-details/tag-picker.jsx
+@@ -105,7 +105,7 @@ const TagPicker = ({ itemKey, libraryKey, isReadOnly }) => {
+ 	const dispatch = useDispatch();
+ 	const initialTags = useSelector(state => get(state, ['libraries', libraryKey, 'items', itemKey, 'tags'], []));
+ 	const isTouchOrSmall = useSelector(state => state.device.isTouchOrSmall);
+-	const tagColors = useSelector(state => get(state, ['libraries', libraryKey, 'tagColors', 'lookup']));
++	const tagColors = useSelector(state => get(state, ['libraries', libraryKey, 'tagColors', 'lookup'], {}));
+ 
+ 	// tags stored in the item property may require sorting. See #434
+ 	const sortedTags = [...initialTags];
+diff --git a/src/js/component/library.jsx b/src/js/component/library.jsx
+index 8ec9cfd..fe75966 100644
+--- a/src/js/component/library.jsx
++++ b/src/js/component/library.jsx
+@@ -34,6 +34,7 @@ import ZoteroStreamingClient from './zotero-streaming-client';
+ const Library = () => {
+ 	const dispatch = useDispatch();
+ 	const isTouchOrSmall = useSelector(state => state.device.isTouchOrSmall);
++	const portalMode = useSelector(state => state.config.portalMode);
+ 	const isSingleColumn = useSelector(state => state.device.isSingleColumn);
+ 	const shouldUseSidebar = useSelector(state => state.device.shouldUseSidebar);
+ 	const userType = useSelector(state => state.device.userType);
+@@ -132,7 +133,7 @@ const Library = () => {
+ 					'view-attachment-active': attachmentKey,
+ 					[`view-${view}-active`]: true,
+ 				}) }>
+-				<MobileNav />
++				{ !portalMode && <MobileNav /> }
+ 				<div className="site-wrapper">
+ 					{ view === 'reader' ? (
+ 						<Reader />
+@@ -200,10 +201,12 @@ const Library = () => {
+ 								</CSSTransition>
+ 							</section>
+ 						</main>
+-						<div
+-							className="nav-cover"
+-							onClick={ handleNavbarToggle }
+-						/>
++						{ !portalMode && (
++							<div
++								className="nav-cover"
++								onClick={ handleNavbarToggle }
++							/>
++						) }
+ 						</Fragment>
+ 					)}
+ 				</div>
+diff --git a/src/js/component/ui/navbar.jsx b/src/js/component/ui/navbar.jsx
+index 9e74cfa..4ea0daa 100644
+--- a/src/js/component/ui/navbar.jsx
++++ b/src/js/component/ui/navbar.jsx
+@@ -16,6 +16,7 @@ const Navbar = memo(({ entries = [] }) => {
+ 	const { receiveFocus, receiveBlur, focusNext, focusPrev, registerAutoFocus } = useFocusManager(ref);
+ 	const isLibrariesView = useSelector(state => state.current.view === 'libraries');
+ 	const isSingleColumn = useSelector(state => state.device.isSingleColumn);
++	const portalMode = useSelector(state => state.config.portalMode);
+ 	const colorScheme = useSelector(state => state.preferences.colorScheme);
+ 
+ 	const handleSearchButtonClick = useCallback(() => {
+@@ -52,7 +53,7 @@ const Navbar = memo(({ entries = [] }) => {
+ 
+ 	return (
+ 		<header
+-			className="navbar"
++			className={ portalMode ? 'navbar navbar-portal' : 'navbar' }
+ 			onBlur={ receiveBlur }
+ 			onFocus={ receiveFocus }
+ 			ref={ ref }
+diff --git a/src/js/constants/defaults.js b/src/js/constants/defaults.js
+index e3812ce..94134a9 100644
+--- a/src/js/constants/defaults.js
++++ b/src/js/constants/defaults.js
+@@ -3,6 +3,8 @@
+ import { coreCitationStyles } from '../../../data/citation-styles-data.json';
+ 
+ export const apiKey = '';
++export const portalMode = false;
++export const readOnly = false;
+ export const apiConfig = {
+ 	apiAuthorityPart: 'api.zotero.org',
+ 	retry: 2,
+diff --git a/src/js/reducers/config.js b/src/js/reducers/config.js
+index c77daad..af5284d 100644
+--- a/src/js/reducers/config.js
++++ b/src/js/reducers/config.js
+@@ -8,6 +8,8 @@ const defaultState = {
+ 	apiKey: null,
+ 	defaultLibraryKey: null,
+ 	libraries: [],
++	portalMode: false,
++	readOnly: false,
+ 	streamingApiUrl: '',
+ 	userId: null,
+ 	isEmbedded: false,
+@@ -85,8 +87,8 @@ const config = (state = defaultState, action) => {
+ 						id: action.userId,
+ 						key: `u${action.userId}`,
+ 						isMyLibrary: true,
+-						isReadOnly: action.apiKey ? false : true,
+-						isFileUploadAllowed: action.apiKey ? true : false,
++						isReadOnly: action.readOnly || !action.apiKey,
++						isFileUploadAllowed: !action.readOnly && !!action.apiKey,
+ 						name: 'My Library',
+ 						isExternal: false,
+ 						isPublic: false,
+@@ -113,8 +115,8 @@ const config = (state = defaultState, action) => {
+ 					isGroupLibrary: true,
+ 					name: group.name,
+ 					slug: slugify(group.name),
+-					isReadOnly: !determineIfGroupIsWriteable(group, state.userId),
+-					isFileUploadAllowed: determineIfGroupAllowsUploads(group, state.userId),
++					isReadOnly: state.readOnly || !determineIfGroupIsWriteable(group, state.userId),
++					isFileUploadAllowed: !state.readOnly && determineIfGroupAllowsUploads(group, state.userId),
+ 					isExternal: false,
+ 					isPublic: group.type && group.type.toLowerCase().startsWith('public')
+ 				}))
+diff --git a/src/scss/components/_navbar.scss b/src/scss/components/_navbar.scss
+index 9b69296..a9a8b4c 100644
+--- a/src/scss/components/_navbar.scss
++++ b/src/scss/components/_navbar.scss
+@@ -229,3 +229,16 @@
+ 		transition: background-color variables.$mobile-navbar-nav-transition;
+ 	}
+ }
++
++.navbar-portal {
++	.navbar-brand,
++	.main-nav,
++	.navbar-toggle {
++		display: none;
++	}
++
++	.input-group.search {
++		margin-left: 0;
++		max-width: none;
++	}
++}

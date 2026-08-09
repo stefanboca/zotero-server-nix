@@ -1,11 +1,22 @@
 mod account;
+mod api;
 mod auth;
+mod export;
 mod groups;
+mod import;
+mod library;
+mod path;
+mod search;
 mod settings;
+mod static_assets;
+mod translation;
 mod user;
 mod users;
+mod web;
 
 use std::{
+    os::unix::fs::PermissionsExt as _,
+    path::Path,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -93,9 +104,15 @@ pub async fn serve(config: Config) -> anyhow::Result<()> {
         Err(error) => return Err(error).context("removing stale auth socket"),
     }
     let listener = tokio::net::UnixListener::bind(&socket).context("binding auth socket")?;
+    set_socket_permissions(&socket)?;
     topcoat::serve(listener, router)
         .await
         .context("serving auth portal")
+}
+
+fn set_socket_permissions(socket: &Path) -> anyhow::Result<()> {
+    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o660))
+        .with_context(|| format!("setting portal socket permissions on {}", socket.display()))
 }
 
 pub async fn serve_development() -> anyhow::Result<()> {
@@ -209,8 +226,9 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
         Err(error) if error.downcast_ref::<RedirectError>().is_some() => return Err(error),
         Err(error) => (friendly_error(cx, &error).await?, true),
     };
-    let bare_layout = try_request_context::<BareLayout>(cx).is_some();
     let path = uri(cx).path();
+    let web_library_active = is_web_library_path(path);
+    let bare_layout = try_request_context::<BareLayout>(cx).is_some() || web_library_active;
     let home_active = path == "/";
     let groups_active = path == "/groups" || path.starts_with("/groups/");
     let account_active = path == "/account";
@@ -243,8 +261,12 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>"Zotero"</title>
+                <link rel="icon" href="/static/web-library/icons/32/z.svg">
                 <link rel="stylesheet" href=(topcoat::asset::asset!("target/topcoat/tailwind.css"))>
                 <link rel="stylesheet" href=(topcoat::asset::asset!("src/app/feedback.css"))>
+                if web_library_active {
+                    <link rel="stylesheet" href="/static/web-library/zotero-web-library.css">
+                }
                 topcoat::runtime::script()
                 topcoat::dev::script()
             </head>
@@ -281,6 +303,27 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
             </body>
         </html>
     }
+}
+
+pub(super) fn is_web_library_path(path: &str) -> bool {
+    if path == "/library" {
+        return true;
+    }
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let source = if segments.first() == Some(&"groups") {
+        segments.get(3)
+    } else {
+        segments.get(1)
+    };
+    source.is_some_and(|source| {
+        matches!(
+            *source,
+            "library" | "collections" | "trash" | "publications" | "tags" | "search" | "items"
+        )
+    })
 }
 
 async fn navigation_user(cx: &Cx) -> Result<Option<store::UserSummary>> {
@@ -369,11 +412,6 @@ async fn friendly_error_page(
     }
 }
 
-#[page("/{*path}")]
-async fn unmatched_page() -> Result {
-    Err(not_found().into())
-}
-
 pub(crate) async fn signed_in_user(cx: &Cx) -> Result<store::UserSummary> {
     let user_id = authenticated_user(cx).await?;
     let app = app_context::<AppState>(cx);
@@ -421,32 +459,93 @@ pub(crate) async fn confirmation_dialog() -> Result {
 
 #[page]
 async fn index(cx: &Cx) -> Result {
-    let user = signed_in_user(cx).await?;
-
-    view! { portal_index(user: &user) }
-}
-
-#[topcoat::view::component]
-async fn portal_index(user: &store::UserSummary) -> Result {
+    authenticated_user(cx).await?;
     view! {
-        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <section class="max-w-2xl py-8">
-                <h1 class="text-3xl font-semibold">"Welcome, " (user.display_name())</h1>
-                <p class="mt-4 text-lg leading-8 text-stone-600 dark:text-stone-400">
-                    "This portal manages the server-side parts of your Zotero account, including groups and service settings. Continue using Zotero desktop for library items, attachments, and sync."
-                </p>
-            </section>
+        <main class="w-full bg-white text-stone-950">
+            <iframe
+                class="block h-[calc(100dvh-4.75rem)] min-h-[32rem] w-full border-0"
+                src="/library"
+                title="Zotero library"
+            ></iframe>
         </main>
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use topcoat::router::Request;
+
     use super::*;
 
     #[test]
     fn route_tree_builds_without_duplicate_routes_or_assets() {
         let _router = routes().build();
+    }
+
+    #[test]
+    fn portal_socket_is_accessible_to_its_group() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after the Unix epoch")
+            .as_nanos();
+        let socket = std::env::temp_dir().join(format!(
+            "zotero-portal-socket-permissions-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::File::create(&socket).expect("create socket permission test file");
+
+        set_socket_permissions(&socket).expect("set portal socket permissions");
+
+        let mode = std::fs::metadata(&socket)
+            .expect("read socket permission test file metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o660);
+        std::fs::remove_file(socket).expect("remove socket permission test file");
+    }
+
+    #[tokio::test]
+    async fn translation_routes_require_a_browser_session() {
+        let router = routes()
+            .cookies()
+            .sessions(SessionConfig::default())
+            .app_context(AppState {
+                backend: Backend::development(),
+            })
+            .build();
+
+        for path in ["/web", "/search", "/import", "/export?format=bibtex"] {
+            let expected_location = format!(
+                "/user/login?continue={}",
+                url::form_urlencoded::byte_serialize(path.as_bytes()).collect::<String>()
+            );
+            let response = router
+                .handle(
+                    Request::post(path)
+                        .body(Body::from("10.1000/example"))
+                        .expect("valid translation request"),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+            assert_eq!(
+                response.headers().get("location").and_then(|v| v.to_str().ok()),
+                Some(expected_location.as_str()),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn recognizes_canonical_web_library_routes() {
+        assert!(is_web_library_path("/researcher/library"));
+        assert!(is_web_library_path(
+            "/researcher/items/DEVUSER1/attachment/PDF00001/reader"
+        ));
+        assert!(is_web_library_path(
+            "/groups/1/research-group/items/DEVUSER1"
+        ));
+        assert!(!is_web_library_path("/groups/1/members"));
+        assert!(!is_web_library_path("/settings"));
     }
 
     #[test]

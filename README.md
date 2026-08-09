@@ -13,6 +13,7 @@ The module starts these services:
 
 - Zotero Dataserver
 - MariaDB, Redis, and Memcached
+- OpenSearch for server-side full-text search
 - VersityGW for S3 file storage
 - zotero-portal for OIDC login, accounts, groups, and settings
 - attachment-proxy
@@ -26,12 +27,17 @@ The module creates the required databases, S3 buckets, and internal secrets.
 It stores each generated secret in a separate file in the systemd state
 directory. You do not need to set internal service secrets.
 
-The module does not start the optional Zotero production search system. That
-system needs Elasticsearch, DynamoDB, SQS, and an external reindexer. Desktop
-full-text search stays local and does not need this system. The module also
-does not start the optional global-items and text-to-speech services. The
-text-to-speech service generates audio for Read Aloud in the Zotero web
-reader. Desktop clients do not use it.
+The module replaces Zotero's AWS full-text indexing pipeline with synchronous
+indexing into a local OpenSearch service. Existing full-text objects in
+S3 are imported automatically the first time the index is initialized. This
+provides server-side full-text search without DynamoDB, SQS, or Lambda.
+The managed OpenSearch build drops unrelated bundled plugins and starts with a
+128 MiB heap that may grow to 512 MiB. Override
+`services.opensearch.extraJavaOptions` if different JVM settings are needed.
+
+The module does not start the optional global-items and text-to-speech
+services. The text-to-speech service generates audio for Read Aloud in the
+Zotero web reader. Desktop clients do not use it.
 
 ## Basic configuration
 
@@ -66,6 +72,13 @@ proxy and do not need S3 credentials.
 `virtualHost` is also the public base URI for all server endpoints. A bare
 host name uses HTTPS. Use an explicit `http://` URI only for a trusted local
 deployment.
+
+All managed services are grouped under `zotero.target`, so they can be started
+together:
+
+```console
+systemctl start zotero.target
+```
 
 ## OIDC login
 

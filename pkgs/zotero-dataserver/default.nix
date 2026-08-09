@@ -68,6 +68,7 @@ in
       ./0003-mariadb-upsert.patch
       ./0004-zero-unlimited-storage.patch
       ./0005-login-path.patch
+      ./0006-local-fulltext-index.patch
     ];
 
     composerStrictValidation = false;

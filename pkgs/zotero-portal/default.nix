@@ -3,6 +3,7 @@
   rustPlatform,
   tailwindcss_4,
   topcoat-cli,
+  zotero-web-library,
 }:
 rustPlatform.buildRustPackage {
   pname = "zotero-portal";
@@ -12,7 +13,10 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ./Cargo.lock;
   nativeBuildInputs = [tailwindcss_4 topcoat-cli];
-  env.TAILWIND_CLI = lib.getExe tailwindcss_4;
+  env = {
+    TAILWIND_CLI = lib.getExe tailwindcss_4;
+    ZOTERO_WEB_LIBRARY = zotero-web-library;
+  };
 
   # Topcoat's asset IDs include the build output path. Preserve and install
   # the exact executable that the Topcoat bundler scanned.

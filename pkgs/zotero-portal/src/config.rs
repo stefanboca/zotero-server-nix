@@ -21,6 +21,8 @@ pub struct Config {
     pub oidc: OidcConfig,
     pub identity: IdentityConfig,
     pub dataserver: DataserverConfig,
+    pub streaming: StreamingConfig,
+    pub translation_server: TranslationServerConfig,
 }
 
 impl Config {
@@ -66,6 +68,18 @@ pub struct IdentityConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DataserverConfig {
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranslationServerConfig {
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamingConfig {
     pub url: String,
 }
 
@@ -124,6 +138,12 @@ mod tests {
 
                 [dataserver]
                 url = "http://localhost"
+
+                [translation_server]
+                url = "http://127.0.0.1:1969"
+
+                [streaming]
+                url = "wss://zotero.example.com/stream/"
             "#,
         )
         .expect("valid config");
@@ -164,6 +184,12 @@ mod tests {
 
                 [dataserver]
                 url = "http://localhost"
+
+                [translation_server]
+                url = "http://127.0.0.1:1969"
+
+                [streaming]
+                url = "wss://zotero.example.com/stream/"
             "#,
         );
 
