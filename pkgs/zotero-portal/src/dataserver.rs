@@ -278,7 +278,7 @@ impl Dataserver {
         let response = self
             .http_client
             .get(format!("{}/keys/sessions/{token}/info", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
             .await
             .context("requesting Zotero login-session information")?
@@ -314,7 +314,7 @@ impl Dataserver {
         });
         self.http_client
             .post(format!("{}/keys/sessions/complete", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .json(&json!({"sessionToken": token, "userID": user_id, "access": access}))
             .send()
             .await
@@ -327,7 +327,7 @@ impl Dataserver {
     pub async fn set_unlimited_storage(&self, user_id: UserId) -> anyhow::Result<()> {
         self.http_client
             .post(format!("{}/users/{user_id}/storageadmin", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .form(&[("quota", "unlimited"), ("expiration", "0")])
             .send()
             .await
@@ -341,7 +341,7 @@ impl Dataserver {
         let response = self
             .http_client
             .get(format!("{}/users/{user_id}/storageadmin", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
             .await
             .context("requesting Zotero storage usage")?
@@ -363,7 +363,7 @@ impl Dataserver {
         let response = self
             .http_client
             .get(format!("{}/users/{user_id}/keys", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Zotero-API-Version", "3")
             .send()
             .await
@@ -412,7 +412,7 @@ impl Dataserver {
         };
         self.http_client
             .delete(format!("{}/keys/{}", self.url, key.key))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Zotero-API-Version", "3")
             .send()
             .await
@@ -428,7 +428,7 @@ impl Dataserver {
         for key in keys.into_iter().filter(|key| key.user_id == user_id) {
             self.http_client
                 .delete(format!("{}/keys/{}", self.url, key.key))
-                .basic_auth("zotero-auth", Some(&self.super_password))
+                .basic_auth("zotero-portal", Some(&self.super_password))
                 .header("Zotero-API-Version", "3")
                 .send()
                 .await
@@ -444,7 +444,7 @@ impl Dataserver {
         let response = self
             .http_client
             .get(format!("{}/users/{user_id}/groups", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .query(&[("limit", "100")])
             .send()
             .await
@@ -462,7 +462,7 @@ impl Dataserver {
         let response = self
             .http_client
             .get(format!("{}/groups/{group_id}", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
             .await
             .context("loading Zotero group")?;
@@ -484,7 +484,7 @@ impl Dataserver {
         let response = self
             .http_client
             .post(format!("{}/groups", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Content-Type", "text/xml")
             .body(body)
             .send()
@@ -516,7 +516,7 @@ impl Dataserver {
         let body = format!(r#"<user id="{user_id}" role="{role}"/>"#);
         self.http_client
             .put(format!("{}/groups/{group_id}/users/{user_id}", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Content-Type", "text/xml")
             .body(body)
             .send()
@@ -543,7 +543,7 @@ impl Dataserver {
         );
         self.http_client
             .put(format!("{}/groups/{}", self.url, group.id))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Content-Type", "text/xml")
             .body(body)
             .send()
@@ -557,7 +557,7 @@ impl Dataserver {
     pub async fn remove_group_user(&self, group_id: u64, user_id: UserId) -> anyhow::Result<()> {
         self.http_client
             .delete(format!("{}/groups/{group_id}/users/{user_id}", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
             .await
             .context("removing Zotero group member")?
@@ -569,7 +569,7 @@ impl Dataserver {
     pub async fn delete_group(&self, group_id: u64) -> anyhow::Result<()> {
         self.http_client
             .delete(format!("{}/groups/{group_id}", self.url))
-            .basic_auth("zotero-auth", Some(&self.super_password))
+            .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
             .await
             .context("deleting Zotero group")?

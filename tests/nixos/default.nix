@@ -3,7 +3,7 @@
   pkgs,
   versitygw,
   zotero-attachment-proxy,
-  zotero-auth,
+  zotero-portal,
   zotero-citeproc-js-server,
   zotero-dataserver,
   zotero-stream-server,
@@ -38,9 +38,8 @@ in {
           package = zotero-attachment-proxy;
           settings.port = 13000;
         };
-        auth = {
-          enable = true;
-          package = zotero-auth;
+        portal = {
+          package = zotero-portal;
           issuer = "http://127.0.0.1:19090";
           clientId = "zotero-test";
           clientSecretFile = oidcClientSecret;
@@ -84,14 +83,14 @@ in {
         oidc-mock = {
           description = "OIDC test provider";
           wantedBy = ["multi-user.target"];
-          before = ["zotero-auth.service"];
+          before = ["zotero-portal.service"];
           serviceConfig = {
             DynamicUser = true;
             ExecStart = "${pkgs.lib.getExe testPython} ${./oidc-mock.py}";
             Restart = "on-failure";
           };
         };
-        zotero-auth = {
+        zotero-portal = {
           requires = ["oidc-mock.service"];
           after = ["oidc-mock.service"];
         };
@@ -131,8 +130,8 @@ in {
           "mysql.service",
           "versitygw.service",
           "oidc-mock.service",
-          "zotero-auth-migrate.service",
-          "zotero-auth.service",
+          "zotero-portal-migrate.service",
+          "zotero-portal.service",
           "phpfpm-zotero-dataserver.service",
           "zotero-attachment-proxy.service",
           "zotero-citeproc-js-server.service",
@@ -165,13 +164,13 @@ in {
           "systemctl show -P User phpfpm-zotero-dataserver.service"
       ).strip() == "zotero-dataserver"
       assert machine.succeed(
-          "systemctl show -P Group zotero-auth.service"
-      ).strip() == "zotero-auth"
-      assert "zotero-auth" in machine.succeed("id -nG caddy").split()
+          "systemctl show -P Group zotero-portal.service"
+      ).strip() == "zotero-portal"
+      assert "zotero-portal" in machine.succeed("id -nG caddy").split()
 
       for unit in [
           "zotero-dataserver-credentials.service",
-          "zotero-auth-migrate.service",
+          "zotero-portal-migrate.service",
           "zotero-dataserver-schema.service",
       ]:
           assert machine.succeed(
@@ -179,7 +178,7 @@ in {
           ).strip() == "on-failure"
 
       for unit in [
-          "zotero-auth.service",
+          "zotero-portal.service",
           "phpfpm-zotero-dataserver.service",
           "versitygw.service",
           "zotero-attachment-proxy.service",
@@ -201,10 +200,10 @@ in {
       assert "versitygw.service" in attachment_proxy_wants
       assert "versitygw.service" not in attachment_proxy_requires
 
-      auth_config = tomllib.loads(
-          machine.succeed("cat /etc/zotero-dataserver/auth.toml")
+      portal_config = tomllib.loads(
+          machine.succeed("cat /etc/zotero-dataserver/portal.toml")
       )
-      assert "browser_session_lifetime_seconds" not in auth_config
+      assert "browser_session_lifetime_seconds" not in portal_config
 
       databases = machine.succeed(
           "mariadb --batch --skip-column-names "
@@ -338,7 +337,7 @@ in {
       if not all(status["status"] == "completed" for status in parallel_statuses):
           print(machine.succeed("sed -n '1,120p' /tmp/oidc-parallel-0.html"))
           print(machine.succeed("sed -n '1,120p' /tmp/oidc-parallel-1.html"))
-          print(machine.succeed("journalctl -u zotero-auth -u oidc-mock --no-pager -n 200"))
+          print(machine.succeed("journalctl -u zotero-portal -u oidc-mock --no-pager -n 200"))
       assert all(status["status"] == "completed" for status in parallel_statuses), parallel_statuses
       assert parallel_statuses[0]["userID"] == parallel_statuses[1]["userID"], parallel_statuses
       oidc_user_id = parallel_statuses[0]["userID"]

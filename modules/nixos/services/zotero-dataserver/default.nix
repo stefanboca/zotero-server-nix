@@ -108,7 +108,7 @@
       public static $URI_PREFIX_DOMAIN_MAP = ${phpStringAttrs cfg.php.settings.uriPrefixDomainMap};
 
       public static $AUTH_SALT = "";
-      public static $API_SUPER_USERNAME = 'zotero-auth';
+      public static $API_SUPER_USERNAME = 'zotero-portal';
       public static $API_SUPER_PASSWORD = "";
 
       public static $AWS_REGION = ${phpString cfg.storage.region};
@@ -355,22 +355,18 @@ in {
       secretAccessKeyFile = settingOption (nullOr path) null "File containing the S3 secret access key. A persistent random key is generated for the managed backend when unset.";
     };
 
-    auth = {
-      enable = mkEnableOption "the OIDC-only Zotero desktop login portal";
-      package = mkPackageOption pkgs "zotero-auth" {};
+    portal = {
+      package = mkPackageOption pkgs "zotero-portal" {};
       issuer = mkOption {
-        type = nullOr str;
-        default = null;
+        type = str;
         description = "OIDC issuer URL. The provider must expose OpenID Connect discovery metadata.";
       };
       clientId = mkOption {
-        type = nullOr str;
-        default = null;
+        type = str;
         description = "OIDC client ID registered for the Zotero login portal.";
       };
       clientSecretFile = mkOption {
-        type = nullOr path;
-        default = null;
+        type = path;
         description = "File containing the OIDC client secret.";
       };
       scopes = settingOption (listOf str) ["profile" "email"] "OIDC scopes requested in addition to the mandatory openid scope.";
@@ -525,20 +521,8 @@ in {
         message = "an external S3 backend requires storage access-key files";
       }
       {
-        assertion = !cfg.auth.enable || cfg.auth.issuer != null;
-        message = "services.zotero-dataserver.auth.issuer must be set when OIDC login is enabled";
-      }
-      {
-        assertion = !cfg.auth.enable || cfg.auth.clientId != null;
-        message = "services.zotero-dataserver.auth.clientId must be set when OIDC login is enabled";
-      }
-      {
-        assertion = !cfg.auth.enable || cfg.auth.clientSecretFile != null;
-        message = "services.zotero-dataserver.auth.clientSecretFile must be set when OIDC login is enabled";
-      }
-      {
-        assertion = cfg.auth.browserSessionLifetimeSeconds == null || cfg.auth.browserSessionLifetimeSeconds > 0;
-        message = "services.zotero-dataserver.auth.browserSessionLifetimeSeconds must be positive when set";
+        assertion = cfg.portal.browserSessionLifetimeSeconds == null || cfg.portal.browserSessionLifetimeSeconds > 0;
+        message = "services.zotero-dataserver.portal.browserSessionLifetimeSeconds must be positive when set";
       }
     ];
 
@@ -548,15 +532,15 @@ in {
           isSystemUser = true;
           group = "zotero-dataserver";
         };
-        zotero-auth = {
+        zotero-portal = {
           isSystemUser = true;
-          group = "zotero-auth";
+          group = "zotero-portal";
         };
-        caddy.extraGroups = ["zotero-auth"];
+        caddy.extraGroups = ["zotero-portal"];
       };
       groups = {
         zotero-dataserver = {};
-        zotero-auth = {};
+        zotero-portal = {};
       };
     };
 
@@ -592,7 +576,7 @@ in {
             };
           }
           {
-            name = "zotero-auth";
+            name = "zotero-portal";
             ensurePermissions = {
               "zotero_www.*" = "ALL PRIVILEGES";
             };
@@ -658,17 +642,9 @@ in {
                 file_server
               }
 
-              ${
-              if cfg.auth.enable
-              then ''
-                handle {
-                  reverse_proxy unix//run/zotero-auth/zotero-auth.sock
-                }
-              ''
-              else ''
-                respond 404
-              ''
-            }
+              handle {
+                reverse_proxy unix//run/zotero-portal/zotero-portal.sock
+              }
             }
           '';
         };
@@ -676,38 +652,32 @@ in {
     };
 
     environment.etc = {
-      "zotero-dataserver/auth.toml".source = toml.generate "zotero-auth.toml" (
+      "zotero-dataserver/portal.toml".source = toml.generate "zotero-portal.toml" (
         {
           server = {
-            socket = "/run/zotero-auth/zotero-auth.sock";
+            socket = "/run/zotero-portal/zotero-portal.sock";
             base_uri = cfg.virtualHost;
           };
           database = {
             socket = toString config.services.mysql.settings.mysqld.socket;
-            user = "zotero-auth";
+            user = "zotero-portal";
             name = "zotero_www";
-            max_connections = cfg.auth.databaseMaxConnections;
+            max_connections = cfg.portal.databaseMaxConnections;
           };
           oidc = {
-            issuer =
-              if cfg.auth.issuer == null
-              then ""
-              else cfg.auth.issuer;
-            client_id =
-              if cfg.auth.clientId == null
-              then ""
-              else cfg.auth.clientId;
-            scopes = cfg.auth.scopes;
+            issuer = cfg.portal.issuer;
+            client_id = cfg.portal.clientId;
+            scopes = cfg.portal.scopes;
           };
           identity = {
-            username_claim = cfg.auth.usernameClaim;
-            real_name_claim = cfg.auth.realNameClaim;
-            require_verified_email = cfg.auth.requireVerifiedEmail;
+            username_claim = cfg.portal.usernameClaim;
+            real_name_claim = cfg.portal.realNameClaim;
+            require_verified_email = cfg.portal.requireVerifiedEmail;
           };
           dataserver.url = publicApiBaseUri;
         }
-        // optionalAttrs (cfg.auth.browserSessionLifetimeSeconds != null) {
-          browser_session_lifetime_seconds = cfg.auth.browserSessionLifetimeSeconds;
+        // optionalAttrs (cfg.portal.browserSessionLifetimeSeconds != null) {
+          browser_session_lifetime_seconds = cfg.portal.browserSessionLifetimeSeconds;
         }
       );
       "zotero-dataserver/attachment-proxy.json".source = json.generate "attachment-proxy.json" (cfg.attachment-proxy.settings
@@ -782,7 +752,7 @@ in {
         '';
       };
 
-      zotero-auth-migrate = {
+      zotero-portal-migrate = {
         description = "Migrate the Zotero website compatibility database";
         wants = ["mysql.service"];
         after = ["mysql.service"];
@@ -791,32 +761,28 @@ in {
           // {
             Type = "oneshot";
             RemainAfterExit = true;
-            User = "zotero-auth";
-            Group = "zotero-auth";
-            ExecStart = "${getExe cfg.auth.package} --config /etc/zotero-dataserver/auth.toml --migrate-only";
+            User = "zotero-portal";
+            Group = "zotero-portal";
+            ExecStart = "${getExe cfg.portal.package} --config /etc/zotero-dataserver/portal.toml --migrate-only";
           };
       };
 
-      zotero-auth = mkIf cfg.auth.enable {
-        description = "OIDC login portal for Zotero Dataserver";
+      zotero-portal = {
+        description = "Zotero local web portal";
         wantedBy = ["multi-user.target"];
-        wants = [credentialUnit "zotero-auth-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
-        after = [credentialUnit "zotero-auth-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
+        wants = [credentialUnit "zotero-portal-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
+        after = [credentialUnit "zotero-portal-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
         serviceConfig =
           restartAlways
           // {
-            User = "zotero-auth";
-            Group = "zotero-auth";
-            RuntimeDirectory = "zotero-auth";
+            User = "zotero-portal";
+            Group = "zotero-portal";
+            RuntimeDirectory = "zotero-portal";
             RuntimeDirectoryMode = "0750";
             UMask = "0007";
-            ExecStart = "${getExe cfg.auth.package} --config /etc/zotero-dataserver/auth.toml";
+            ExecStart = "${getExe cfg.portal.package} --config /etc/zotero-dataserver/portal.toml";
             LoadCredential = [
-              "oidc-client-secret:${
-                if cfg.auth.clientSecretFile == null
-                then "/dev/null"
-                else cfg.auth.clientSecretFile
-              }"
+              "oidc-client-secret:${cfg.portal.clientSecretFile}"
               "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
             ];
           };
@@ -848,8 +814,8 @@ in {
 
       zotero-dataserver-schema = {
         description = "Update Zotero Dataserver's metadata schema";
-        wants = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-auth-migrate.service"];
-        after = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-auth-migrate.service"];
+        wants = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-portal-migrate.service"];
+        after = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-portal-migrate.service"];
         serviceConfig =
           restartOnFailure
           // {

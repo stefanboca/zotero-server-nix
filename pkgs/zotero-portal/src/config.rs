@@ -103,12 +103,12 @@ mod tests {
         let config: Config = toml::from_str(
             r#"
                 [server]
-                socket = "/run/zotero-auth/zotero-auth.sock"
+                socket = "/run/zotero-portal/zotero-portal.sock"
                 base_uri = "zotero.example.com"
 
                 [database]
                 socket = "/run/mysqld/mysqld.sock"
-                user = "zotero-auth"
+                user = "zotero-portal"
                 name = "zotero_www"
                 max_connections = 10
 
@@ -143,12 +143,12 @@ mod tests {
                 browser_session_lifetime_seconds = 0
 
                 [server]
-                socket = "/run/zotero-auth/zotero-auth.sock"
+                socket = "/run/zotero-portal/zotero-portal.sock"
                 base_uri = "zotero.example.com"
 
                 [database]
                 socket = "/run/mysqld/mysqld.sock"
-                user = "zotero-auth"
+                user = "zotero-portal"
                 name = "zotero_www"
                 max_connections = 10
 

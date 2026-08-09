@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
-use zotero_auth::{Config, migrate, serve, serve_development};
+use zotero_portal::{Config, migrate, serve, serve_development};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

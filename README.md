@@ -2,7 +2,7 @@
 
 This flake provides a NixOS module for a private Zotero server. The module
 starts Zotero Dataserver and its required local services. It also starts an S3
-file store and an optional OIDC login portal.
+file store and an OIDC-authenticated local web portal.
 
 Upstream does not support private Dataserver installations. Test client and
 server updates before you deploy them.
@@ -14,6 +14,7 @@ The module starts these services:
 - Zotero Dataserver
 - MariaDB, Redis, and Memcached
 - VersityGW for S3 file storage
+- zotero-portal for OIDC login, accounts, groups, and settings
 - attachment-proxy
 - stream-server for desktop notifications
 - translation-server
@@ -68,11 +69,10 @@ deployment.
 
 ## OIDC login
 
-Enable the OIDC portal if you do not have the Zotero website:
+Configure the always-enabled local portal:
 
 ```nix
-services.zotero-dataserver.auth = {
-  enable = true;
+services.zotero-dataserver.portal = {
   issuer = "https://auth.example.com";
   clientId = "zotero";
   clientSecretFile = config.sops.secrets.zotero-oidc-client-secret.path;
@@ -92,7 +92,7 @@ session for 30 days by default. A returning authenticated browser skips the
 portal button and starts a fresh OIDC authorization-code flow, allowing the
 provider's own SSO session to complete login without another click while still
 refreshing profile and authorization claims. Set
-`auth.browserSessionLifetimeSeconds` to override the lifetime. The NixOS option
+`portal.browserSessionLifetimeSeconds` to override the lifetime. The NixOS option
 is `null` by default, so the generated configuration leaves the service's
 30-day application default in effect.
 
@@ -167,7 +167,7 @@ identity_providers:
 
 Authelia must supply `email`, `email_verified`, `preferred_username`, and
 `name`. The portal rejects an unverified email by default. Set
-`auth.requireVerifiedEmail = false` only if the provider cannot supply the
+`portal.requireVerifiedEmail = false` only if the provider cannot supply the
 verification claim.
 
 See the [Authelia client
@@ -383,12 +383,12 @@ services.zotero-dataserver.storage = {
 Create the configured buckets in the external service. The managed backend
 creates them automatically.
 
-## Auth UI development
+## Portal UI development
 
-Run the Topcoat development server from the auth package directory:
+Run the Topcoat development server from the portal package directory:
 
 ```console
-cd pkgs/zotero-auth
+cd pkgs/zotero-portal
 nix develop ../.. -c topcoat dev
 ```
 

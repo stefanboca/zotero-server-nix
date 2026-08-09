@@ -52,7 +52,7 @@
           (self.packages.${system})
           versitygw
           zotero-attachment-proxy
-          zotero-auth
+          zotero-portal
           zotero-citeproc-js-server
           zotero-dataserver
           zotero-stream-server
