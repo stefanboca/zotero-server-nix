@@ -473,7 +473,7 @@ in {
       settings = {
         dev = settingOption bool false "Expose detailed server errors intended for development.";
         logLevel = settingOption str "info" "Streaming-server log level.";
-        httpPort = settingOption port 8080 "Local streaming-server listen port.";
+        httpPort = settingOption port 8089 "Local streaming-server listen port.";
         statusInterval = settingOption int 0 "Seconds between streaming-server status reports; zero disables them.";
         keepaliveInterval = settingOption int 25 "Seconds between WebSocket keepalive pings.";
         retryTime = settingOption int 10 "Seconds clients are asked to wait before reconnecting.";
