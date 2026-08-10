@@ -1,6 +1,7 @@
 {
   lib,
   rustPlatform,
+  stdenv,
   tailwindcss_4,
   topcoat-cli,
   zotero-web-library,
@@ -18,15 +19,13 @@ rustPlatform.buildRustPackage {
     ZOTERO_WEB_LIBRARY = zotero-web-library;
   };
 
-  # Topcoat's asset IDs include the build output path. Preserve and install
-  # the exact executable that the Topcoat bundler scanned.
+  # Scan the artifact built by buildRustPackage instead of making Topcoat run
+  # a second Cargo build.
   postBuild = ''
-    topcoat asset bundle --release --bin zotero-portal --out target/assets
-    cp target/release/zotero-portal target/zotero-portal-with-assets
+    topcoat asset bundle --artifact "target/${stdenv.targetPlatform.rust.cargoShortTarget}/$cargoBuildType/zotero-portal"
   '';
 
   postInstall = ''
-    install -m755 target/zotero-portal-with-assets $out/bin/zotero-portal
     mkdir -p $out/bin/assets
     cp -r target/assets/. $out/bin/assets/
   '';
