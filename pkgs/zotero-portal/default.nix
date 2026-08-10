@@ -28,6 +28,7 @@ rustPlatform.buildRustPackage {
   postInstall = ''
     mkdir -p $out/bin/assets
     cp -r target/assets/. $out/bin/assets/
+    install -Dm644 ${zotero-web-library}/share/zotero-web-library/static/icons/32/z.svg $out/share/zotero-portal/z.svg
   '';
 
   meta = {
