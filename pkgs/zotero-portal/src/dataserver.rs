@@ -405,9 +405,7 @@ impl Dataserver {
     pub async fn web_library_api_key(&self, user_id: UserId) -> anyhow::Result<String> {
         let keys = self.api_keys(user_id).await?;
         if let Some(key) = keys.iter().find(|key| {
-            key.user_id == user_id
-                && key.name == WEB_LIBRARY_KEY_NAME
-                && key.is_web_library_key()
+            key.user_id == user_id && key.name == WEB_LIBRARY_KEY_NAME && key.is_web_library_key()
         }) {
             return Ok(key.key.clone());
         }

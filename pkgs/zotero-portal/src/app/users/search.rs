@@ -35,10 +35,22 @@ async fn search_results(candidates: &[UserSummary]) -> Result {
                     for candidate in candidates {
                         let option_id = format!("member-option-{}", candidate.username);
                         <li>
-                            <button class="w-full px-2 py-3 text-left hover:bg-stone-100 focus:bg-stone-100 aria-selected:bg-stone-100 dark:hover:bg-stone-900 dark:focus:bg-stone-900 dark:aria-selected:bg-stone-900" id=(option_id) type="button" role="option" aria-selected="false" data-member-option="" data-username=(candidate.username.as_str())>
+                            <button
+                                class="w-full px-2 py-3 text-left hover:bg-stone-100 focus:bg-stone-100 aria-selected:bg-stone-100 dark:hover:bg-stone-900 dark:focus:bg-stone-900 dark:aria-selected:bg-stone-900"
+                                id=(option_id)
+                                type="button"
+                                role="option"
+                                aria-selected="false"
+                                data-member-option=""
+                                data-username=(candidate.username.as_str())
+                            >
                                 <p class="font-medium">(candidate.display_name())</p>
-                                <p class="break-words text-sm text-stone-600 dark:text-stone-400">
-                                    username_label(username: candidate.username.as_str()) " · " (candidate.email.as_str())
+                                <p
+                                    class="break-words text-sm text-stone-600 dark:text-stone-400"
+                                >
+                                    username_label(username: candidate.username.as_str())
+                                    " · "
+                                    (candidate.email.as_str())
                                 </p>
                             </button>
                         </li>

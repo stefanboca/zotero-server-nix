@@ -56,7 +56,8 @@ async fn action_response(
 ) -> Result {
     if headers(cx).get("x-zotero-in-place").is_some() || request_confirmed(cx) {
         let outcome = HeaderValue::try_from(notice)?;
-        return view! { cx =>
+        return view! {
+            cx =>
             (status)
             ((HeaderName::from_static("x-zotero-outcome"), outcome))
             if !status.is_success() {
@@ -65,7 +66,8 @@ async fn action_response(
         };
     }
     let location = action_location(group_id, notice, member, role, manage)?;
-    view! { cx =>
+    view! {
+        cx =>
         (StatusCode::SEE_OTHER)
         ((header::LOCATION, location))
     }

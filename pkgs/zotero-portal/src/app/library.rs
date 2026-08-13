@@ -44,11 +44,16 @@ async fn render_web_library_document(cx: &Cx, user: &store::UserSummary) -> Resu
         .await?;
     let config = web_library_config(user, access)?;
 
-    view! { cx =>
+    view! {
+        cx =>
         <main class="h-full w-full">
             <div class="h-full min-w-0 flex-1" id="zotero-web-library"></div>
-            <script type="application/json" id="zotero-web-library-config">(config)</script>
-            <script type="application/json" id="zotero-web-library-menu-config">(Unescaped::new_unchecked(r#"{"desktop":[],"mobile":[]}"#))</script>
+            <script type="application/json" id="zotero-web-library-config">
+                (config)
+            </script>
+            <script type="application/json" id="zotero-web-library-menu-config">
+                (Unescaped::new_unchecked(r#"{"desktop":[],"mobile":[]}"#))
+            </script>
             <script src="/static/web-library/zotero-web-library.js"></script>
         </main>
     }
@@ -114,7 +119,9 @@ fn web_library_config(
             || streaming_url.query().is_some()
             || streaming_url.fragment().is_some()
         {
-            bail!("the public Zotero streaming URL must be a WebSocket URL without credentials or a query");
+            bail!(
+                "the public Zotero streaming URL must be a WebSocket URL without credentials or a query"
+            );
         }
     }
 
@@ -194,9 +201,7 @@ mod tests {
         assert!(config.contains(r#""portalMode":true"#));
         assert!(config.contains(r#""readOnly":false"#));
         assert!(config.contains(r#""streamingApiUrl":"wss://zotero.example.test/stream/""#));
-        assert!(config.contains(
-            r#""stylesSourceUrl":"/static/web-library/styles/styles.json""#
-        ));
+        assert!(config.contains(r#""stylesSourceUrl":"/static/web-library/styles/styles.json""#));
     }
 
     #[test]

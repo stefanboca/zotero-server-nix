@@ -58,7 +58,10 @@ async fn rename_group(cx: &Cx, Form(input): Form<RenameGroup>) -> Result {
         if !succeeded {
             return view! { (StatusCode::BAD_GATEWAY) };
         }
-        return view! { (StatusCode::NO_CONTENT) ((header::LOCATION, location)) };
+        return view! {
+            (StatusCode::NO_CONTENT)
+            ((header::LOCATION, location))
+        };
     }
     view! {
         (StatusCode::SEE_OTHER)

@@ -6,7 +6,7 @@ use topcoat::{
 
 use crate::app::{is_web_library_path, library::web_library_document};
 
-use super::{LibrarySlug, super::current_group};
+use super::{super::current_group, LibrarySlug};
 
 topcoat::router::segment!(kind = CatchAll, rename = "path");
 

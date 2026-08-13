@@ -1,4 +1,3 @@
-mod account;
 mod api;
 mod auth;
 mod export;
@@ -264,36 +263,91 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>"Zotero"</title>
                 <link rel="icon" href="/static/web-library/icons/32/z.svg">
-                <link rel="stylesheet" href=(topcoat::asset::asset!("target/topcoat/tailwind.css"))>
-                <link rel="stylesheet" href=(topcoat::asset::asset!("src/app/feedback.css"))>
+                <link
+                    rel="stylesheet"
+                    href=(topcoat::asset::asset!("target/topcoat/tailwind.css"))
+                >
+                <link
+                    rel="stylesheet"
+                    href=(topcoat::asset::asset!("src/app/feedback.css"))
+                >
                 if web_library_active {
-                    <link rel="stylesheet" href="/static/web-library/zotero-web-library.css">
+                    <link
+                        rel="stylesheet"
+                        href="/static/web-library/zotero-web-library.css"
+                    >
                 }
                 topcoat::runtime::script()
                 topcoat::dev::script()
             </head>
-            <body class="min-h-screen bg-white font-sans text-stone-950 dark:bg-stone-950 dark:text-stone-50">
+            <body
+                class="min-h-screen bg-white font-sans text-stone-950 dark:bg-stone-950 dark:text-stone-50"
+            >
                 if !bare_layout {
                     <header class="border-b border-stone-200 dark:border-stone-800">
-                        <nav class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6" aria-label="Primary navigation">
-                            <div class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6">
-                                <a class=(if home_active { "border-b-2 border-red-800 pb-1 text-lg font-semibold text-red-800 dark:border-red-400 dark:text-red-400" } else { "border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400" }) href="/" aria-current=(home_active.then_some("page"))>"Zotero"</a>
-                                <a class=(nav_class(groups_active)) href="/groups" aria-current=(groups_active.then_some("page"))>"Groups"</a>
-                                <a class=(nav_class(account_active)) href="/account" aria-current=(account_active.then_some("page"))>"Account"</a>
-                                <a class=(nav_class(settings_active)) href="/settings" aria-current=(settings_active.then_some("page"))>"Settings"</a>
+                        <nav
+                            class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6"
+                            aria-label="Primary navigation"
+                        >
+                            <div
+                                class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6"
+                            >
+                                <a
+                                    class=(if home_active {
+                                        "border-b-2 border-red-800 pb-1 text-lg font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
+                                    } else {
+                                        "border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400"
+                                    })
+                                    href="/"
+                                    aria-current=(home_active.then_some("page"))
+                                >
+                                    "Zotero"
+                                </a>
+                                <a
+                                    class=(nav_class(groups_active))
+                                    href="/groups"
+                                    aria-current=(groups_active.then_some("page"))
+                                >
+                                    "Groups"
+                                </a>
+                                <a
+                                    class=(nav_class(account_active))
+                                    href="/account"
+                                    aria-current=(account_active.then_some("page"))
+                                >
+                                    "Account"
+                                </a>
+                                <a
+                                    class=(nav_class(settings_active))
+                                    href="/settings"
+                                    aria-current=(settings_active.then_some("page"))
+                                >
+                                    "Settings"
+                                </a>
                             </div>
-                            <div class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto">
+                            <div
+                                class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto"
+                            >
                                 if let Some(user) = &navigation_user {
-                                    <span class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400">
-                                        "Signed in as " (user.display_name())
+                                    <span
+                                        class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400"
+                                    >
+                                        "Signed in as "
+                                        (user.display_name())
                                     </span>
                                     <form method="post" action="/user/logout">
-                                        <button class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" type="submit">
+                                        <button
+                                            class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
+                                            type="submit"
+                                        >
                                             "Log out"
                                         </button>
                                     </form>
                                 } else {
-                                    <a class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" href="/user/login">
+                                    <a
+                                        class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
+                                        href="/user/login"
+                                    >
                                         "Sign in"
                                     </a>
                                 }
@@ -401,13 +455,21 @@ async fn friendly_error_page(
     title: &str,
     message: &str,
 ) -> Result<topcoat::view::View> {
-    view! { cx =>
+    view! {
+        cx =>
         (status)
         <main class="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
-            <p class="text-sm font-semibold text-red-800 dark:text-red-400">(status.as_u16())</p>
+            <p class="text-sm font-semibold text-red-800 dark:text-red-400">
+                (status.as_u16())
+            </p>
             <h1 class="mt-2 text-2xl font-semibold">(title)</h1>
-            <p class="mt-4 max-w-2xl leading-7 text-stone-600 dark:text-stone-400">(message)</p>
-            <a class="mt-6 inline-block border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900" href="/">
+            <p class="mt-4 max-w-2xl leading-7 text-stone-600 dark:text-stone-400">
+                (message)
+            </p>
+            <a
+                class="mt-6 inline-block border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
+                href="/"
+            >
                 "Return to Zotero"
             </a>
         </main>
@@ -425,9 +487,7 @@ pub(crate) async fn signed_in_user(cx: &Cx) -> Result<store::UserSummary> {
 
 #[component]
 pub(crate) async fn username_label(username: &str) -> Result {
-    view! {
-        <span class="font-mono font-semibold">(username)</span>
-    }
+    view! { <span class="font-mono font-semibold">(username)</span> }
 }
 
 #[component]
@@ -440,18 +500,50 @@ pub(crate) async fn toast_script() -> Result {
 #[component]
 pub(crate) async fn confirmation_dialog() -> Result {
     view! {
-        <dialog class="fixed inset-0 m-auto max-h-[calc(100vh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg overflow-y-auto border border-stone-300 bg-white p-0 text-stone-950 shadow-xl backdrop:bg-stone-950/60 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-50" data-confirm-dialog="">
+        <dialog
+            class="fixed inset-0 m-auto max-h-[calc(100vh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg overflow-y-auto border border-stone-300 bg-white p-0 text-stone-950 shadow-xl backdrop:bg-stone-950/60 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-50"
+            data-confirm-dialog=""
+        >
             <div class="p-6">
-                <h2 class="text-xl font-semibold" data-confirm-title="">"Confirm action"</h2>
-                <p class="mt-3 leading-7 text-stone-600 dark:text-stone-400" data-confirm-message=""></p>
+                <h2 class="text-xl font-semibold" data-confirm-title="">
+                    "Confirm action"
+                </h2>
+                <p
+                    class="mt-3 leading-7 text-stone-600 dark:text-stone-400"
+                    data-confirm-message=""
+                ></p>
                 <div class="mt-5" data-confirm-input-container="" hidden="hidden">
-                    <label class="block font-medium" data-confirm-input-label="" for="portal-confirmation"></label>
-                    <input class="mt-2 w-full border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950" id="portal-confirmation" autocomplete="off" data-confirm-input="">
-                    <p class="mt-2 text-sm text-stone-600 dark:text-stone-400" data-confirm-input-help=""></p>
+                    <label
+                        class="block font-medium"
+                        data-confirm-input-label=""
+                        for="portal-confirmation"
+                    ></label>
+                    <input
+                        class="mt-2 w-full border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950"
+                        id="portal-confirmation"
+                        autocomplete="off"
+                        data-confirm-input=""
+                    >
+                    <p
+                        class="mt-2 text-sm text-stone-600 dark:text-stone-400"
+                        data-confirm-input-help=""
+                    ></p>
                 </div>
                 <div class="mt-6 flex flex-wrap justify-end gap-3">
-                    <button class="border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700 dark:hover:bg-stone-800" type="button" data-confirm-submit="">"Confirm"</button>
-                    <button class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700" type="button" data-confirm-cancel="">"Cancel"</button>
+                    <button
+                        class="border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700 dark:hover:bg-stone-800"
+                        type="button"
+                        data-confirm-submit=""
+                    >
+                        "Confirm"
+                    </button>
+                    <button
+                        class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700"
+                        type="button"
+                        data-confirm-cancel=""
+                    >
+                        "Cancel"
+                    </button>
                 </div>
             </div>
         </dialog>
@@ -532,7 +624,10 @@ mod tests {
                 .await;
             assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
             assert_eq!(
-                response.headers().get("location").and_then(|v| v.to_str().ok()),
+                response
+                    .headers()
+                    .get("location")
+                    .and_then(|v| v.to_str().ok()),
                 Some(expected_location.as_str()),
                 "{path}"
             );

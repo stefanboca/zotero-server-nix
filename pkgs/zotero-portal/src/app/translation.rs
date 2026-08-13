@@ -28,12 +28,7 @@ pub(super) async fn proxy_translation(
         .to_vec();
     let response = app_context::<AppState>(cx)
         .backend
-        .translate(
-            endpoint,
-            query.as_deref(),
-            content_type.as_deref(),
-            body,
-        )
+        .translate(endpoint, query.as_deref(), content_type.as_deref(), body)
         .await?;
 
     let mut builder = Response::builder().status(StatusCode::from_u16(response.status)?);

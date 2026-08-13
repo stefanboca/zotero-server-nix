@@ -75,7 +75,9 @@ async fn login(cx: &Cx) -> Result {
         format!("/user/login?{query}")
     };
     view! {
-        <main class="mx-auto flex min-h-screen w-full max-w-lg items-center px-4 py-12 sm:px-6">
+        <main
+            class="mx-auto flex min-h-screen w-full max-w-lg items-center px-4 py-12 sm:px-6"
+        >
             <section class="w-full">
                 <h1 class="text-2xl font-semibold">"Sign in to Zotero"</h1>
                 <form class="mt-5" method="post" action=(action)>

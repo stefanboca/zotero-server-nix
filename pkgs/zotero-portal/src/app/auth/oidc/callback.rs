@@ -11,12 +11,7 @@ use topcoat::{
     view::view,
 };
 
-use crate::{
-    app::AppState,
-    id::UserId,
-    store::OidcProfile,
-    epoch_seconds,
-};
+use crate::{app::AppState, epoch_seconds, id::UserId, store::OidcProfile};
 
 #[query_params(error = bad_request)]
 struct CallbackQuery {
@@ -101,7 +96,8 @@ async fn callback_inner(cx: &Cx) -> Result {
         success_page().await
     } else {
         let location = HeaderValue::try_from(flow.return_path)?;
-        view! { cx =>
+        view! {
+            cx =>
             (StatusCode::SEE_OTHER)
             ((header::LOCATION, location))
         }

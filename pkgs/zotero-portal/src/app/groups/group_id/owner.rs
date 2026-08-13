@@ -63,7 +63,10 @@ async fn transfer_owner(cx: &Cx, Form(input): Form<ConfirmTransfer>) -> Result {
         .finish();
     let location = HeaderValue::try_from(format!("/groups/{}?{query}", group.id))?;
     if request_confirmed(cx) {
-        return view! { (StatusCode::NO_CONTENT) ((header::LOCATION, location)) };
+        return view! {
+            (StatusCode::NO_CONTENT)
+            ((header::LOCATION, location))
+        };
     }
     view! {
         (StatusCode::SEE_OTHER)

@@ -18,7 +18,10 @@ struct CreateGroup {
 #[page]
 async fn new_group(cx: &Cx) -> Result {
     authenticated_user(cx).await?;
-    view! { (StatusCode::TEMPORARY_REDIRECT) ((header::LOCATION, HeaderValue::from_static("/groups?dialog=new"))) }
+    view! {
+        (StatusCode::TEMPORARY_REDIRECT)
+        ((header::LOCATION, HeaderValue::from_static("/groups?dialog=new")))
+    }
 }
 
 #[page(POST)]
@@ -52,7 +55,10 @@ async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result {
         if !succeeded {
             return view! { (StatusCode::BAD_GATEWAY) };
         }
-        return view! { (StatusCode::NO_CONTENT) ((header::LOCATION, location)) };
+        return view! {
+            (StatusCode::NO_CONTENT)
+            ((header::LOCATION, location))
+        };
     }
     view! {
         (StatusCode::SEE_OTHER)

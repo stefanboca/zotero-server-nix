@@ -5,7 +5,7 @@ in {
   # keep-sorted start
   inherit topcoat-cli zotero-web-library;
   versitygw = pkgs.callPackage ./versitygw {};
-  zotero = pkgs.callPackage ./zotero {zotero = pkgs.zotero;};
+  zotero = pkgs.callPackage ./zotero {inherit (pkgs) zotero;};
   zotero-attachment-proxy = pkgs.callPackage ./zotero-attachment-proxy {};
   zotero-citeproc-js-server = pkgs.callPackage ./zotero-citeproc-js-server {};
   zotero-dataserver = pkgs.callPackage ./zotero-dataserver {};

@@ -47,7 +47,10 @@ async fn delete_group(cx: &Cx, Form(input): Form<DeleteGroup>) -> Result {
     };
     let location = groups_notice_location(notice, &group.name)?;
     if request_confirmed(cx) {
-        return view! { (StatusCode::NO_CONTENT) ((header::LOCATION, location)) };
+        return view! {
+            (StatusCode::NO_CONTENT)
+            ((header::LOCATION, location))
+        };
     }
     view! {
         (StatusCode::SEE_OTHER)
