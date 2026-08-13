@@ -13,11 +13,13 @@ use topcoat::{
 };
 
 use crate::{
-    app::users::member_search_shard,
-    app::{AppState, authenticated_user, confirmation_dialog, toast_script, username_label},
+    app::{
+        authenticated_user, confirmation_dialog, toast_script, username_label,
+        users::member_search_shard,
+    },
+    backend::{Backend, UserSummary},
     dataserver::{Group, GroupRole},
     id::UserId,
-    store::UserSummary,
 };
 
 #[path_param(error = not_found)]
@@ -146,8 +148,8 @@ pub(super) async fn current_group_by_id(
     group_id: u64,
 ) -> Result<(UserId, Group, GroupRole)> {
     let user_id = authenticated_user(cx).await?;
-    let app = app_context::<AppState>(cx);
-    let group = app.backend.group(group_id).await?.ok_or_else(not_found)?;
+    let backend = app_context::<Backend>(cx);
+    let group = backend.group(group_id).await?.ok_or_else(not_found)?;
     let role = group.role(user_id).ok_or_else(not_found)?;
     Ok((user_id, group, role))
 }
@@ -178,9 +180,8 @@ async fn update_role_runtime(
     if requested_role != expected_role {
         return Ok(failed());
     }
-    let app = app_context::<AppState>(cx);
-    if let Err(error) = app
-        .backend
+    let backend = app_context::<Backend>(cx);
+    if let Err(error) = backend
         .set_group_user(group.id, user_id, requested_role)
         .await
     {
@@ -213,15 +214,14 @@ async fn add_member_runtime(
     if !actor_role.can_manage() {
         return Ok(failed());
     }
-    let app = app_context::<AppState>(cx);
-    let Some(target) = app.backend.user_by_identifier(identifier).await? else {
+    let backend = app_context::<Backend>(cx);
+    let Some(target) = backend.user_by_identifier(identifier).await? else {
         return Ok(Err("member-not-found".to_owned()));
     };
     if group.role(target.user_id).is_some() {
         return Ok(Err("already-member".to_owned()));
     }
-    if let Err(error) = app
-        .backend
+    if let Err(error) = backend
         .set_group_user(group.id, target.user_id, requested_role)
         .await
     {
@@ -244,8 +244,7 @@ async fn members_shard(cx: &Cx, group_id: f64, refresh: bool) -> Result {
     let _ = refresh;
     let group_id = GroupId::from_runtime(group_id).ok_or_else(not_found)?;
     let (actor_id, group, actor_role) = current_group_by_id(cx, group_id.0).await?;
-    let users = app_context::<AppState>(cx)
-        .backend
+    let users = app_context::<Backend>(cx)
         .users_by_ids(&group.user_ids())
         .await?;
     view! {

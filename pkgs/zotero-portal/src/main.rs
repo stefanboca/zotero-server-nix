@@ -1,24 +1,23 @@
 use std::{env, path::PathBuf};
 
-use anyhow::{Context as _, anyhow, bail};
-use zotero_portal::{Config, migrate, serve, serve_development};
+use anyhow::{anyhow, bail};
+use zotero_portal::{Config, Secrets, migrate, serve};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if env::var_os("TOPCOAT_DEV_URL").is_some() {
-        return serve_development()
-            .await
-            .context("UI development server failed");
-    }
-
-    let (config_path, migrate_only) = arguments()?;
-    let config = Config::from_file(&config_path)?;
-
-    if migrate_only {
-        migrate(&config).await
+    let (config, secrets) = if env::var_os("TOPCOAT_DEV_URL").is_some() {
+        (Config::dev(), Secrets::dev())
     } else {
-        serve(config).await
-    }
+        let (config_path, migrate_only) = arguments()?;
+        let config = Config::from_file(&config_path)?;
+
+        if migrate_only {
+            return migrate(&config).await;
+        }
+        (config, Secrets::from_systemd()?)
+    };
+
+    serve(config, secrets).await
 }
 
 fn arguments() -> anyhow::Result<(PathBuf, bool)> {

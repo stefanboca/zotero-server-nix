@@ -3,13 +3,14 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 use topcoat::runtime::{BoolSurrogate, Surrogate, Surrogated};
+use url::Url;
 
 use crate::{config::Config, hex_string, id::UserId, oidc::value_string};
 
 pub struct Dataserver {
-    http_client: reqwest::Client,
+    client: reqwest::Client,
     super_password: String,
-    url: String,
+    url: Url,
 }
 
 const WEB_LIBRARY_KEY_NAME: &str = "Zotero Web Library (this portal)";
@@ -285,20 +286,21 @@ impl From<GroupEnvelope> for Group {
 
 impl Dataserver {
     pub fn new(config: &Config, super_password: String) -> anyhow::Result<Self> {
-        let http_client = reqwest::ClientBuilder::new()
+        // TODO: why are we not sharing a client with backend?
+        let client = reqwest::ClientBuilder::new()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .context("building Dataserver HTTP client")?;
         Ok(Self {
-            http_client,
+            client,
             super_password,
-            url: config.dataserver.url.trim_end_matches('/').to_owned(),
+            url: config.dataserver_url.clone(),
         })
     }
 
     pub async fn login_session_info(&self, token: &str) -> anyhow::Result<LoginSessionInfo> {
         let response = self
-            .http_client
+            .client
             .get(format!("{}/keys/sessions/{token}/info", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
@@ -334,7 +336,7 @@ impl Dataserver {
                 "groups": {"all": {"library": true, "write": true}}
             })
         });
-        self.http_client
+        self.client
             .post(format!("{}/keys/sessions/complete", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .json(&json!({"sessionToken": token, "userID": user_id, "access": access}))
@@ -347,7 +349,7 @@ impl Dataserver {
     }
 
     pub async fn set_unlimited_storage(&self, user_id: UserId) -> anyhow::Result<()> {
-        self.http_client
+        self.client
             .post(format!("{}/users/{user_id}/storageadmin", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .form(&[("quota", "unlimited"), ("expiration", "0")])
@@ -361,7 +363,7 @@ impl Dataserver {
 
     pub async fn storage_usage(&self, user_id: UserId) -> anyhow::Result<StorageUsage> {
         let response = self
-            .http_client
+            .client
             .get(format!("{}/users/{user_id}/storageadmin", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
@@ -383,7 +385,7 @@ impl Dataserver {
 
     async fn api_keys(&self, user_id: UserId) -> anyhow::Result<Vec<ApiKey>> {
         let response = self
-            .http_client
+            .client
             .get(format!("{}/users/{user_id}/keys", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Zotero-API-Version", "3")
@@ -418,7 +420,7 @@ impl Dataserver {
         }
 
         let response = self
-            .http_client
+            .client
             .post(format!("{}/users/{user_id}/keys", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Zotero-API-Version", "3")
@@ -445,7 +447,7 @@ impl Dataserver {
     }
 
     async fn delete_api_key(&self, key: &str) -> anyhow::Result<()> {
-        self.http_client
+        self.client
             .delete(format!("{}/keys/{key}", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Zotero-API-Version", "3")
@@ -503,7 +505,7 @@ impl Dataserver {
 
     pub async fn groups_for_user(&self, user_id: UserId) -> anyhow::Result<Vec<Group>> {
         let response = self
-            .http_client
+            .client
             .get(format!("{}/users/{user_id}/groups", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .query(&[("limit", "100")])
@@ -521,7 +523,7 @@ impl Dataserver {
 
     pub async fn group(&self, group_id: u64) -> anyhow::Result<Option<Group>> {
         let response = self
-            .http_client
+            .client
             .get(format!("{}/groups/{group_id}", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
@@ -543,7 +545,7 @@ impl Dataserver {
             r#"<group owner="{user_id}" name="{name}" type="Private" libraryEditing="members" libraryReading="members" fileEditing="members" hasImage="0"><description></description><url></url></group>"#
         );
         let response = self
-            .http_client
+            .client
             .post(format!("{}/groups", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Content-Type", "text/xml")
@@ -575,7 +577,7 @@ impl Dataserver {
         role: GroupRole,
     ) -> anyhow::Result<()> {
         let body = format!(r#"<user id="{user_id}" role="{role}"/>"#);
-        self.http_client
+        self.client
             .put(format!("{}/groups/{group_id}/users/{user_id}", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Content-Type", "text/xml")
@@ -602,7 +604,7 @@ impl Dataserver {
             xml_escape(&group.description),
             xml_escape(&group.url),
         );
-        self.http_client
+        self.client
             .put(format!("{}/groups/{}", self.url, group.id))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .header("Content-Type", "text/xml")
@@ -616,7 +618,7 @@ impl Dataserver {
     }
 
     pub async fn remove_group_user(&self, group_id: u64, user_id: UserId) -> anyhow::Result<()> {
-        self.http_client
+        self.client
             .delete(format!("{}/groups/{group_id}/users/{user_id}", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .send()
@@ -628,7 +630,7 @@ impl Dataserver {
     }
 
     pub async fn delete_group(&self, group_id: u64) -> anyhow::Result<()> {
-        self.http_client
+        self.client
             .delete(format!("{}/groups/{group_id}", self.url))
             .basic_auth("zotero-portal", Some(&self.super_password))
             .send()

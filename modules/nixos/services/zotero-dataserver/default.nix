@@ -10,7 +10,7 @@
   inherit (lib.modules) mkDefault mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
   inherit (lib.strings) concatMapStrings concatStringsSep hasPrefix optionalString removePrefix removeSuffix replaceStrings;
-  inherit (lib.types) attrsOf bool int lines listOf oneOf path port str nullOr;
+  inherit (lib.types) attrsOf bool int lines listOf oneOf path port str submodule nullOr;
 
   json = pkgs.formats.json {};
   toml = pkgs.formats.toml {};
@@ -88,6 +88,15 @@
   phpStringListAttrs = values: "[${concatStringsSep ", " (mapAttrsToList (name: value: "${phpString name} => ${phpStringList value}") values)}]";
   settingOption = type: default: description:
     mkOption {inherit type default description;};
+  microserviceSettings = name: options:
+    mkOption {
+      type = submodule {
+        freeformType = json.type;
+        inherit options;
+      };
+      default = {};
+      description = "${name} configuration. Undeclared attributes are passed through as JSON.";
+    };
 
   normalizeUri = uri: "${removeSuffix "/" uri}/";
   normalizePath = path: "/${removePrefix "/" (removeSuffix "/" path)}/";
@@ -390,6 +399,11 @@ in {
     };
 
     portal = {
+      enable = mkOption {
+        type = bool;
+        default = true;
+        description = "Whether to run the Zotero web portal and its database migrations.";
+      };
       package = mkPackageOption pkgs "zotero-portal" {};
       issuer = mkOption {
         type = str;
@@ -444,50 +458,14 @@ in {
         apply = normalizeUri;
         description = "Public base URI of the attachment proxy.";
       };
-      settings = {
-        logLevel = mkOption {
-          type = str;
-          default = "info";
-          description = "Attachment proxy log level.";
-        };
-        logFile = mkOption {
-          type = str;
-          default = "";
-          description = "Attachment proxy log file, or standard output when empty.";
-        };
+      settings = microserviceSettings "Attachment proxy" {
         port = settingOption port 3000 "Local attachment-proxy listen port.";
-        zipCacheTime = mkOption {
-          type = int;
-          default = 60;
-          description = "Seconds to retain a downloaded ZIP in the attachment-proxy cache.";
-        };
-        zipMaxFiles = mkOption {
-          type = int;
-          default = 1000;
-          description = "Maximum number of entries accepted in an attachment ZIP; zero disables the limit.";
-        };
-        zipMaxFileSize = mkOption {
-          type = int;
-          default = 128 * 1024 * 1024;
-          description = "Maximum uncompressed ZIP entry size in bytes; zero disables the limit.";
-        };
-        connectionTimeout = mkOption {
-          type = int;
-          default = 30;
-          description = "Client connection inactivity timeout in seconds.";
-        };
       };
     };
     citeproc-js-server = {
       package = mkPackageOption pkgs "zotero-citeproc-js-server" {};
-      settings = {
+      settings = microserviceSettings "Citation server" {
         port = settingOption port 8085 "Local citation-server listen port.";
-        logLevel = settingOption str "info" "Citation-server log level.";
-        engineCacheSize = settingOption int 20 "Maximum number of cached CSL engines.";
-        timings = settingOption bool false "Log citation processing timings.";
-        debug = settingOption bool false "Enable citation-server debugging endpoints and output.";
-        allowCors = settingOption bool false "Allow cross-origin requests directly to citation-server.";
-        userAgent = settingOption str "Zotero Citation Server (https://github.com/zotero/citeproc-js-server)" "User-Agent used when citation-server fetches styles.";
       };
     };
     stream-server = {
@@ -504,41 +482,23 @@ in {
         apply = normalizeUri;
         description = "Public WebSocket URI to use as STREAMING_URL in a self-hosted Zotero client build.";
       };
-      settings = {
-        dev = settingOption bool false "Expose detailed server errors intended for development.";
-        logLevel = settingOption str "info" "Streaming-server log level.";
+      settings = microserviceSettings "Streaming server" {
         httpPort = settingOption port 8089 "Local streaming-server listen port.";
-        statusInterval = settingOption int 0 "Seconds between streaming-server status reports; zero disables them.";
-        keepaliveInterval = settingOption int 25 "Seconds between WebSocket keepalive pings.";
-        retryTime = settingOption int 10 "Seconds clients are asked to wait before reconnecting.";
-        globalTopics = settingOption (listOf str) ["styles" "translators"] "Public topics clients may subscribe to without an API key.";
-        globalTopicsMinDelay = settingOption int (60 * 1000) "Minimum client delay in milliseconds for global-topic notifications.";
-        globalTopicsDelayPeriod = settingOption int (30 * 60 * 1000) "Randomized client-delay window in milliseconds for global-topic notifications.";
-        defaultDelay = settingOption int (3 * 1000) "Default client notification delay in milliseconds.";
-        continuedDelay = settingOption int (30 * 1000) "Client delay in milliseconds for continued notifications.";
-        notContinuedDelay = settingOption int 250 "Client delay in milliseconds when a continued update ends.";
-        rateLimitRequests = settingOption int 10 "Maximum key-validation requests per client during a rate-limit window.";
-        rateLimitWindow = settingOption int 60 "Streaming key-validation rate-limit window in seconds.";
-        statsD.host = settingOption str "" "Optional StatsD host for streaming-server metrics; empty disables metrics.";
+        listenAddress = settingOption str "127.0.0.1" "Streaming-server listen address.";
       };
     };
     tinymce-clean-server = {
       package = mkPackageOption pkgs "zotero-tinymce-clean-server" {};
-      settings = {
+      settings = microserviceSettings "TinyMCE cleaner" {
         log = settingOption bool true "Log TinyMCE cleaner requests.";
         port = settingOption port 16342 "Local TinyMCE cleaner listen port.";
       };
     };
     translation-server = {
       package = mkPackageOption pkgs "zotero-translation-server" {};
-      settings = {
-        blacklistedDomains = settingOption (listOf str) [] "Domains translation-server must not fetch.";
-        deproxifyURLs = settingOption bool false "Try deproxified versions of proxied URLs during web translation.";
-        identifierSearchLambda = settingOption str "" "Optional AWS Lambda function used for free-form identifier searches.";
+      settings = microserviceSettings "Translation server" {
+        host = settingOption str "127.0.0.1" "Translation-server listen address.";
         port = settingOption port 1969 "Local translation-server listen port.";
-        httpMaxResponseSize = settingOption int 10 "Maximum fetched response size in megabytes.";
-        textSearchTimeout = settingOption int 5 "Free-form identifier-search timeout in seconds.";
-        userAgent = settingOption str "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36" "User-Agent used for translation-server web requests.";
         crossrefEmail = settingOption str "" "Optional contact email sent to Crossref REST to use its polite pool.";
       };
     };
@@ -555,27 +515,27 @@ in {
         message = "an external S3 backend requires storage access-key files";
       }
       {
-        assertion = cfg.portal.browserSessionLifetimeSeconds == null || cfg.portal.browserSessionLifetimeSeconds > 0;
+        assertion = !cfg.portal.enable || cfg.portal.browserSessionLifetimeSeconds == null || cfg.portal.browserSessionLifetimeSeconds > 0;
         message = "services.zotero-dataserver.portal.browserSessionLifetimeSeconds must be positive when set";
       }
     ];
 
     users = {
-      users = {
-        zotero-dataserver = {
-          isSystemUser = true;
-          group = "zotero-dataserver";
+      users =
+        {
+          zotero-dataserver = {
+            isSystemUser = true;
+            group = "zotero-dataserver";
+          };
+        }
+        // optionalAttrs cfg.portal.enable {
+          zotero-portal = {
+            isSystemUser = true;
+            group = "zotero-portal";
+          };
+          caddy.extraGroups = ["zotero-portal"];
         };
-        zotero-portal = {
-          isSystemUser = true;
-          group = "zotero-portal";
-        };
-        caddy.extraGroups = ["zotero-portal"];
-      };
-      groups = {
-        zotero-dataserver = {};
-        zotero-portal = {};
-      };
+      groups = {zotero-dataserver = {};} // optionalAttrs cfg.portal.enable {zotero-portal = {};};
     };
 
     services = {
@@ -613,23 +573,24 @@ in {
       mysql = {
         enable = true;
         package = mkDefault pkgs.mariadb;
-        ensureUsers = [
-          {
-            name = "zotero-dataserver";
-            ensurePermissions = {
-              "zotero_ids.*" = "ALL PRIVILEGES";
-              "zotero_master.*" = "ALL PRIVILEGES";
-              "zotero_shard.*" = "ALL PRIVILEGES";
-              "zotero_www.*" = "ALL PRIVILEGES";
-            };
-          }
-          {
+        ensureUsers =
+          [
+            {
+              name = "zotero-dataserver";
+              ensurePermissions = {
+                "zotero_ids.*" = "ALL PRIVILEGES";
+                "zotero_master.*" = "ALL PRIVILEGES";
+                "zotero_shard.*" = "ALL PRIVILEGES";
+                "zotero_www.*" = "ALL PRIVILEGES";
+              };
+            }
+          ]
+          ++ optional cfg.portal.enable {
             name = "zotero-portal";
             ensurePermissions = {
               "zotero_www.*" = "ALL PRIVILEGES";
             };
-          }
-        ];
+          };
         initialDatabases = [
           {
             name = "zotero_master";
@@ -690,93 +651,87 @@ in {
                 file_server
               }
 
+              ${optionalString cfg.portal.enable ''
               handle {
-                reverse_proxy unix//run/zotero-portal/zotero-portal.sock
+              reverse_proxy unix//run/zotero-portal/zotero-portal.sock
               }
+            ''}
             }
           '';
         };
       };
     };
 
-    environment.etc = {
-      "zotero-dataserver/portal.toml".source = toml.generate "zotero-portal.toml" (
-        {
-          server = {
-            socket = "/run/zotero-portal/zotero-portal.sock";
-            base_uri = cfg.virtualHost;
-          };
-          database = {
-            socket = toString config.services.mysql.settings.mysqld.socket;
-            user = "zotero-portal";
-            name = "zotero_www";
-            max_connections = cfg.portal.databaseMaxConnections;
-          };
-          oidc = {
-            issuer = cfg.portal.issuer;
-            client_id = cfg.portal.clientId;
-            scopes = cfg.portal.scopes;
-          };
-          identity = {
-            username_claim = cfg.portal.usernameClaim;
-            real_name_claim = cfg.portal.realNameClaim;
-            require_verified_email = cfg.portal.requireVerifiedEmail;
-          };
-          dataserver.url = publicApiBaseUri;
-          streaming.url = cfg.stream-server.publicUri;
-          translation_server.url = "http://127.0.0.1:${toString cfg.translation-server.settings.port}";
-        }
-        // optionalAttrs (cfg.portal.browserSessionLifetimeSeconds != null) {
-          browser_session_lifetime_seconds = cfg.portal.browserSessionLifetimeSeconds;
-        }
-      );
-      "zotero-dataserver/attachment-proxy.json".source = json.generate "attachment-proxy.json" (cfg.attachment-proxy.settings
-        // {
-          host = "127.0.0.1";
-          tmpDir = "";
-          trustedProxies = ["127.0.0.1"];
-          s3 = {
-            bucket = cfg.storage.bucket;
-            endpoint = cfg.storage.endpoint;
-            forcePathStyle = cfg.storage.forcePathStyle;
-            region = cfg.storage.region;
-          };
-        });
-      "zotero-dataserver/citeproc-js-server.json".source = json.generate "citeproc-js-server-config.json" (cfg.citeproc-js-server.settings
-        // {
-          host = "127.0.0.1";
-          healthCheckFile = "";
-          localesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl-locales";
-          cslPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl";
-          renamedStylesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/renamed-styles.json";
-          cslDependentPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/dependent";
-        });
-      "zotero-dataserver/stream-server.json".source = json.generate "stream-server-config.json" (cfg.stream-server.settings
-        // {
-          hostname = config.networking.hostName;
-          listenAddress = "127.0.0.1";
-          proxyProtocol = false;
-          https = false;
-          trustedProxies = ["127.0.0.1"];
-          apiURL = publicApiBaseUri;
-          apiVersion = 3;
-          apiRequestHeaders = {};
-          redis = {
-            url = "redis://127.0.0.1:${toString config.services.redis.servers.zotero-dataserver.port}";
-            prefix = cfg.php.settings.redisPrefix;
-          };
-        });
-      "zotero-dataserver/translation-server.json".source = json.generate "translation-server-config.json" ((removeAttrs cfg.translation-server.settings ["crossrefEmail"])
-        // {
-          allowedOrigins = [];
-          host = "127.0.0.1";
-          trustProxyHeaders = false;
-          translators = {
-            "CrossrefREST.email" = cfg.translation-server.settings.crossrefEmail;
-          };
-          translatorsDirectory = "./modules/translators";
-        });
-    };
+    environment.etc =
+      optionalAttrs cfg.portal.enable {
+        "zotero-dataserver/portal.toml".source = toml.generate "zotero-portal.toml" (
+          {
+            server = {
+              socket = "/run/zotero-portal/zotero-portal.sock";
+              base_uri = cfg.virtualHost;
+            };
+            database = {
+              socket = toString config.services.mysql.settings.mysqld.socket;
+              user = "zotero-portal";
+              name = "zotero_www";
+              max_connections = cfg.portal.databaseMaxConnections;
+            };
+            oidc = {
+              issuer = cfg.portal.issuer;
+              client_id = cfg.portal.clientId;
+              scopes = cfg.portal.scopes;
+            };
+            identity = {
+              username_claim = cfg.portal.usernameClaim;
+              real_name_claim = cfg.portal.realNameClaim;
+              require_verified_email = cfg.portal.requireVerifiedEmail;
+            };
+            dataserver.url = publicApiBaseUri;
+            streaming.url = cfg.stream-server.publicUri;
+            translation_server.url = "http://127.0.0.1:${toString cfg.translation-server.settings.port}";
+          }
+          // optionalAttrs (cfg.portal.browserSessionLifetimeSeconds != null) {
+            browser_session_lifetime_seconds = cfg.portal.browserSessionLifetimeSeconds;
+          }
+        );
+      }
+      // {
+        "zotero-dataserver/attachment-proxy.json".source = json.generate "attachment-proxy.json" (cfg.attachment-proxy.settings
+          // {
+            host = "127.0.0.1";
+            tmpDir = "";
+            trustedProxies = ["127.0.0.1"];
+            s3 = {
+              bucket = cfg.storage.bucket;
+              endpoint = cfg.storage.endpoint;
+              forcePathStyle = cfg.storage.forcePathStyle;
+              region = cfg.storage.region;
+            };
+          });
+        "zotero-dataserver/citeproc-js-server.json".source = json.generate "citeproc-js-server-config.json" (cfg.citeproc-js-server.settings
+          // {
+            host = "127.0.0.1";
+            localesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl-locales";
+            cslPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl";
+            renamedStylesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/renamed-styles.json";
+            cslDependentPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/dependent";
+          });
+        "zotero-dataserver/stream-server.json".source = json.generate "stream-server-config.json" (cfg.stream-server.settings
+          // {
+            trustedProxies = ["127.0.0.1"];
+            apiURL = publicApiBaseUri;
+            redis = {
+              url = "redis://127.0.0.1:${toString config.services.redis.servers.zotero-dataserver.port}";
+              prefix = cfg.php.settings.redisPrefix;
+            };
+          });
+        "zotero-dataserver/translation-server.json".source = json.generate "translation-server-config.json" ((removeAttrs cfg.translation-server.settings ["crossrefEmail"])
+          // {
+            translators = {
+              "CrossrefREST.email" = cfg.translation-server.settings.crossrefEmail;
+            };
+          });
+      };
 
     systemd.targets.zotero = {
       description = "Zotero local cloud services";
@@ -788,10 +743,8 @@ in {
           "redis-zotero-dataserver.service"
           "mysql.service"
           "opensearch.service"
-          "zotero-portal-migrate.service"
           "zotero-dataserver-schema.service"
           "zotero-fulltext-index.service"
-          "zotero-portal.service"
           "phpfpm-zotero-dataserver.service"
           "zotero-attachment-proxy.service"
           "zotero-citeproc-js-server.service"
@@ -800,6 +753,8 @@ in {
           "zotero-translation-server.service"
           "caddy.service"
         ]
+        ++ optional cfg.portal.enable "zotero-portal-migrate.service"
+        ++ optional cfg.portal.enable "zotero-portal.service"
         ++ optional cfg.storage.manageBackend "versitygw.service";
     };
 
@@ -827,7 +782,7 @@ in {
         '';
       };
 
-      zotero-portal-migrate = {
+      zotero-portal-migrate = mkIf cfg.portal.enable {
         description = "Migrate the Zotero website compatibility database";
         wants = ["mysql.service"];
         after = ["mysql.service"];
@@ -842,7 +797,7 @@ in {
           };
       };
 
-      zotero-portal = {
+      zotero-portal = mkIf cfg.portal.enable {
         description = "Zotero local web portal";
         wantedBy = ["multi-user.target"];
         wants = [credentialUnit "zotero-portal-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
@@ -890,8 +845,8 @@ in {
 
       zotero-dataserver-schema = {
         description = "Update Zotero Dataserver's metadata schema";
-        wants = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-portal-migrate.service"];
-        after = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service" "zotero-portal-migrate.service"];
+        wants = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service"] ++ optional cfg.portal.enable "zotero-portal-migrate.service";
+        after = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service"] ++ optional cfg.portal.enable "zotero-portal-migrate.service";
         serviceConfig =
           restartOnFailure
           // {
@@ -966,7 +921,7 @@ in {
         after = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
         environment = {
           NODE_ENV = "attachment-proxy";
-          NODE_CONFIG_DIR = "/etc/zotero-dataserver";
+          NODE_CONFIG_DIR = "${cfg.attachment-proxy.package}/lib/node_modules/attachment-proxy/config:/etc/zotero-dataserver";
         };
         script = ''
           export AWS_ACCESS_KEY_ID="$(< "$CREDENTIALS_DIRECTORY/s3-access-key-id")"
@@ -990,7 +945,7 @@ in {
         wantedBy = ["phpfpm-zotero-dataserver.service"];
         environment = {
           NODE_ENV = "citeproc-js-server";
-          NODE_CONFIG_DIR = "/etc/zotero-dataserver";
+          NODE_CONFIG_DIR = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/config:/etc/zotero-dataserver";
         };
         serviceConfig = {
           ExecStart = "${getExe cfg.citeproc-js-server.package}";
@@ -1006,7 +961,7 @@ in {
         after = ["redis-zotero-dataserver.service"];
         environment = {
           NODE_ENV = "stream-server";
-          NODE_CONFIG_DIR = "/etc/zotero-dataserver";
+          NODE_CONFIG_DIR = "${cfg.stream-server.package}/lib/node_modules/zotero-stream-server/config:/etc/zotero-dataserver";
         };
         serviceConfig = {
           ExecStart = "${getExe cfg.stream-server.package}";
@@ -1040,7 +995,7 @@ in {
         after = ["network-online.target"];
         environment = {
           NODE_ENV = "translation-server";
-          NODE_CONFIG_DIR = "/etc/zotero-dataserver";
+          NODE_CONFIG_DIR = "${cfg.translation-server.package}/lib/node_modules/translation-server/config:/etc/zotero-dataserver";
         };
         serviceConfig = {
           ExecStart = "${getExe cfg.translation-server.package}";

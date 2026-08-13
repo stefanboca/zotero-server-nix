@@ -11,10 +11,7 @@ use topcoat::{
     view::view,
 };
 
-use crate::{
-    app::{AppState, request_confirmed},
-    dataserver::GroupRole,
-};
+use crate::{app::request_confirmed, backend::Backend, dataserver::GroupRole};
 
 use super::current_group;
 
@@ -30,8 +27,8 @@ async fn transfer_owner(cx: &Cx, Form(input): Form<ConfirmTransfer>) -> Result {
     if actor_role != GroupRole::Owner {
         return Err(forbidden().into());
     }
-    let target = app_context::<AppState>(cx)
-        .backend
+    let backend = app_context::<Backend>(cx);
+    let target = backend
         .user_by_identifier(&input.username)
         .await?
         .ok_or_else(not_found)?;
@@ -45,8 +42,7 @@ async fn transfer_owner(cx: &Cx, Form(input): Form<ConfirmTransfer>) -> Result {
     if input.confirmation != group.name {
         return Err(bad_request("group name confirmation did not match").into());
     }
-    let result = app_context::<AppState>(cx)
-        .backend
+    let result = backend
         .set_group_user(group.id, target.user_id, GroupRole::Owner)
         .await;
     let notice = if let Err(error) = result {

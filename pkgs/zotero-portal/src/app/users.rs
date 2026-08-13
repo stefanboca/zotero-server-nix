@@ -2,12 +2,12 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     runtime::shard,
-    view::{component, view},
+    view::view,
 };
 
 use crate::{
-    app::{AppState, authenticated_user, username_label},
-    store::UserSummary,
+    app::{authenticated_user, username_label},
+    backend::Backend,
 };
 
 #[shard]
@@ -17,13 +17,8 @@ pub(crate) async fn member_search_shard(cx: &Cx, query: String) -> Result {
     if query.chars().count() < 3 || query.chars().count() > 128 {
         return view! {};
     }
-    let app = app_context::<AppState>(cx);
-    let candidates = app.backend.search_users(query, &[], 10).await?;
-    view! { search_results(candidates: &candidates) }
-}
-
-#[component]
-async fn search_results(candidates: &[UserSummary]) -> Result {
+    let backend = app_context::<Backend>(cx);
+    let candidates = backend.search_users(query, &[], 10).await?;
     view! {
         <div class="p-3">
             if candidates.is_empty() {
@@ -33,11 +28,12 @@ async fn search_results(candidates: &[UserSummary]) -> Result {
             } else {
                 <ul class="divide-y divide-stone-200 dark:divide-stone-800">
                     for candidate in candidates {
-                        let option_id = format!("member-option-{}", candidate.username);
                         <li>
                             <button
                                 class="w-full px-2 py-3 text-left hover:bg-stone-100 focus:bg-stone-100 aria-selected:bg-stone-100 dark:hover:bg-stone-900 dark:focus:bg-stone-900 dark:aria-selected:bg-stone-900"
-                                id=(option_id)
+                                id=(format!(
+                                    "member-option-{}", candidate.username
+                                ))
                                 type="button"
                                 role="option"
                                 aria-selected="false"

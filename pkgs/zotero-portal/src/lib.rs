@@ -4,15 +4,14 @@ mod config;
 mod dataserver;
 mod id;
 mod oidc;
-mod store;
 
 use std::{
     fmt::Write as _,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub use app::{migrate, routes, serve, serve_development};
-pub use config::Config;
+pub use app::{migrate, routes, serve};
+pub use config::{Config, Secrets};
 
 fn epoch_seconds() -> anyhow::Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())

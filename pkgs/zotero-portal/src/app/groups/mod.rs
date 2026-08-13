@@ -17,9 +17,9 @@ struct GroupsQuery {
 }
 
 use crate::{
-    app::{AppState, confirmation_dialog, signed_in_user, toast_script},
+    app::{confirmation_dialog, signed_in_user, toast_script},
+    backend::{Backend, UserSummary},
     dataserver::{Group, GroupRole},
-    store::UserSummary,
 };
 
 #[page]
@@ -39,8 +39,8 @@ async fn list_groups(cx: &Cx) -> Result {
 async fn groups_shard(cx: &Cx, refresh: bool) -> Result {
     let _ = refresh;
     let user = signed_in_user(cx).await?;
-    let app = app_context::<AppState>(cx);
-    let mut groups = app.backend.groups_for_user(user.user_id).await?;
+    let backend = app_context::<Backend>(cx);
+    let mut groups = backend.groups_for_user(user.user_id).await?;
     groups.sort_by(|left, right| {
         left.name
             .to_lowercase()

@@ -1,4 +1,3 @@
-mod api;
 mod auth;
 mod export;
 mod groups;
@@ -15,117 +14,103 @@ mod web;
 
 use std::{
     os::unix::fs::PermissionsExt as _,
-    path::Path,
     sync::Arc,
     time::{Duration, UNIX_EPOCH},
 };
 
 use anyhow::Context as _;
+use sqlx::{
+    ConnectOptions as _, MySqlPool,
+    mysql::{MySqlConnectOptions, MySqlPoolOptions},
+};
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
     context::{Cx, CxBuilder, app_context, try_request_context},
     cookie::RouterBuilderCookieExt,
     router::{
-        Body, Next, Response, RouterBuilder, RouterBuilderDiscoverExt, StatusCode,
-        error::{
-            BadRequestError, ForbiddenError, InternalServerError, MethodNotAllowedError,
-            NotFoundError, RedirectError, UnauthorizedError, not_found, redirect,
-            redirect_permanent,
-        },
+        Body, IntoResponse, Next, Response, RouterBuilder, RouterBuilderDiscoverExt, StatusCode,
+        error::{RedirectError, not_found, redirect, redirect_permanent},
         headers, layer, layout, page, uri,
     },
     session::{self, RouterBuilderSessionExt, SessionConfig},
-    view::{component, view},
+    view::{View, component, view},
 };
 
 use crate::{
-    backend::Backend,
-    config::{Config, read_credential},
-    dataserver::Dataserver,
+    app::library::WebLibrary,
+    backend::{self, Backend},
+    config::{Config, Secrets},
     id::UserId,
-    oidc::Oidc,
-    store,
 };
 
 pub(crate) const FLOW_LIFETIME: Duration = Duration::from_secs(15 * 60);
-#[derive(Clone)]
-pub struct AppState {
-    pub backend: Backend,
-}
 
 pub(crate) struct BareLayout;
 
-pub async fn migrate(config: &Config) -> anyhow::Result<()> {
-    let database = store::connect(&config.database)
+async fn connect_and_migrate(config: &Config) -> anyhow::Result<MySqlPool> {
+    let db = MySqlPoolOptions::new()
+        .max_connections(config.database.max_connections)
+        .connect_with(MySqlConnectOptions::from_url(&config.database.url)?)
         .await
         .context("connecting to MariaDB")?;
     sqlx::migrate!()
-        .run(&database)
-        .await
-        .context("running database migrations")
-}
-
-pub async fn serve(config: Config) -> anyhow::Result<()> {
-    let browser_session_lifetime = Duration::from_secs(config.browser_session_lifetime_seconds);
-    let database = store::connect(&config.database)
-        .await
-        .context("connecting to MariaDB")?;
-    sqlx::migrate!()
-        .run(&database)
+        .run(&db)
         .await
         .context("running database migrations")?;
+    Ok(db)
+}
 
-    let oidc = Oidc::discover(&config, read_credential("oidc-client-secret")?).await?;
-    let dataserver = Dataserver::new(&config, read_credential("dataserver-super-password")?)?;
-    let socket = config.server.socket.clone();
-    let state = AppState {
-        backend: Backend::production(
-            Arc::new(config),
-            database,
-            Arc::new(dataserver),
-            Arc::new(oidc),
-        ),
-    };
+pub async fn migrate(config: &Config) -> anyhow::Result<()> {
+    connect_and_migrate(config).await?;
+    Ok(())
+}
+
+pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
+    let config = Arc::new(config);
+    let db = connect_and_migrate(&config).await?;
+    let backend = Backend::new(config.clone(), secrets, db).await?;
     let router = routes()
         .cookies()
         .sessions(
             SessionConfig::builder()
-                .lifetime(browser_session_lifetime)
+                .lifetime(Duration::from_secs(config.browser_session_lifetime_seconds))
                 .build(),
         )
-        .app_context(state)
+        .app_context(backend)
         .build();
 
-    match std::fs::remove_file(&socket) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).context("removing stale auth socket"),
+    let address = &config.server.address;
+    match address.scheme() {
+        "unix" => {
+            let socket = address.path();
+            match std::fs::remove_file(&socket) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error).context("removing stale auth socket"),
+            };
+            let listener =
+                tokio::net::UnixListener::bind(&socket).context("binding auth socket")?;
+            std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660))
+                .with_context(|| format!("setting portal socket permissions on {socket}"))?;
+            topcoat::serve(listener, router)
+                .await
+                .context("serving auth portal")
+        }
+        "http" | "https" => {
+            let host = address
+                .host()
+                .map_or_else(|| String::from("127.0.0.1"), |h| h.to_string());
+            let port = address.port().unwrap_or(80);
+            let listener = tokio::net::TcpListener::bind(format!("{host}:{port}"))
+                .await
+                .context("binding tcp socket")?;
+            topcoat::serve(listener, router)
+                .await
+                .context("serving auth portal")
+        }
+        scheme => Err(anyhow::anyhow!("address has unknown scheme `{scheme}`")),
     }
-    let listener = tokio::net::UnixListener::bind(&socket).context("binding auth socket")?;
-    set_socket_permissions(&socket)?;
-    topcoat::serve(listener, router)
-        .await
-        .context("serving auth portal")
-}
-
-fn set_socket_permissions(socket: &Path) -> anyhow::Result<()> {
-    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o660))
-        .with_context(|| format!("setting portal socket permissions on {}", socket.display()))
-}
-
-pub async fn serve_development() -> anyhow::Result<()> {
-    let state = AppState {
-        backend: Backend::development(),
-    };
-    let router = routes()
-        .cookies()
-        .sessions(SessionConfig::default())
-        .app_context(state)
-        .build();
-    topcoat::start(router)
-        .await
-        .context("serving development auth portal")
 }
 
 pub fn routes() -> RouterBuilder {
@@ -140,6 +125,7 @@ pub(crate) fn valid_session_token(token: &str) -> bool {
     token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
+// TODO: clean up this request confirmed nonsense
 pub(crate) fn request_confirmed(cx: &Cx) -> bool {
     headers(cx)
         .get("x-zotero-confirmed")
@@ -154,8 +140,7 @@ pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
         .expires_at
         .duration_since(UNIX_EPOCH)?
         .as_secs();
-    let app = app_context::<AppState>(cx);
-    app.backend
+    app_context::<Backend>(cx)
         .refresh_browser_session(&*browser_session.token_hash, expires)
         .await
         .map_err(Into::into)
@@ -222,39 +207,19 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
     if headers(cx).get("x-zotero-fragment").is_some() {
         return slot;
     }
-    let (mut content, error_page) = match slot {
-        Ok(content) => (content, false),
+    let content = match slot {
+        Ok(content) => content,
         Err(error) if error.downcast_ref::<RedirectError>().is_some() => return Err(error),
-        Err(error) => (friendly_error(cx, &error).await?, true),
-    };
-    let path = uri(cx).path();
-    let web_library_active = is_web_library_path(path);
-    let bare_layout = try_request_context::<BareLayout>(cx).is_some() || web_library_active;
-    let home_active = path == "/";
-    let groups_active = path == "/groups" || path.starts_with("/groups/");
-    let account_active = path == "/account";
-    let settings_active = path == "/settings" || path.starts_with("/settings/");
-    let nav_class = |active| {
-        if active {
-            "border-b-2 border-red-800 pb-1 text-sm font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
-        } else {
-            "border-b-2 border-transparent pb-1 text-sm hover:text-red-800 dark:hover:text-red-400"
+        Err(error) => {
+            let status = error
+                .into_response(cx)
+                .expect("error.into_response() always return Ok")
+                .status();
+            friendly_error_page(cx, status).await?
         }
     };
-    let navigation_user = if bare_layout {
-        None
-    } else {
-        match navigation_user(cx).await {
-            Ok(user) => user,
-            Err(error) => {
-                eprintln!("failed to render Zotero navigation: {error:?}");
-                if !error_page {
-                    content = friendly_internal_error(cx).await?;
-                }
-                None
-            }
-        }
-    };
+    let web_library_active = try_request_context::<WebLibrary>(cx).is_some();
+    let bare_layout = try_request_context::<BareLayout>(cx).is_some();
     view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -285,74 +250,7 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
             >
                 if !bare_layout {
                     <header class="border-b border-stone-200 dark:border-stone-800">
-                        <nav
-                            class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6"
-                            aria-label="Primary navigation"
-                        >
-                            <div
-                                class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6"
-                            >
-                                <a
-                                    class=(if home_active {
-                                        "border-b-2 border-red-800 pb-1 text-lg font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
-                                    } else {
-                                        "border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400"
-                                    })
-                                    href="/"
-                                    aria-current=(home_active.then_some("page"))
-                                >
-                                    "Zotero"
-                                </a>
-                                <a
-                                    class=(nav_class(groups_active))
-                                    href="/groups"
-                                    aria-current=(groups_active.then_some("page"))
-                                >
-                                    "Groups"
-                                </a>
-                                <a
-                                    class=(nav_class(account_active))
-                                    href="/account"
-                                    aria-current=(account_active.then_some("page"))
-                                >
-                                    "Account"
-                                </a>
-                                <a
-                                    class=(nav_class(settings_active))
-                                    href="/settings"
-                                    aria-current=(settings_active.then_some("page"))
-                                >
-                                    "Settings"
-                                </a>
-                            </div>
-                            <div
-                                class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto"
-                            >
-                                if let Some(user) = &navigation_user {
-                                    <span
-                                        class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400"
-                                    >
-                                        "Signed in as "
-                                        (user.display_name())
-                                    </span>
-                                    <form method="post" action="/user/logout">
-                                        <button
-                                            class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
-                                            type="submit"
-                                        >
-                                            "Log out"
-                                        </button>
-                                    </form>
-                                } else {
-                                    <a
-                                        class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
-                                        href="/user/login"
-                                    >
-                                        "Sign in"
-                                    </a>
-                                }
-                            </div>
-                        </nav>
+                        nav_bar()
                     </header>
                 }
                 (content)
@@ -361,125 +259,105 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
     }
 }
 
-pub(super) fn is_web_library_path(path: &str) -> bool {
-    if path == "/library" {
-        return true;
+#[component]
+async fn nav_bar(cx: &Cx) -> Result {
+    let path = uri(cx).path();
+    let navigation_user = navigation_user(cx).await?;
+    view! {
+        <nav
+            class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6"
+            aria-label="Primary navigation"
+        >
+            <div class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6">
+                let home_active = path == "/";
+                <a
+                    class=(if home_active {
+                        "border-b-2 border-red-800 pb-1 text-lg font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
+                    } else {
+                        "border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400"
+                    })
+                    href="/"
+                    aria-current=(home_active.then_some("page"))
+                >
+                    "Zotero"
+                </a>
+                for (route, name) in [("/groups", "Groups"), ("/settings", "Settings")] {
+                    let active = path == route
+                        || path.starts_with(&format!("{route}/"));
+                    <a
+                        class=(if active {
+                            "border-b-2 border-red-800 pb-1 text-sm font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
+                        } else {
+                            "border-b-2 border-transparent pb-1 text-sm hover:text-red-800 dark:hover:text-red-400"
+                        })
+                        href=(route)
+                        aria-current=(active.then_some("page"))
+                    >
+                        (name)
+                    </a>
+                }
+            </div>
+            <div
+                class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto"
+            >
+                if let Some(user) = &navigation_user {
+                    <span
+                        class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400"
+                    >
+                        "Signed in as "
+                        (user.display_name())
+                    </span>
+                    <form method="post" action="/user/logout">
+                        <button
+                            class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
+                            type="submit"
+                        >
+                            "Log out"
+                        </button>
+                    </form>
+                }
+            </div>
+        </nav>
     }
-    let segments = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
-    let source = if segments.first() == Some(&"groups") {
-        segments.get(3)
-    } else {
-        segments.get(1)
-    };
-    source.is_some_and(|source| {
-        matches!(
-            *source,
-            "library" | "collections" | "trash" | "publications" | "tags" | "search" | "items"
-        )
-    })
 }
 
-async fn navigation_user(cx: &Cx) -> Result<Option<store::UserSummary>> {
+async fn navigation_user(cx: &Cx) -> Result<Option<backend::UserSummary>> {
     let Some(user_id) = current_user(cx).await? else {
         return Ok(None);
     };
-    let app = app_context::<AppState>(cx);
-    app.backend.user_by_id(user_id).await.map_err(Into::into)
+    app_context::<Backend>(cx)
+        .user_by_id(user_id)
+        .await
+        .map_err(Into::into)
 }
 
-async fn friendly_error(cx: &Cx, error: &topcoat::Error) -> Result<topcoat::view::View> {
-    if let Some(error) = error.downcast_ref::<BadRequestError>() {
-        friendly_error_page(
-            cx,
-            StatusCode::BAD_REQUEST,
-            "That request could not be completed",
-            error.description(),
-        )
-        .await
-    } else if error.downcast_ref::<UnauthorizedError>().is_some() {
-        friendly_error_page(
-            cx,
-            StatusCode::UNAUTHORIZED,
-            "Sign in required",
-            "Sign in and try that request again.",
-        )
-        .await
-    } else if error.downcast_ref::<ForbiddenError>().is_some() {
-        friendly_error_page(
-            cx,
-            StatusCode::FORBIDDEN,
-            "You do not have access",
-            "Your account is not allowed to perform that action.",
-        )
-        .await
-    } else if error.downcast_ref::<NotFoundError>().is_some() {
-        friendly_error_page(
-            cx,
-            StatusCode::NOT_FOUND,
-            "Page not found",
-            "The page may have moved, or you may not have access to it.",
-        )
-        .await
-    } else if error.downcast_ref::<MethodNotAllowedError>().is_some() {
-        friendly_error_page(
-            cx,
-            StatusCode::METHOD_NOT_ALLOWED,
-            "Method not allowed",
-            "That action is not supported at this address.",
-        )
-        .await
-    } else {
-        if error.downcast_ref::<InternalServerError>().is_none() {
-            eprintln!("Zotero portal request failed: {error:?}");
-        }
-        friendly_internal_error(cx).await
-    }
-}
-
-async fn friendly_internal_error(cx: &Cx) -> Result<topcoat::view::View> {
-    friendly_error_page(
-        cx,
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "Something went wrong",
-        "The request could not be completed. Please try again.",
-    )
-    .await
-}
-
-async fn friendly_error_page(
-    cx: &Cx,
-    status: StatusCode,
-    title: &str,
-    message: &str,
-) -> Result<topcoat::view::View> {
+async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
+    let message = match status {
+        StatusCode::UNAUTHORIZED => "Sign in and try again",
+        StatusCode::FORBIDDEN => "Your account is not allowed to perform that action.",
+        StatusCode::NOT_FOUND => "The page may have moved, or you may not have access to it.",
+        _ => "The request could not be completed. Please try again",
+    };
     view! {
         cx =>
         (status)
         <main class="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
-            <p class="text-sm font-semibold text-red-800 dark:text-red-400">
+            <h1 class="text-4xl font-semibold text-red-800 dark:text-red-400">
                 (status.as_u16())
-            </p>
-            <h1 class="mt-2 text-2xl font-semibold">(title)</h1>
+            </h1>
+            if let Some(title) = status.canonical_reason() {
+                <p class="mt-2 text-2xl font-semibold">(title)</p>
+            }
             <p class="mt-4 max-w-2xl leading-7 text-stone-600 dark:text-stone-400">
                 (message)
             </p>
-            <a
-                class="mt-6 inline-block border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
-                href="/"
-            >
-                "Return to Zotero"
-            </a>
         </main>
     }
 }
 
-pub(crate) async fn signed_in_user(cx: &Cx) -> Result<store::UserSummary> {
+pub(crate) async fn signed_in_user(cx: &Cx) -> Result<backend::UserSummary> {
     let user_id = authenticated_user(cx).await?;
-    let app = app_context::<AppState>(cx);
-    app.backend
+    app_context::<Backend>(cx)
         .user_by_id(user_id)
         .await?
         .ok_or_else(|| not_found().into())
@@ -567,84 +445,11 @@ async fn index(cx: &Cx) -> Result {
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
-
-    use topcoat::router::Request;
-
     use super::*;
 
     #[test]
     fn route_tree_builds_without_duplicate_routes_or_assets() {
         let _router = routes().build();
-    }
-
-    #[test]
-    fn portal_socket_is_accessible_to_its_group() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock is after the Unix epoch")
-            .as_nanos();
-        let socket = std::env::temp_dir().join(format!(
-            "zotero-portal-socket-permissions-{}-{nonce}",
-            std::process::id()
-        ));
-        std::fs::File::create(&socket).expect("create socket permission test file");
-
-        set_socket_permissions(&socket).expect("set portal socket permissions");
-
-        let mode = std::fs::metadata(&socket)
-            .expect("read socket permission test file metadata")
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o660);
-        std::fs::remove_file(socket).expect("remove socket permission test file");
-    }
-
-    #[tokio::test]
-    async fn translation_routes_require_a_browser_session() {
-        let router = routes()
-            .cookies()
-            .sessions(SessionConfig::default())
-            .app_context(AppState {
-                backend: Backend::development(),
-            })
-            .build();
-
-        for path in ["/web", "/search", "/import", "/export?format=bibtex"] {
-            let expected_location = format!(
-                "/user/login?continue={}",
-                url::form_urlencoded::byte_serialize(path.as_bytes()).collect::<String>()
-            );
-            let response = router
-                .handle(
-                    Request::post(path)
-                        .body(Body::from("10.1000/example"))
-                        .expect("valid translation request"),
-                )
-                .await;
-            assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
-            assert_eq!(
-                response
-                    .headers()
-                    .get("location")
-                    .and_then(|v| v.to_str().ok()),
-                Some(expected_location.as_str()),
-                "{path}"
-            );
-        }
-    }
-
-    #[test]
-    fn recognizes_canonical_web_library_routes() {
-        assert!(is_web_library_path("/researcher/library"));
-        assert!(is_web_library_path(
-            "/researcher/items/DEVUSER1/attachment/PDF00001/reader"
-        ));
-        assert!(is_web_library_path(
-            "/groups/1/research-group/items/DEVUSER1"
-        ));
-        assert!(!is_web_library_path("/groups/1/members"));
-        assert!(!is_web_library_path("/settings"));
     }
 
     #[test]

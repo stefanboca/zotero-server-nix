@@ -25,6 +25,10 @@ buildNpmPackage (finalAttrs: {
 
   dontNpmBuild = true;
 
+  postInstall = ''
+    install -Dm444 config/sample-config.js "$out/lib/node_modules/attachment-proxy/config/default.js"
+  '';
+
   meta = {
     description = "Proxy for Zotero attachment uploads and downloads";
     homepage = finalAttrs.src.url;

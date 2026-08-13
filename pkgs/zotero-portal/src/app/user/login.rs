@@ -10,7 +10,10 @@ use topcoat::{
     view::view,
 };
 
-use crate::app::{AppState, BareLayout, current_user, normalized_return_path, valid_session_token};
+use crate::{
+    app::{BareLayout, current_user, normalized_return_path, valid_session_token},
+    backend::Backend,
+};
 
 use super::super::auth::begin_oidc_flow;
 
@@ -40,8 +43,8 @@ async fn login(cx: &Cx) -> Result {
             return Err(bad_request("invalid Zotero login-session token").into());
         }
 
-        let app = app_context::<AppState>(cx);
-        let info = app.backend.login_session_info(dataserver_session).await?;
+        let backend = app_context::<Backend>(cx);
+        let info = backend.login_session_info(dataserver_session).await?;
         if info.status != "pending" {
             return Err(bad_request("Zotero login session is no longer pending").into());
         }
@@ -50,8 +53,7 @@ async fn login(cx: &Cx) -> Result {
                 .expires_at
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs();
-            let authenticated = app
-                .backend
+            let authenticated = backend
                 .refresh_browser_session(&*browser_session.token_hash, expires)
                 .await?;
             if authenticated.is_some() {

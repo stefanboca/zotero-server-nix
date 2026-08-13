@@ -24,13 +24,41 @@
         overlays = [self.overlays.default];
       });
     treefmtFor = forAllSystems (system: treefmt-nix.lib.evalModule nixpkgsFor.${system} ./treefmt.nix);
+    devBackendFor = forAllSystems (system:
+      lib.nixosSystem {
+        inherit system;
+        modules = [
+          (import ./dev/vm.nix {
+            module = self.nixosModules.default;
+            overlay = self.overlays.default;
+          })
+        ];
+      });
+    developmentCaBundleFor = forAllSystems (system: let
+      pkgs = nixpkgsFor.${system};
+      certificates = import "${pkgs.path}/nixos/tests/common/acme/server/snakeoil-certs.nix";
+    in
+      pkgs.runCommand "zotero-development-ca-bundle" {} ''
+        mkdir "$out"
+        cat ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt ${certificates.ca.cert} > "$out/ca-bundle.crt"
+      '');
   in {
-    packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
+    packages = forAllSystems (system:
+      import ./pkgs nixpkgsFor.${system}
+      // {development-ca-bundle = developmentCaBundleFor.${system};});
     overlays.default = _: import ./pkgs;
 
     nixosModules = {
       default = import ./modules/nixos;
     };
+
+    apps = forAllSystems (system: {
+      default = {
+        type = "app";
+        program = "${devBackendFor.${system}.config.system.build.vm}/bin/run-nixos-vm";
+        meta.description = "Run a development Zotero backend with Authelia in a VM";
+      };
+    });
 
     devShells = forAllSystems (system: let
       pkgs = nixpkgsFor.${system};

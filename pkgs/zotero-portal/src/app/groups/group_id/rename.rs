@@ -11,7 +11,7 @@ use topcoat::{
     view::view,
 };
 
-use crate::app::{AppState, request_confirmed};
+use crate::{app::request_confirmed, backend::Backend};
 
 use super::current_group;
 
@@ -34,10 +34,7 @@ async fn rename_group(cx: &Cx, Form(input): Form<RenameGroup>) -> Result {
         return Err(bad_request("group name cannot exceed 255 characters").into());
     }
 
-    let succeeded = if let Err(error) = app_context::<AppState>(cx)
-        .backend
-        .rename_group(&group, name)
-        .await
+    let succeeded = if let Err(error) = app_context::<Backend>(cx).rename_group(&group, name).await
     {
         eprintln!("failed to rename group: {error:#}");
         false

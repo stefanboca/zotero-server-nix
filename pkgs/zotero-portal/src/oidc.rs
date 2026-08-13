@@ -50,17 +50,11 @@ impl Oidc {
     }
 }
 
-fn redirect_url(base_uri: &str) -> anyhow::Result<RedirectUrl> {
-    let mut url = match Url::parse(base_uri) {
-        Ok(url) if url.has_host() => url,
-        Ok(_) | Err(url::ParseError::RelativeUrlWithoutBase) => {
-            Url::parse(&format!("https://{base_uri}")).context("parsing server base URI")?
-        }
-        Err(error) => return Err(error).context("parsing server base URI"),
-    };
-    if url.host_str().is_none() {
+fn redirect_url(base_uri: &Url) -> anyhow::Result<RedirectUrl> {
+    if !base_uri.has_host() {
         anyhow::bail!("server base URI must include a host");
     }
+    let mut url = base_uri.clone();
     url.set_scheme("https")
         .map_err(|()| anyhow::anyhow!("server base URI cannot use HTTPS"))?;
     url.set_path("/auth/oidc/callback");
@@ -123,7 +117,8 @@ mod tests {
 
     #[test]
     fn builds_https_callback_from_a_hostname() {
-        let redirect = redirect_url("zotero.example.com").expect("valid redirect URL");
+        let redirect =
+            redirect_url(&Url::parse("zotero.example.com").unwrap()).expect("valid redirect URL");
 
         assert_eq!(
             redirect.as_str(),
@@ -133,8 +128,10 @@ mod tests {
 
     #[test]
     fn forces_https_and_replaces_the_path() {
-        let redirect = redirect_url("http://zotero.example.com:8443/old?query=1#fragment")
-            .expect("valid redirect URL");
+        let redirect = redirect_url(
+            &Url::parse("http://zotero.example.com:8443/old?query=1#fragment").unwrap(),
+        )
+        .expect("valid redirect URL");
 
         assert_eq!(
             redirect.as_str(),

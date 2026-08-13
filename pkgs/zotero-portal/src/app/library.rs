@@ -1,21 +1,24 @@
-use anyhow::{Context as _, bail};
+use anyhow::Context as _;
 use topcoat::{
     Result,
     context::{Cx, CxBuilder, app_context},
     router::{Body, Next, Response, layer, page},
     view::{Unescaped, view},
 };
+use url::Url;
 
 use crate::{
-    app::{AppState, BareLayout, signed_in_user},
-    backend::WebLibraryAccess,
+    app::{BareLayout, signed_in_user},
+    backend::{self, Backend, WebLibraryAccess},
     id::UserId,
-    store,
 };
+
+pub(crate) struct WebLibrary;
 
 #[layer]
 async fn bare_library_layout(cx: &mut CxBuilder, body: Body, next: Next<'_>) -> Result<Response> {
     cx.insert(BareLayout);
+    cx.insert(WebLibrary);
     next.run(cx, body).await
 }
 
@@ -37,9 +40,8 @@ pub(super) async fn user_web_library_document(cx: &Cx, library_slug: &str) -> Re
     render_web_library_document(cx, &user).await
 }
 
-async fn render_web_library_document(cx: &Cx, user: &store::UserSummary) -> Result {
-    let access = app_context::<AppState>(cx)
-        .backend
+async fn render_web_library_document(cx: &Cx, user: &backend::UserSummary) -> Result {
+    let access = app_context::<Backend>(cx)
         .web_library_access(user.user_id)
         .await?;
     let config = web_library_config(user, access)?;
@@ -70,7 +72,7 @@ struct WebLibraryConfig {
     user_id: UserId,
     user_slug: String,
     libraries: WebLibraryLibraries,
-    streaming_api_url: String,
+    streaming_api_url: Url,
     is_recognizer_available: bool,
     website_url: String,
     buy_storage_url: String,
@@ -96,41 +98,15 @@ struct WebLibraryLibraries {
 }
 
 fn web_library_config(
-    user: &store::UserSummary,
+    user: &backend::UserSummary,
     access: WebLibraryAccess,
 ) -> anyhow::Result<Unescaped<String>> {
-    let api_url = url::Url::parse(&access.api_url).context("parsing the public Zotero API URL")?;
-    if !matches!(api_url.scheme(), "http" | "https")
-        || api_url.host_str().is_none()
-        || !api_url.username().is_empty()
-        || api_url.password().is_some()
-        || api_url.query().is_some()
-        || api_url.fragment().is_some()
-    {
-        bail!("the public Zotero API URL must be an HTTP URL without credentials or a query");
-    }
-    if !access.streaming_url.is_empty() {
-        let streaming_url = url::Url::parse(&access.streaming_url)
-            .context("parsing the public Zotero streaming URL")?;
-        if !matches!(streaming_url.scheme(), "ws" | "wss")
-            || streaming_url.host_str().is_none()
-            || !streaming_url.username().is_empty()
-            || streaming_url.password().is_some()
-            || streaming_url.query().is_some()
-            || streaming_url.fragment().is_some()
-        {
-            bail!(
-                "the public Zotero streaming URL must be a WebSocket URL without credentials or a query"
-            );
-        }
-    }
-
-    let origin = api_url.origin().ascii_serialization();
+    let origin = access.api_url.origin().ascii_serialization();
     let authority = origin
-        .strip_prefix(&format!("{}://", api_url.scheme()))
+        .strip_prefix(&format!("{}://", access.api_url.scheme()))
         .context("the public Zotero API URL has no authority")?
         .to_owned();
-    let mut api_path = api_url.path().trim_start_matches('/').to_owned();
+    let mut api_path = access.api_url.path().trim_start_matches('/').to_owned();
     if !api_path.ends_with('/') {
         api_path.push('/');
     }
@@ -141,7 +117,7 @@ fn web_library_config(
         read_only: access.read_only,
         api_key: access.api_key,
         api_config: WebLibraryApiConfig {
-            api_scheme: api_url.scheme().to_owned(),
+            api_scheme: access.api_url.scheme().to_owned(),
             api_authority_part: authority,
             api_path,
             retry: 2,
@@ -173,8 +149,8 @@ fn web_library_config(
 mod tests {
     use super::*;
 
-    fn user() -> store::UserSummary {
-        store::UserSummary {
+    fn user() -> backend::UserSummary {
+        backend::UserSummary {
             user_id: UserId::new(42),
             username: "researcher".to_owned(),
             email: "researcher@example.test".to_owned(),
@@ -188,9 +164,9 @@ mod tests {
             &user(),
             WebLibraryAccess {
                 api_key: "secret".to_owned(),
-                api_url: "https://zotero.example.test/api/".to_owned(),
+                api_url: Url::parse("https://zotero.example.test/api/").unwrap(),
                 read_only: false,
-                streaming_url: "wss://zotero.example.test/stream/".to_owned(),
+                streaming_url: Url::parse("wss://zotero.example.test/stream/").unwrap(),
             },
         )
         .expect("valid Web Library configuration");
@@ -210,9 +186,9 @@ mod tests {
             &user(),
             WebLibraryAccess {
                 api_key: "secret".to_owned(),
-                api_url: "file:///tmp/api".to_owned(),
+                api_url: Url::parse("file:///tmp/api").unwrap(),
                 read_only: false,
-                streaming_url: "wss://zotero.example.test/stream/".to_owned(),
+                streaming_url: Url::parse("wss://zotero.example.test/stream/").unwrap(),
             },
         );
 
@@ -225,9 +201,9 @@ mod tests {
             &user(),
             WebLibraryAccess {
                 api_key: "secret".to_owned(),
-                api_url: "https://zotero.example.test/api/".to_owned(),
+                api_url: Url::parse("https://zotero.example.test/api/").unwrap(),
                 read_only: false,
-                streaming_url: "https://zotero.example.test/stream/".to_owned(),
+                streaming_url: Url::parse("https://zotero.example.test/stream/").unwrap(),
             },
         );
 

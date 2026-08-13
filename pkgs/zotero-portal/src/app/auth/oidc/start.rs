@@ -10,9 +10,9 @@ use topcoat::{
 };
 
 use crate::{
-    app::{AppState, FLOW_LIFETIME, valid_session_token},
+    app::{FLOW_LIFETIME, valid_session_token},
+    backend::{Backend, OidcFlow},
     epoch_seconds,
-    store::OidcFlow,
 };
 
 #[query_params(error = bad_request)]
@@ -32,8 +32,8 @@ async fn start(cx: &Cx) -> Result<Response> {
         return Err(bad_request("invalid Zotero login-session token").into());
     }
 
-    let app = app_context::<AppState>(cx);
-    let info = app.backend.login_session_info(dataserver_session).await?;
+    let backend = app_context::<Backend>(cx);
+    let info = backend.login_session_info(dataserver_session).await?;
     if info.status != "pending" {
         return Err(bad_request("Zotero login session is no longer pending").into());
     }
@@ -50,21 +50,21 @@ pub(crate) async fn begin_oidc_flow(
     return_path: &str,
     browser_session: Option<session::Session>,
 ) -> Result<String> {
-    let app = app_context::<AppState>(cx);
+    let backend = app_context::<Backend>(cx);
     if let Some(token_hash) = session::token_hash(cx).await?
-        && !app.backend.clear_oidc_flow(&*token_hash).await?
+        && !backend.clear_oidc_flow(&*token_hash).await?
     {
         return Err(bad_request("the current OIDC login is already being completed").into());
     }
 
-    let authorization = app.backend.begin_oidc_authorization()?;
+    let authorization = backend.begin_oidc_authorization()?;
     let new_browser_session = browser_session.is_none();
     let browser_session = match browser_session {
         Some(browser_session) => browser_session,
         None => session::start(cx).await?,
     };
     let now = epoch_seconds()?;
-    app.backend.delete_expired_oidc_flows(now).await?;
+    backend.delete_expired_oidc_flows(now).await?;
     let expires = now
         .checked_add(FLOW_LIFETIME.as_secs())
         .ok_or_else(|| anyhow::anyhow!("OIDC flow expiry is out of range"))?;
@@ -76,8 +76,7 @@ pub(crate) async fn begin_oidc_flow(
         return_path: return_path.to_owned(),
         expires,
     };
-    let inserted = app
-        .backend
+    let inserted = backend
         .create_oidc_flow(&*browser_session.token_hash, &flow)
         .await;
     let inserted = match inserted {

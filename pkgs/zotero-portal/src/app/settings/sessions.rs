@@ -1,73 +1,72 @@
+use reqwest::header::{HeaderValue, LOCATION};
 use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        HeaderValue, StatusCode,
+        IntoResponse as _, Response, StatusCode,
         content::Form,
-        error::{bad_request, forbidden, not_found},
-        header, page,
+        error::{bad_request, forbidden, not_found, see_other},
+        route,
     },
     session,
-    view::view,
 };
 
 use crate::{
-    app::{AppState, request_confirmed, signed_in_user},
-    store,
+    app::{request_confirmed, signed_in_user},
+    backend::{self, Backend},
 };
 
 #[derive(Deserialize)]
 struct RevokeSession {
-    operation: String,
+    all: bool,
     handle: Option<String>,
 }
 
-#[page(POST)]
-async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) -> Result {
+#[route(POST)]
+async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) -> Result<Response> {
     let user = signed_in_user(cx).await?;
-    if input.operation == "all" {
-        app_context::<AppState>(cx)
-            .backend
-            .revoke_all_browser_sessions(user.user_id)
-            .await?;
+    let backend = app_context::<Backend>(cx);
+    if input.all {
+        backend.revoke_all_browser_sessions(user.user_id).await?;
         session::stop(cx).await?;
-        let location = HeaderValue::from_static("/user/login");
         if request_confirmed(cx) {
-            return view! { (StatusCode::NO_CONTENT) ((header::LOCATION, location)) };
+            return (
+                StatusCode::NO_CONTENT,
+                ([(LOCATION, HeaderValue::from_static("/user/login"))], ()),
+            )
+                .into_response(cx);
         }
-        return view! { (StatusCode::SEE_OTHER) ((header::LOCATION, location)) };
+        return see_other("/user/login").into_response(cx);
+    } else {
+        let handle = input
+            .handle
+            .as_deref()
+            .ok_or_else(|| bad_request("a browser session is required"))?;
+        // TODO: make this a new query
+        let browser_session = backend
+            .browser_sessions_for_user(user.user_id)
+            .await?
+            .into_iter()
+            .find(|browser_session| browser_session.handle == handle)
+            .ok_or_else(not_found)?;
+        let current_handle = session::token_hash(cx)
+            .await?
+            .map(|hash| backend::session_handle(&*hash))
+            .unwrap_or_default();
+        // TODO: should this be forbidden?
+        if browser_session.handle == current_handle {
+            return Err(forbidden().into());
+        }
+        if !backend
+            .revoke_browser_session(user.user_id, &browser_session.handle)
+            .await?
+        {
+            return Err(not_found().into());
+        }
+        if request_confirmed(cx) {
+            return StatusCode::NO_CONTENT.into_response(cx);
+        }
+        see_other("/settings?notice=browser-session-revoked#sessions").into_response(cx)
     }
-    if input.operation != "one" {
-        return Err(bad_request("unknown browser-session operation").into());
-    }
-    let handle = input
-        .handle
-        .as_deref()
-        .ok_or_else(|| bad_request("a browser session is required"))?;
-    let browser_session = app_context::<AppState>(cx)
-        .backend
-        .browser_sessions_for_user(user.user_id)
-        .await?
-        .into_iter()
-        .find(|browser_session| browser_session.handle == handle)
-        .ok_or_else(not_found)?;
-    let current_handle = session::token_hash(cx)
-        .await?
-        .map(|hash| store::session_handle(&*hash))
-        .unwrap_or_default();
-    if browser_session.handle == current_handle {
-        return Err(forbidden().into());
-    }
-    if !app_context::<AppState>(cx)
-        .backend
-        .revoke_browser_session(user.user_id, &browser_session.handle)
-        .await?
-    {
-        return Err(not_found().into());
-    }
-    if request_confirmed(cx) {
-        return view! { (StatusCode::NO_CONTENT) };
-    }
-    view! { (StatusCode::SEE_OTHER) ((header::LOCATION, HeaderValue::from_static("/settings?notice=browser-session-revoked#sessions"))) }
 }

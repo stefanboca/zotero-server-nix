@@ -13,17 +13,34 @@
   testCertificates = import "${pkgs.path}/nixos/tests/common/acme/server/snakeoil-certs.nix";
   testDomain = testCertificates.domain;
   testPython = pkgs.python3.withPackages (pythonPackages: [
-    pythonPackages.cryptography
-    pythonPackages.pyjwt
     pythonPackages.websocket-client
   ]);
-  oidcClientSecret = pkgs.writeText "oidc-client-secret" "oidc-test-secret";
+  oidcClientSecret = pkgs.writeText "oidc-client-secret" "development";
+  oidcIssuer = "https://${testDomain}:19090";
 in {
   nixos-dataserver = pkgs.testers.runNixOSTest {
     name = "zotero-dataserver";
 
     nodes.machine = {
-      imports = [module];
+      imports = [
+        module
+        (import ../../dev/authelia.nix {
+          address = "tcp://127.0.0.1:19090/";
+          clientId = "zotero-test";
+          redirectUri = "https://${testDomain}/auth/oidc/callback";
+          session.cookies = [
+            {
+              domain = testDomain;
+              authelia_url = oidcIssuer;
+            }
+          ];
+          signingKey = testCertificates.ca.key;
+          tls = {
+            certificate = testCertificates.${testDomain}.cert;
+            key = testCertificates.${testDomain}.key;
+          };
+        })
+      ];
 
       virtualisation.memorySize = 4 * 1024;
 
@@ -40,7 +57,7 @@ in {
         };
         portal = {
           package = zotero-portal;
-          issuer = "http://127.0.0.1:19090";
+          issuer = oidcIssuer;
           clientId = "zotero-test";
           clientSecretFile = oidcClientSecret;
         };
@@ -81,20 +98,6 @@ in {
       };
 
       systemd.services = {
-        oidc-mock = {
-          description = "OIDC test provider";
-          wantedBy = ["multi-user.target"];
-          before = ["zotero-portal.service"];
-          serviceConfig = {
-            DynamicUser = true;
-            ExecStart = "${pkgs.lib.getExe testPython} ${./oidc-mock.py}";
-            Restart = "on-failure";
-          };
-        };
-        zotero-portal = {
-          requires = ["oidc-mock.service"];
-          after = ["oidc-mock.service"];
-        };
         versitygw.preStart = pkgs.lib.mkBefore ''
           retry_marker=/tmp/versitygw-failed-once
           if ! test -e "$retry_marker"; then
@@ -133,7 +136,7 @@ in {
           "mysql.service",
           "opensearch.service",
           "versitygw.service",
-          "oidc-mock.service",
+          "authelia-development.service",
           "zotero-portal-migrate.service",
           "zotero-fulltext-index.service",
           "zotero-portal.service",
@@ -343,6 +346,21 @@ in {
               + urllib.parse.urlencode({"session": session["sessionToken"]})
           )
 
+      def authelia_login(cookie_file):
+          machine.succeed(
+              "curl --silent --show-error --fail-with-body "
+              "--header 'Content-Type: application/json' --data "
+              + shlex.quote(json.dumps({
+                  "username": "development",
+                  "password": "development",
+                  "keepMeLoggedIn": True,
+              }))
+              + " --cookie-jar "
+              + shlex.quote(cookie_file)
+              + " "
+              + shlex.quote("${oidcIssuer}/api/firstfactor")
+          )
+
       login_page_session = create_login_session()
       register_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null "
@@ -366,9 +384,12 @@ in {
       parallel_sessions = [create_login_session(), create_login_session()]
       parallel_commands = []
       for index, session in enumerate(parallel_sessions):
+          authelia_login(f"/tmp/oidc-parallel-{index}.cookies")
           parallel_commands.append(
               "curl --silent --show-error --fail-with-body "
-              "--data= --location --cookie-jar "
+              "--data= --location --cookie "
+              + shlex.quote(f"/tmp/oidc-parallel-{index}.cookies")
+              + " --cookie-jar "
               + shlex.quote(f"/tmp/oidc-parallel-{index}.cookies")
               + " "
               + shlex.quote(oidc_start_url(session))
@@ -386,7 +407,7 @@ in {
       if not all(status["status"] == "completed" for status in parallel_statuses):
           print(machine.succeed("sed -n '1,120p' /tmp/oidc-parallel-0.html"))
           print(machine.succeed("sed -n '1,120p' /tmp/oidc-parallel-1.html"))
-          print(machine.succeed("journalctl -u zotero-portal -u oidc-mock --no-pager -n 200"))
+          print(machine.succeed("journalctl -u zotero-portal -u authelia-development --no-pager -n 200"))
       assert all(status["status"] == "completed" for status in parallel_statuses), parallel_statuses
       assert parallel_statuses[0]["userID"] == parallel_statuses[1]["userID"], parallel_statuses
       oidc_user_id = parallel_statuses[0]["userID"]
@@ -401,9 +422,9 @@ in {
       oidc_counts = machine.succeed(
           "mariadb --batch --skip-column-names zotero_www "
           "--execute=\"SELECT "
-          "(SELECT COUNT(*) FROM users WHERE email = 'oidc@example.net'), "
+          "(SELECT COUNT(*) FROM users WHERE email = 'development@example.test'), "
           "(SELECT COUNT(*) FROM oidc_identities "
-          "WHERE issuer = 'http://127.0.0.1:19090' AND subject = 'oidc-user')\""
+          "WHERE issuer = '${oidcIssuer}')\""
       ).strip().split("\t")
       assert oidc_counts == ["1", "1"], oidc_counts
       oidc_account = machine.succeed(
@@ -419,6 +440,7 @@ in {
 
       repeated_session = create_login_session()
       cookie_file = "/tmp/oidc-repeated.cookies"
+      authelia_login(cookie_file)
       machine.succeed(
           "mariadb zotero_master --execute="
           + shlex.quote(
@@ -437,7 +459,9 @@ in {
 
       first_headers = machine.succeed(
           "curl --silent --show-error --dump-header - "
-          "--data= --output /dev/null --cookie-jar "
+          "--data= --output /dev/null --cookie "
+          + shlex.quote(cookie_file)
+          + " --cookie-jar "
           + shlex.quote(cookie_file)
           + " "
           + shlex.quote(oidc_start_url(repeated_session))
@@ -532,7 +556,7 @@ in {
           + " "
           + shlex.quote(public_url + "/")
       )
-      assert "Signed in as OIDC User" in account_page, account_page
+      assert "Signed in as Development User" in account_page, account_page
       assert 'src="/library"' in account_page, account_page
       assert 'title="Zotero library"' in account_page, account_page
       assert 'href="/groups"' in account_page, account_page
@@ -623,7 +647,7 @@ in {
               "(@candidate, 'profile_realname', 'New Group Owner'); "
               "INSERT INTO GDN_User VALUES (@candidate, 0); "
               "INSERT INTO oidc_identities (issuer, subject, userID) VALUES "
-              "('http://127.0.0.1:19090', 'new-owner', @candidate)"
+              "('${oidcIssuer}', 'new-owner', @candidate)"
           )
       )
       candidate_user_id = int(machine.succeed(
@@ -832,7 +856,7 @@ in {
       assert 'value="demote-self"' in former_owner_page, former_owner_page
       assert "Become a member of this group?" in former_owner_page, former_owner_page
       members_region = former_owner_page.split('data-members-region=""', 1)[1].split("</section>", 1)[0]
-      assert members_region.find("OIDC User") < members_region.find("New Group Owner"), members_region
+      assert members_region.find("Development User") < members_region.find("New Group Owner"), members_region
 
       demote_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null "
@@ -1054,7 +1078,7 @@ in {
           if line.lower().startswith("location:")
       )
       assert automatic_location.startswith(
-          "http://127.0.0.1:19090/authorize?"
+          "${oidcIssuer}/api/oidc/authorization?"
       ), automatic_location
       refreshed_expiry = int(machine.succeed(
           "mariadb --batch --skip-column-names zotero_www --execute="
@@ -1203,7 +1227,7 @@ in {
           machine.succeed("cat /etc/zotero-dataserver/stream-server.json")
       )
       assert stream_server["listenAddress"] == "127.0.0.1", stream_server
-      assert stream_server["statusInterval"] == 0, stream_server
+      assert "statusInterval" not in stream_server, stream_server
       assert stream_server["redis"] == {
           "url": "redis://127.0.0.1:16389",
           "prefix": "zotero:",
