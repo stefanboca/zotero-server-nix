@@ -319,7 +319,6 @@ async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
         StatusCode::NOT_FOUND => "The page may have moved, or you may not have access to it.",
         _ => "The request could not be completed. Please try again",
     };
-    dbg!(&message);
     view! {
         cx =>
         (status)
