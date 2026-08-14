@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO users_meta (userID, metaKey, metaValue) VALUES (?, 'profile_realname', ?) ON DUPLICATE KEY UPDATE metaValue = VALUES(metaValue)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d69056c3e3a81bb87107012443cd8b67faf2099ac5dda5c19ee9c2045b40b29b"
+}

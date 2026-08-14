@@ -1,0 +1,26 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT LOWER(HEX(tokenHash)) AS `handle!` FROM browser_sessions WHERE userID = ? FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "handle!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 256
+        },
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "547b1651e0fd50dd38f9952f7d7d3129416a131561f11dd131edcf5b8054a44d"
+}

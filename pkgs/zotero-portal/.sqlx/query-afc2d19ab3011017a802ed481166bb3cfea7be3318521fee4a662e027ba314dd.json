@@ -1,0 +1,31 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT userID FROM browser_sessions WHERE userID = ? AND tokenHash = UNHEX(?) FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "userID",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | MULTIPLE_KEY | UNSIGNED | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 10
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.browser_sessions",
+            "name": "userID"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "afc2d19ab3011017a802ed481166bb3cfea7be3318521fee4a662e027ba314dd"
+}

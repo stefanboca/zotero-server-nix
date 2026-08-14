@@ -33,7 +33,10 @@ impl Dataserver {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned(),
-            user_id: value.get("userID").and_then(Value::as_u64).map(UserId::new),
+            user_id: value
+                .get("userID")
+                .and_then(Value::as_u64)
+                .and_then(|user_id| UserId::try_from(user_id).ok()),
             access: value
                 .get("access")
                 .cloned()

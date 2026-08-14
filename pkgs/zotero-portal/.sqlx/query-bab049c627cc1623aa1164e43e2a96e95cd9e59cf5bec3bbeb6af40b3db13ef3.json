@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM browser_sessions WHERE userID = ? AND tokenHash = UNHEX(?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "bab049c627cc1623aa1164e43e2a96e95cd9e59cf5bec3bbeb6af40b3db13ef3"
+}

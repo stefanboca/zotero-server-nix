@@ -1,0 +1,62 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT LOWER(HEX(tokenHash)) AS `handle!`, DATE_FORMAT(createdAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `created_at!`, DATE_FORMAT(lastSeenAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `last_seen_at!`, DATE_FORMAT(expiresAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `expires_at!` FROM browser_sessions WHERE userID = ? ORDER BY lastSeenAt DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "handle!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 256
+        },
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 128
+        },
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "last_seen_at!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 128
+        },
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "expires_at!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 128
+        },
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "3526bc9ad71f830a965a98b3eb47803fd3a56290af48c78b26709fcf9ec3319b"
+}

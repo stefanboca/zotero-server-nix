@@ -1,0 +1,82 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT U.userID AS `user_id: UserId`, U.username, U.email, UM.metaValue AS `real_name?` FROM users U CROSS JOIN (SELECT ? AS search) S LEFT JOIN users_meta UM ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' LEFT JOIN GDN_User GU ON GU.UserID = U.userID WHERE U.role <> 'deleted' AND COALESCE(GU.Banned, 0) = 0 AND EXISTS (SELECT 1 FROM oidc_identities OI WHERE OI.userID = U.userID) AND (LOCATE(S.search, U.username) > 0 OR LOCATE(S.search, U.email) > 0 OR LOCATE(S.search, COALESCE(UM.metaValue, '')) > 0) ORDER BY CASE WHEN U.username = S.search OR U.email = S.search OR UM.metaValue = S.search THEN 0 WHEN U.username LIKE CONCAT(S.search, '%') OR U.email LIKE CONCAT(S.search, '%') OR UM.metaValue LIKE CONCAT(S.search, '%') THEN 1 ELSE 2 END, COALESCE(NULLIF(UM.metaValue, ''), U.username), U.userID LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id: UserId",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 10
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "userID"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "real_name?",
+        "type_info": {
+          "type": "Blob",
+          "flags": "BLOB | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 262140
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users_meta",
+            "name": "metaValue"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "953d00bfdcc39b185dff1490060d1a8af06c55bc529514bd2f7837fc0f317532"
+}

@@ -54,7 +54,7 @@
       pkgs = nixpkgsFor.${system};
     in {
       default = pkgs.mkShellNoCC {
-        packages = [pkgs.sqlx-cli pkgs.tailwindcss_4 self.packages.${system}.topcoat-cli];
+        packages = with pkgs; [sqlx-cli tailwindcss_4 pkgs.topcoat-cli];
         env.TAILWIND_CLI = getExe pkgs.tailwindcss_4;
       };
     });
@@ -70,18 +70,6 @@
       formatting = {formatting = treefmtFor.${system}.config.build.check self;};
       nixos = import ./tests/nixos {
         pkgs = nixpkgsFor.${system};
-        inherit
-          (self.packages.${system})
-          oidc-provider-mock
-          versitygw
-          zotero-attachment-proxy
-          zotero-portal
-          zotero-citeproc-js-server
-          zotero-dataserver
-          zotero-stream-server
-          zotero-tinymce-clean-server
-          zotero-translation-server
-          ;
         module = self.nixosModules.default;
       };
     in

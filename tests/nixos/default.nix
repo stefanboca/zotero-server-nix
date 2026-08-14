@@ -1,15 +1,6 @@
 {
   module,
   pkgs,
-  oidc-provider-mock,
-  versitygw,
-  zotero-attachment-proxy,
-  zotero-portal,
-  zotero-citeproc-js-server,
-  zotero-dataserver,
-  zotero-stream-server,
-  zotero-tinymce-clean-server,
-  zotero-translation-server,
 }: let
   testCertificates = import "${pkgs.path}/nixos/tests/common/acme/server/snakeoil-certs.nix";
   testDomain = testCertificates.domain;
@@ -26,7 +17,6 @@ in {
       imports = [
         module
         (import ../../dev/oidc-provider-mock.nix {
-          package = oidc-provider-mock;
           port = 19090;
         })
       ];
@@ -37,35 +27,21 @@ in {
 
       services.zotero-dataserver = {
         enable = true;
-        package = zotero-dataserver;
         virtualHost = testDomain;
 
         attachment-proxy = {
-          package = zotero-attachment-proxy;
           settings.port = 13000;
         };
         portal = {
-          package = zotero-portal;
           issuer = oidcIssuer;
           clientId = "zotero-test";
           clientSecretFile = oidcClientSecret;
         };
-        citeproc-js-server = {
-          package = zotero-citeproc-js-server;
-          settings.port = 18085;
-        };
-        stream-server = {
-          package = zotero-stream-server;
-          settings.httpPort = 18080;
-        };
-        tinymce-clean-server = {
-          package = zotero-tinymce-clean-server;
-          settings.port = 16343;
-        };
-        translation-server = {
-          package = zotero-translation-server;
-          settings.port = 11969;
-        };
+
+        citeproc-js-server.settings.port = 18085;
+        stream-server.settings.httpPort = 18080;
+        tinymce-clean-server.settings.port = 16343;
+        translation-server.settings.port = 11969;
       };
 
       services = {
@@ -80,10 +56,7 @@ in {
         mysql.settings.mysqld.port = 13336;
         opensearch.settings."http.port" = 19200;
         redis.servers.zotero-dataserver.port = 16389;
-        versitygw = {
-          package = versitygw;
-          port = 11000;
-        };
+        versitygw.port = 11000;
       };
 
       systemd.services = {
@@ -576,14 +549,13 @@ in {
       assert 'action="/user/logout"' in account_page, account_page
       assert "Your groups" not in account_page, account_page
 
-      personal_library_headers = machine.succeed(
-          "curl --silent --show-error --dump-header - --output /dev/null --cookie "
+      personal_library_status = machine.succeed(
+          "curl --silent --show-error --output /dev/null --write-out '%{http_code}' --cookie "
           + shlex.quote(cookie_file)
           + " "
           + shlex.quote(public_url + f"/users/{oidc_user_id}/items")
-      ).lower()
-      assert personal_library_headers.startswith("http/2 307"), personal_library_headers
-      assert "location: /" in personal_library_headers, personal_library_headers
+      ).strip()
+      assert personal_library_status == "404", personal_library_status
       other_library_status = machine.succeed(
           "curl --silent --show-error --output /dev/null --write-out '%{http_code}' --cookie "
           + shlex.quote(cookie_file)
@@ -831,7 +803,7 @@ in {
       ).strip()
       assert rejected_transfer_status == "400", rejected_transfer_status
       rejected_transfer = machine.succeed("cat /tmp/rejected-transfer.html")
-      assert "That request could not be completed" in rejected_transfer, rejected_transfer
+      assert "The request could not be completed" in rejected_transfer, rejected_transfer
 
       transfer_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null "
@@ -897,16 +869,16 @@ in {
       assert "You are a member" in demoted_page, demoted_page
       assert "Add a member" not in demoted_page, demoted_page
 
-      account_page = machine.succeed(
+      settings_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + "/account")
+          + shlex.quote(public_url + "/settings")
       )
-      assert "Your identity is managed by the OpenID Connect provider" in account_page, account_page
-      assert "Unlimited" not in account_page, account_page
-      assert "User ID" not in account_page, account_page
-      assert 'name="user_id"' not in account_page, account_page
+      assert "Your identity is managed by the OpenID Connect provider" in settings_page, settings_page
+      assert "Unlimited" in settings_page, settings_page
+      assert "User ID" not in settings_page, settings_page
+      assert 'name="user_id"' not in settings_page, settings_page
       storage_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
@@ -1579,7 +1551,6 @@ in {
 
       services.versitygw = {
         enable = true;
-        package = versitygw;
         dataDir = "/srv/versitygw-test";
         metadataSidecarDir = "/var/lib/versitygw-sidecar";
         disableOTmpfile = true;

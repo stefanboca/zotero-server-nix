@@ -96,6 +96,23 @@ databases. For example:
 mariadb --host=127.0.0.1 --port=3306 --user=development --password=development zotero_www
 ```
 
+The portal uses SQLx checked query macros. `pkgs/zotero-portal/.env` points
+normal Cargo builds and SQLx CLI commands at the VM's `zotero_www` database.
+After starting a fresh VM or changing a migration, apply the migrations before
+building the portal; the SQLx CLI does not need to compile the application:
+
+```console
+cargo sqlx migrate run
+```
+
+Nix builds set `SQLX_OFFLINE` and use the committed metadata in
+`pkgs/zotero-portal/.sqlx`; `.env` is excluded from their source. After changing
+a query, refresh the metadata while the VM is running:
+
+```console
+cargo sqlx prepare -- --all-targets
+```
+
 The Dataserver, OIDC issuer, and OIDC callback intentionally use plain HTTP.
 No development certificate or custom trust configuration is required.
 

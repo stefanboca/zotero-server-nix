@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 use sqlx::{
-    ConnectOptions as _, MySql, MySqlPool, QueryBuilder, Row as _, Transaction,
+    ConnectOptions as _, MySql, MySqlPool, Transaction,
     mysql::{MySqlConnectOptions, MySqlPoolOptions},
 };
 

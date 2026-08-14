@@ -1,4 +1,5 @@
 use super::*;
+
 impl LoginCompletionLock<'_> {
     pub async fn commit(self) -> anyhow::Result<()> {
         self.0.commit().await.map_err(Into::into)
@@ -11,11 +12,12 @@ impl Database {
         user_id: UserId,
     ) -> anyhow::Result<Option<LoginCompletionLock<'_>>> {
         let mut transaction = self.db.begin().await?;
-        let locked_user_id =
-            sqlx::query_scalar::<_, UserId>("SELECT userID FROM users WHERE userID = ? FOR UPDATE")
-                .bind(user_id)
-                .fetch_optional(&mut *transaction)
-                .await?;
+        let locked_user_id = sqlx::query_scalar!(
+            "SELECT userID AS `user_id: UserId` FROM users WHERE userID = ? FOR UPDATE",
+            user_id
+        )
+        .fetch_optional(&mut *transaction)
+        .await?;
 
         if locked_user_id != Some(user_id) {
             return Ok(None);
@@ -31,18 +33,18 @@ impl Database {
     ) -> anyhow::Result<Option<UserId>> {
         self.delete_expired_browser_sessions(dataserver).await?;
         let mut transaction = self.db.begin().await?;
-        let user_id = sqlx::query_scalar::<_, UserId>(
-            "SELECT userID FROM browser_sessions WHERE tokenHash = ? FOR UPDATE",
+        let user_id = sqlx::query_scalar!(
+            "SELECT userID AS `user_id: UserId` FROM browser_sessions WHERE tokenHash = ? FOR UPDATE",
+            token_hash
         )
-        .bind(token_hash)
         .fetch_optional(&mut *transaction)
         .await?;
         if user_id.is_some() {
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE browser_sessions SET expiresAt = FROM_UNIXTIME(?), lastSeenAt = CURRENT_TIMESTAMP(6) WHERE tokenHash = ?",
+                expires_at.as_second(),
+                token_hash
             )
-            .bind(expires_at.as_second())
-            .bind(token_hash)
             .execute(&mut *transaction)
             .await?;
         }
@@ -59,12 +61,12 @@ impl Database {
     ) -> anyhow::Result<()> {
         self.delete_expired_browser_sessions(dataserver).await?;
         let mut transaction = self.db.begin().await?;
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO browser_sessions (tokenHash, userID, expiresAt) VALUES (?, ?, FROM_UNIXTIME(?))",
+            token_hash,
+            user_id,
+            expires_at.as_second()
         )
-        .bind(token_hash)
-        .bind(user_id)
-        .bind(expires_at.as_second())
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
@@ -77,10 +79,10 @@ impl Database {
         token_hash: &[u8],
     ) -> anyhow::Result<()> {
         let mut transaction = self.db.begin().await?;
-        let user_id = sqlx::query_scalar::<_, UserId>(
-            "SELECT userID FROM browser_sessions WHERE tokenHash = ? FOR UPDATE",
+        let user_id = sqlx::query_scalar!(
+            "SELECT userID AS `user_id: UserId` FROM browser_sessions WHERE tokenHash = ? FOR UPDATE",
+            token_hash
         )
-        .bind(token_hash)
         .fetch_optional(&mut *transaction)
         .await?;
         if let Some(user_id) = user_id {
@@ -88,18 +90,20 @@ impl Database {
                 .revoke_web_library_api_keys(user_id, &[session_handle(token_hash)])
                 .await?;
         }
-        sqlx::query("DELETE FROM browser_sessions WHERE tokenHash = ?")
-            .bind(token_hash)
-            .execute(&mut *transaction)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM browser_sessions WHERE tokenHash = ?",
+            token_hash
+        )
+        .execute(&mut *transaction)
+        .await?;
         transaction.commit().await?;
         Ok(())
     }
 
     async fn delete_expired_browser_sessions(&self, dataserver: &Dataserver) -> anyhow::Result<()> {
         let mut transaction = self.db.begin().await?;
-        let rows = sqlx::query(
-            "SELECT userID, LOWER(HEX(tokenHash)) AS handle \
+        let rows = sqlx::query!(
+            "SELECT userID AS `user_id: UserId`, LOWER(HEX(tokenHash)) AS `handle!` \
              FROM browser_sessions \
              WHERE expiresAt <= CURRENT_TIMESTAMP(6) FOR UPDATE",
         )
@@ -108,16 +112,16 @@ impl Database {
         let mut handles_by_user = BTreeMap::<UserId, Vec<String>>::new();
         for row in rows {
             handles_by_user
-                .entry(row.try_get("userID")?)
+                .entry(row.user_id)
                 .or_default()
-                .push(row.try_get("handle")?);
+                .push(row.handle);
         }
         for (user_id, handles) in handles_by_user {
             dataserver
                 .revoke_web_library_api_keys(user_id, &handles)
                 .await?;
         }
-        sqlx::query("DELETE FROM browser_sessions WHERE expiresAt <= CURRENT_TIMESTAMP(6)")
+        sqlx::query!("DELETE FROM browser_sessions WHERE expiresAt <= CURRENT_TIMESTAMP(6)")
             .execute(&mut *transaction)
             .await?;
         transaction.commit().await?;
@@ -130,23 +134,23 @@ impl Database {
         user_id: UserId,
     ) -> anyhow::Result<Vec<BrowserSession>> {
         self.delete_expired_browser_sessions(dataserver).await?;
-        let rows = sqlx::query(
-            "SELECT LOWER(HEX(tokenHash)) AS handle, \
-             DATE_FORMAT(createdAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS createdAt, \
-             DATE_FORMAT(lastSeenAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS lastSeenAt, \
-             DATE_FORMAT(expiresAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS expiresAt \
+        let rows = sqlx::query!(
+            "SELECT LOWER(HEX(tokenHash)) AS `handle!`, \
+             DATE_FORMAT(createdAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `created_at!`, \
+             DATE_FORMAT(lastSeenAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `last_seen_at!`, \
+             DATE_FORMAT(expiresAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `expires_at!` \
              FROM browser_sessions WHERE userID = ? ORDER BY lastSeenAt DESC",
+            user_id
         )
-        .bind(user_id)
         .fetch_all(&self.db)
         .await?;
         rows.into_iter()
             .map(|row| {
                 Ok(BrowserSession {
-                    handle: row.try_get("handle")?,
-                    created_at: row.try_get::<String, _>("createdAt")?.parse()?,
-                    last_seen_at: row.try_get::<String, _>("lastSeenAt")?.parse()?,
-                    expires_at: row.try_get::<String, _>("expiresAt")?.parse()?,
+                    handle: row.handle,
+                    created_at: row.created_at.parse()?,
+                    last_seen_at: row.last_seen_at.parse()?,
+                    expires_at: row.expires_at.parse()?,
                 })
             })
             .collect()
@@ -162,12 +166,12 @@ impl Database {
             return Ok(false);
         }
         let mut transaction = self.db.begin().await?;
-        let exists = sqlx::query_scalar::<_, UserId>(
+        let exists = sqlx::query_scalar!(
             "SELECT userID FROM browser_sessions \
              WHERE userID = ? AND tokenHash = UNHEX(?) FOR UPDATE",
+            user_id,
+            handle
         )
-        .bind(user_id)
-        .bind(handle)
         .fetch_optional(&mut *transaction)
         .await?
         .is_some();
@@ -177,11 +181,13 @@ impl Database {
         dataserver
             .revoke_web_library_api_keys(user_id, &[handle.to_owned()])
             .await?;
-        sqlx::query("DELETE FROM browser_sessions WHERE userID = ? AND tokenHash = UNHEX(?)")
-            .bind(user_id)
-            .bind(handle)
-            .execute(&mut *transaction)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM browser_sessions WHERE userID = ? AND tokenHash = UNHEX(?)",
+            user_id,
+            handle
+        )
+        .execute(&mut *transaction)
+        .await?;
         transaction.commit().await?;
         Ok(true)
     }
@@ -192,18 +198,17 @@ impl Database {
         user_id: UserId,
     ) -> anyhow::Result<u64> {
         let mut transaction = self.db.begin().await?;
-        let handles = sqlx::query_scalar::<_, String>(
-            "SELECT LOWER(HEX(tokenHash)) FROM browser_sessions \
+        let handles = sqlx::query_scalar!(
+            "SELECT LOWER(HEX(tokenHash)) AS `handle!` FROM browser_sessions \
              WHERE userID = ? FOR UPDATE",
+            user_id
         )
-        .bind(user_id)
         .fetch_all(&mut *transaction)
         .await?;
         dataserver
             .revoke_web_library_api_keys(user_id, &handles)
             .await?;
-        let revoked = sqlx::query("DELETE FROM browser_sessions WHERE userID = ?")
-            .bind(user_id)
+        let revoked = sqlx::query!("DELETE FROM browser_sessions WHERE userID = ?", user_id)
             .execute(&mut *transaction)
             .await?
             .rows_affected();
@@ -218,10 +223,10 @@ impl Database {
         token_hash: &[u8],
     ) -> anyhow::Result<WebLibraryAccess> {
         let mut transaction = self.db.begin().await?;
-        let session_user_id = sqlx::query_scalar::<_, UserId>(
-            "SELECT userID FROM browser_sessions WHERE tokenHash = ? FOR UPDATE",
+        let session_user_id = sqlx::query_scalar!(
+            "SELECT userID AS `user_id: UserId` FROM browser_sessions WHERE tokenHash = ? FOR UPDATE",
+            token_hash
         )
-        .bind(token_hash)
         .fetch_optional(&mut *transaction)
         .await?;
         if session_user_id != Some(user_id) {

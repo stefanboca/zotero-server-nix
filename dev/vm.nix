@@ -16,10 +16,7 @@
 in {
   imports = [
     module
-    (import ./oidc-provider-mock.nix {
-      package = pkgs.oidc-provider-mock;
-      port = oidcPort;
-    })
+    (import ./oidc-provider-mock.nix {port = oidcPort;})
   ];
 
   nixpkgs.overlays = [overlay];

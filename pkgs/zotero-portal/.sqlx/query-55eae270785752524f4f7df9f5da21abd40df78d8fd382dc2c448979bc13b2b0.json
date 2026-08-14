@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO users (username, password, email) VALUES (?, '!oidc-only!', ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "55eae270785752524f4f7df9f5da21abd40df78d8fd382dc2c448979bc13b2b0"
+}
