@@ -28,7 +28,6 @@ in {
     enable = true;
     virtualHost = zoteroUri;
     portal.enable = false;
-    php.settings.exposeErrors = true;
     stream-server.settings = {
       httpPort = streamPort;
       listenAddress = "0.0.0.0";

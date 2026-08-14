@@ -39,6 +39,13 @@ The module does not start the optional global-items and text-to-speech
 services. The text-to-speech service generates audio for Read Aloud in the
 Zotero web reader. Desktop clients do not use it.
 
+## TODO
+
+- Add a full-text indexer that extracts text from files uploaded by the Web
+  Library and submits it to Dataserver. The existing OpenSearch integration
+  indexes full-text content received through the API but does not extract text
+  from stored PDFs itself.
+
 ## Development backend VM
 
 Run the backend dependencies and a mock OIDC provider with QEMU:
@@ -107,9 +114,8 @@ from the VM console while reproducing a request with:
 sudo journalctl --follow --identifier=zotero-dataserver
 ```
 
-Unexpected Dataserver errors also include their details in development API
-responses. Full error reports may additionally be archived in the managed
-`zotero-errors` S3 bucket.
+Full error reports may additionally be archived in the managed `zotero-errors`
+S3 bucket.
 
 ## Basic configuration
 

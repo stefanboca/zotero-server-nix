@@ -11,21 +11,19 @@ use topcoat::{
 };
 
 use crate::{
-    app::{BareLayout, current_user, normalized_return_path, valid_session_token},
-    backend::Backend,
+    app::{BareLayout, FLOW_LIFETIME, current_user, normalized_return_path},
+    backend::{Backend, OidcFlow},
+    epoch_seconds,
 };
-
-use super::super::auth::begin_oidc_flow;
 
 #[query_params(error = bad_request)]
 struct LoginQuery {
     session: Option<String>,
-    #[serde(rename = "continue")]
-    return_path: Option<String>,
+    redirect_to: Option<String>,
 }
 
-fn return_path(query: &LoginQuery) -> Result<String> {
-    let value = query.return_path.as_deref().unwrap_or("/");
+fn redirect_to(query: &LoginQuery) -> Result<String> {
+    let value = query.redirect_to.as_deref().unwrap_or("/");
     normalized_return_path(value).ok_or_else(|| bad_request("invalid login return path").into())
 }
 
@@ -38,11 +36,7 @@ async fn bare_login_layout(cx: &mut CxBuilder, body: Body, next: Next<'_>) -> Re
 #[page]
 async fn login(cx: &Cx) -> Result {
     let query = query_params::<LoginQuery>(cx)?;
-    let action = if let Some(dataserver_session) = query.session.as_deref() {
-        if !valid_session_token(dataserver_session) {
-            return Err(bad_request("invalid Zotero login-session token").into());
-        }
-
+    let params = if let Some(dataserver_session) = query.session.as_deref() {
         let backend = app_context::<Backend>(cx);
         let info = backend.login_session_info(dataserver_session).await?;
         if info.status != "pending" {
@@ -62,19 +56,17 @@ async fn login(cx: &Cx) -> Result {
                 return Err(redirect(url.as_str()).into());
             }
         }
-        let query = url::form_urlencoded::Serializer::new(String::new())
+        url::form_urlencoded::Serializer::new(String::new())
             .append_pair("session", dataserver_session)
-            .finish();
-        format!("/auth/oidc/start?{query}")
+            .finish()
     } else {
-        let return_path = return_path(query)?;
+        let redirect_to = redirect_to(query)?;
         if current_user(cx).await?.is_some() {
-            return Err(redirect(&return_path).into());
+            return Err(redirect(&redirect_to).into());
         }
-        let query = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("continue", &return_path)
-            .finish();
-        format!("/user/login?{query}")
+        url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("redirect_to", &redirect_to)
+            .finish()
     };
     view! {
         <main
@@ -82,7 +74,7 @@ async fn login(cx: &Cx) -> Result {
         >
             <section class="w-full">
                 <h1 class="text-2xl font-semibold">"Sign in to Zotero"</h1>
-                <form class="mt-5" method="post" action=(action)>
+                <form class="mt-5" method="post" action=(format!("/user/login?{params}"))>
                     <button
                         class="cursor-pointer bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-800 dark:bg-red-700 dark:hover:bg-red-600"
                         type="submit"
@@ -98,15 +90,78 @@ async fn login(cx: &Cx) -> Result {
 #[route(POST)]
 async fn start(cx: &Cx) -> Result<Response> {
     let query = query_params::<LoginQuery>(cx)?;
-    if query.session.is_some() {
-        return Err(bad_request("desktop login must use the OIDC start endpoint").into());
-    }
-    let return_path = return_path(query)?;
-    if current_user(cx).await?.is_some() {
-        return see_other(&return_path).into_response(cx);
+    let (redirect_to, browser_session) = if let Some(dataserver_session) = query.session.as_deref()
+    {
+        let backend = app_context::<Backend>(cx);
+        let info = backend.login_session_info(dataserver_session).await?;
+        if info.status != "pending" {
+            return Err(bad_request("Zotero login session is no longer pending").into());
+        }
+        ("/".to_owned(), None)
+    } else {
+        let redirect_to = redirect_to(query)?;
+        if current_user(cx).await?.is_some() {
+            return see_other(&redirect_to).into_response(cx);
+        }
+        (redirect_to, session::refresh(cx).await?)
+    };
+
+    let url = begin_oidc_flow(cx, query.session.as_deref(), &redirect_to, browser_session).await?;
+    see_other(url.as_str()).into_response(cx)
+}
+
+async fn begin_oidc_flow(
+    cx: &Cx,
+    dataserver_session: Option<&str>,
+    return_path: &str,
+    browser_session: Option<session::Session>,
+) -> Result<String> {
+    let backend = app_context::<Backend>(cx);
+    if let Some(token_hash) = session::token_hash(cx).await?
+        && !backend.clear_oidc_flow(&*token_hash).await?
+    {
+        return Err(bad_request("the current OIDC login is already being completed").into());
     }
 
-    let browser_session = session::refresh(cx).await?;
-    let url = begin_oidc_flow(cx, None, &return_path, browser_session).await?;
-    see_other(url.as_str()).into_response(cx)
+    let authorization = backend.begin_oidc_authorization()?;
+    let new_browser_session = browser_session.is_none();
+    let browser_session = match browser_session {
+        Some(browser_session) => browser_session,
+        None => session::start(cx).await?,
+    };
+    let now = epoch_seconds()?;
+    backend.delete_expired_oidc_flows(now).await?;
+    let expires = now
+        .checked_add(FLOW_LIFETIME.as_secs())
+        .ok_or_else(|| anyhow::anyhow!("OIDC flow expiry is out of range"))?;
+    let flow = OidcFlow {
+        state: authorization.state,
+        nonce: authorization.nonce,
+        pkce_verifier: authorization.pkce_verifier,
+        session_token: dataserver_session.map(str::to_owned),
+        return_path: return_path.to_owned(),
+        expires,
+    };
+    let inserted = backend
+        .create_oidc_flow(&*browser_session.token_hash, &flow)
+        .await;
+    let inserted = match inserted {
+        Ok(inserted) => inserted,
+        Err(error) => {
+            if new_browser_session {
+                session::stop(cx).await?;
+            }
+            return Err(error.into());
+        }
+    };
+    if !inserted {
+        if new_browser_session {
+            session::stop(cx).await?;
+        }
+        return Err(bad_request(
+            "an OIDC login is already being completed for this Zotero session",
+        )
+        .into());
+    }
+    Ok(authorization.url)
 }

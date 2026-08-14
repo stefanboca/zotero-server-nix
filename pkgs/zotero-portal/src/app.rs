@@ -115,10 +115,6 @@ pub fn routes() -> RouterBuilder {
         .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
 }
 
-pub(crate) fn valid_session_token(token: &str) -> bool {
-    token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_alphanumeric())
-}
-
 // TODO: clean up this request confirmed nonsense
 pub(crate) fn request_confirmed(cx: &Cx) -> bool {
     headers(cx)
@@ -149,17 +145,21 @@ pub(crate) async fn authenticated_user(cx: &Cx) -> Result<UserId> {
         normalized_return_path(uri(cx).path_and_query().map_or("/", |path| path.as_str()))
             .unwrap_or_else(|| "/".to_owned());
     let query = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("continue", &return_path)
+        .append_pair("redirect_to", &return_path)
         .finish();
     Err(redirect(&format!("/user/login?{query}")).into())
 }
 
 pub(crate) fn normalized_return_path(value: &str) -> Option<String> {
-    if value.len() > 2048 || !value.starts_with('/') {
+    if value.len() > 2048
+        || !value.starts_with('/')
+        || value.starts_with("//")
+        || value.contains('\\')
+    {
         return None;
     }
 
-    let base = url::Url::parse("https://zotero.invalid/").expect("static base URL is valid");
+    let base = url::Url::parse("https://zotero.invalid").unwrap();
     let target = base.join(value).ok()?;
     if target.origin() != base.origin()
         || !target.username().is_empty()
@@ -198,9 +198,6 @@ async fn canonicalize_trailing_slash(
 
 #[layout]
 async fn root_layout(cx: &Cx, slot: Result) -> Result {
-    if slot.is_err() {
-        eprintln!("{:?}", &slot);
-    }
     if headers(cx).get("x-zotero-fragment").is_some() {
         return slot;
     }
@@ -448,13 +445,6 @@ mod tests {
     #[test]
     fn route_tree_builds_without_duplicate_routes_or_assets() {
         let _router = routes().build();
-    }
-
-    #[test]
-    fn accepts_only_dataserver_session_tokens() {
-        assert!(valid_session_token("0123456789abcdefghijklmnopqrstuv"));
-        assert!(!valid_session_token("short"));
-        assert!(!valid_session_token("0123456789abcdefghijklmnopqr-_"));
     }
 
     #[test]

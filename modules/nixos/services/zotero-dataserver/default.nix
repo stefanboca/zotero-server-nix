@@ -144,7 +144,6 @@
 
       public static $TESTING_SITE = ${phpBool cfg.php.settings.testingSite};
       public static $DEV_SITE = ${phpBool cfg.php.settings.devSite};
-      public static $EXPOSE_ERRORS = ${phpBool cfg.php.settings.exposeErrors};
 
       public static $DEBUG_LOG = ${phpBool cfg.php.settings.debugLog};
 
@@ -345,7 +344,6 @@ in {
         backoff = settingOption int 0 "Number of seconds clients should wait before their next request.";
         testingSite = settingOption bool false "Enable Dataserver's testing-site behavior.";
         devSite = settingOption bool false "Enable development behavior on a testing site.";
-        exposeErrors = settingOption bool false "Return detailed internal errors to API clients. This exposes stack traces and must only be enabled for development.";
         debugLog = settingOption bool false "Enable verbose Dataserver logging.";
         baseUri = settingOption str publicBaseUri "Canonical URI prefix used for Zotero objects and streaming topics.";
         reproxyMap = settingOption (attrsOf (listOf str)) {} "Legacy URI regular expressions and upstream server lists used to emit X-REPROXY-URL responses.";
