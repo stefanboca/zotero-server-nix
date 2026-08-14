@@ -1,0 +1,14 @@
+diff --git a/src/js/actions/meta.js b/src/js/actions/meta.js
+index 68fd32c..14dcd64 100644
+--- a/src/js/actions/meta.js
++++ b/src/js/actions/meta.js
+@@ -13 +13,2 @@ const fetchItemTemplate = (itemType, subType = null, opts = {}) => {
+-	return async (dispatch) => {
++	return async (dispatch, getState) => {
++		const { apiKey, apiConfig } = getState().config;
+@@ -23 +24 @@ const fetchItemTemplate = (itemType, subType = null, opts = {}) => {
+-					template = (await api()
++					template = (await api(apiKey, apiConfig)
+@@ -32 +33 @@ const fetchItemTemplate = (itemType, subType = null, opts = {}) => {
+-				template = (await api().template(itemType, subType).get(opts)).getData();
++				template = (await api(apiKey, apiConfig).template(itemType, subType).get(opts)).getData();

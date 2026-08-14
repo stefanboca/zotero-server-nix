@@ -1,13 +1,9 @@
 use topcoat::{
     Result,
-    router::{HeaderValue, StatusCode, header, page},
-    view::view,
+    router::{error::redirect, route},
 };
 
-#[page]
-async fn register() -> Result {
-    view! {
-        (StatusCode::TEMPORARY_REDIRECT)
-        ((header::LOCATION, HeaderValue::from_static("/user/login")))
-    }
+#[route(*)]
+async fn register() -> Result<()> {
+    Err(redirect("/user/login").into())
 }

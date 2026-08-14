@@ -3,53 +3,22 @@
   overlay,
 }: {
   config,
+  lib,
   pkgs,
   ...
 }: let
   zoteroPort = 8080;
-  autheliaPort = 9091;
+  oidcPort = 9091;
   databasePort = 3306;
   streamPort = 8089;
   translationPort = 1969;
-  portalPort = 3000;
   zoteroUri = "http://localhost:${toString zoteroPort}";
-  autheliaUri = "https://localhost:${toString autheliaPort}";
-  certificates = import "${pkgs.path}/nixos/tests/common/acme/server/snakeoil-certs.nix";
-  localhostCertificate = pkgs.runCommand "zotero-development-localhost-certificate" {nativeBuildInputs = [pkgs.openssl];} ''
-    mkdir "$out"
-    openssl req -new -newkey rsa:2048 -nodes \
-      -keyout "$out/key.pem" \
-      -out request.pem \
-      -subj /CN=localhost \
-      -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
-    openssl x509 -req \
-      -in request.pem \
-      -CA ${certificates.ca.cert} \
-      -CAkey ${certificates.ca.key} \
-      -set_serial 1 \
-      -days 36500 \
-      -copy_extensions copyall \
-      -out "$out/cert.pem"
-  '';
 in {
   imports = [
     module
-    (import ./authelia.nix {
-      address = "tcp://0.0.0.0:${toString autheliaPort}/";
-      clientId = "zotero";
-      redirectUri = "http://localhost:${toString portalPort}/auth/oidc/callback";
-      session.cookies = [
-        {
-          domain = "localhost";
-          authelia_url = autheliaUri;
-        }
-      ];
-      signingKey = "${localhostCertificate}/key.pem";
-      startBeforePortal = false;
-      tls = {
-        certificate = "${localhostCertificate}/cert.pem";
-        key = "${localhostCertificate}/key.pem";
-      };
+    (import ./oidc-provider-mock.nix {
+      package = pkgs.oidc-provider-mock;
+      port = oidcPort;
     })
   ];
 
@@ -59,15 +28,29 @@ in {
     enable = true;
     virtualHost = zoteroUri;
     portal.enable = false;
+    php.settings.exposeErrors = true;
     stream-server.settings = {
       httpPort = streamPort;
       listenAddress = "0.0.0.0";
+      statusInterval = 10;
     };
     translation-server.settings = {
       host = "0.0.0.0";
       port = translationPort;
     };
   };
+
+  services.phpfpm.pools.zotero-dataserver.settings = {
+    "decorate_workers_output" = false;
+    "php_admin_flag[log_errors]" = true;
+    "php_admin_value[error_log]" = "syslog";
+    "php_admin_value[error_reporting]" = "E_ALL";
+    "php_admin_value[syslog.ident]" = "zotero-dataserver";
+  };
+
+  services.caddy.virtualHosts.${zoteroUri}.extraConfig = lib.mkAfter ''
+    reverse_proxy 10.0.2.2:3000
+  '';
 
   services.mysql.settings.mysqld = {
     "bind-address" = "0.0.0.0";
@@ -113,8 +96,8 @@ in {
       }
       {
         from = "host";
-        host.port = autheliaPort;
-        guest.port = autheliaPort;
+        host.port = oidcPort;
+        guest.port = oidcPort;
       }
       {
         from = "host";
@@ -136,22 +119,20 @@ in {
 
   networking.firewall.allowedTCPPorts = [
     zoteroPort
-    autheliaPort
+    oidcPort
     databasePort
     streamPort
     translationPort
   ];
 
-  users.users.development = {
+  users.users.nixos = {
     isNormalUser = true;
-    initialPassword = "development";
+    initialPassword = "nixos";
     extraGroups = ["wheel"];
   };
 
-  services.getty.autologinUser = "development";
+  services.getty.autologinUser = "nixos";
   security.sudo.wheelNeedsPassword = false;
-
-  security.pki.certificateFiles = [certificates.ca.cert];
 
   environment.systemPackages = [pkgs.curl];
 

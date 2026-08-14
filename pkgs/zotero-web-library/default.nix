@@ -63,7 +63,17 @@ in
 
     npmDepsHash = "sha256-dLx1B7xSCDMy9rPQ6SbjejMx34DQzWYy/5edNdM15lI=";
 
-    patches = [./portal.patch];
+    patches = [
+      ./0001-default-missing-tag-colors-to-empty.patch
+      ./0002-use-configured-api-for-item-templates.patch
+      ./0003-add-portal-mode.patch
+      ./0004-add-read-only-mode.patch
+      ./0005-support-library-base-path.patch
+      ./0006-use-configured-buy-storage-url.patch
+      ./0007-remove-myfonts-tracking-import.patch
+      ./0008-format-partial-write-errors.patch
+      ./0009-respect-configured-schema-version.patch
+    ];
 
     nativeBuildInputs = [unzip];
 

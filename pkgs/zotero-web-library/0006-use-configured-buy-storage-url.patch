@@ -1,0 +1,40 @@
+diff --git a/src/js/reducers/errors.js b/src/js/reducers/errors.js
+index 30dcd63..06db8cf 100644
+--- a/src/js/reducers/errors.js
++++ b/src/js/reducers/errors.js
+@@ -1,7 +1,7 @@
+ import { CONNECTION_ISSUES, DISMISS_ERROR, ERROR_ADD_ITEMS_TO_COLLECTION, ERROR_ADD_TAGS_TO_ITEMS, ERROR_CREATE_COLLECTIONS,
+ 	ERROR_CREATE_ITEMS, ERROR_DELETE_ITEMS, ERROR_RECOVER_ITEMS_TRASH, ERROR_REMOVE_ITEMS_FROM_COLLECTION, ERROR_TRASH_ITEMS,
+ 	RESET_LIBRARY } from '../constants/actions';
+-import { buyStorageUrl } from '../constants/defaults';
++import { buyStorageUrl as defaultBuyStorageUrl } from '../constants/defaults';
+ const ERRORS_STORED_COUNT = 10; //how many errors are stored before oldest are discarded
+ var errorCounter = 0;
+ 
+@@ -9,7 +9,7 @@ const isDuplicate = (error, prevError) =>
+ 	error && prevError && error.message === prevError.message &&
+ 	error.type === prevError.type && !prevError.isDismissed;
+ 
+-const processError = ({ type, error, errorType, errorTag = null }, meta) => {
++const processError = ({ type, error, errorType, errorTag = null }, meta, buyStorageUrl = defaultBuyStorageUrl) => {
+ 	var message, cta;
+ 
+ 	if(error instanceof TypeError && (error.message === 'Failed to fetch' || error.message.startsWith('NetworkError'))) {
+@@ -65,7 +65,7 @@ const processError = ({ type, error, errorType, errorTag = null }, meta) => {
+ 	}
+ }
+ 
+-const errors = (state = [], action, { meta } = {}) => {
++const errors = (state = [], action, { config, meta } = {}) => {
+ 	if(action.type === DISMISS_ERROR) {
+ 		return state.filter(error => {
+ 			if(action.errorTag) {
+@@ -83,7 +83,7 @@ const errors = (state = [], action, { meta } = {}) => {
+ 			return state;
+ 		}
+ 
+-		const processedError = processError(action, meta);
++		const processedError = processError(action, meta, config?.buyStorageUrl);
+ 
+ 		if(isDuplicate(processedError, state[0])) {
+ 			return [

@@ -1,0 +1,30 @@
+diff --git a/controllers/ApiController.php b/controllers/ApiController.php
+index 93ca143..facbd8c 100644
+--- a/controllers/ApiController.php
++++ b/controllers/ApiController.php
+@@ -1453,7 +1453,9 @@ class ApiController extends Controller {
+ 		}
+ 		
+ 		// On testing site, display unexpected error messages
+-		if (Z_ENV_TESTING_SITE) {
++		if (Z_ENV_TESTING_SITE
++				|| (property_exists('Z_CONFIG', 'EXPOSE_ERRORS')
++					&& Z_CONFIG::$EXPOSE_ERRORS)) {
+ 			$this->e500($error['message']);
+ 		}
+ 		
+diff --git a/model/Errors.inc.php b/model/Errors.inc.php
+index 51cd90b..25f5ef2 100644
+--- a/model/Errors.inc.php
++++ b/model/Errors.inc.php
+@@ -179,7 +179,9 @@ class Zotero_Errors {
+ 			default:
+ 				if (!($e instanceof HTTPException) || $errorCode == 500) {
+ 					$error['code'] = 500;
+-					if (Z_ENV_TESTING_SITE) {
++					if (Z_ENV_TESTING_SITE
++							|| (property_exists('Z_CONFIG', 'EXPOSE_ERRORS')
++								&& Z_CONFIG::$EXPOSE_ERRORS)) {
+ 						$error['message'] = (string) $e;
+ 					}
+ 					else {

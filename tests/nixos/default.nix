@@ -1,6 +1,7 @@
 {
   module,
   pkgs,
+  oidc-provider-mock,
   versitygw,
   zotero-attachment-proxy,
   zotero-portal,
@@ -16,7 +17,7 @@
     pythonPackages.websocket-client
   ]);
   oidcClientSecret = pkgs.writeText "oidc-client-secret" "development";
-  oidcIssuer = "https://${testDomain}:19090";
+  oidcIssuer = "http://127.0.0.1:19090";
 in {
   nixos-dataserver = pkgs.testers.runNixOSTest {
     name = "zotero-dataserver";
@@ -24,21 +25,9 @@ in {
     nodes.machine = {
       imports = [
         module
-        (import ../../dev/authelia.nix {
-          address = "tcp://127.0.0.1:19090/";
-          clientId = "zotero-test";
-          redirectUri = "https://${testDomain}/auth/oidc/callback";
-          session.cookies = [
-            {
-              domain = testDomain;
-              authelia_url = oidcIssuer;
-            }
-          ];
-          signingKey = testCertificates.ca.key;
-          tls = {
-            certificate = testCertificates.${testDomain}.cert;
-            key = testCertificates.${testDomain}.key;
-          };
+        (import ../../dev/oidc-provider-mock.nix {
+          package = oidc-provider-mock;
+          port = 19090;
         })
       ];
 
@@ -136,7 +125,7 @@ in {
           "mysql.service",
           "opensearch.service",
           "versitygw.service",
-          "authelia-development.service",
+          "oidc-provider-mock.service",
           "zotero-portal-migrate.service",
           "zotero-fulltext-index.service",
           "zotero-portal.service",
@@ -203,6 +192,11 @@ in {
       assert machine.succeed(
           "stat -c %a /run/zotero-portal/zotero-portal.sock"
       ).strip() == "660"
+      web_library_css = machine.succeed(
+          "curl --silent --show-error --fail-with-body "
+          "https://${testDomain}/static/web-library/zotero-web-library.css"
+      )
+      assert web_library_css.startswith('@charset "UTF-8";'), web_library_css[:200]
       zotero_target_wants = machine.succeed(
           "systemctl show -P Wants zotero.target"
       ).split()
@@ -346,20 +340,23 @@ in {
               + urllib.parse.urlencode({"session": session["sessionToken"]})
           )
 
-      def authelia_login(cookie_file):
-          machine.succeed(
-              "curl --silent --show-error --fail-with-body "
-              "--header 'Content-Type: application/json' --data "
-              + shlex.quote(json.dumps({
-                  "username": "development",
-                  "password": "development",
-                  "keepMeLoggedIn": True,
-              }))
+      def oidc_authorization_url(session, cookie_file):
+          headers = machine.succeed(
+              "curl --silent --show-error --dump-header - "
+              "--data= --output /dev/null --cookie "
+              + shlex.quote(cookie_file)
               + " --cookie-jar "
               + shlex.quote(cookie_file)
               + " "
-              + shlex.quote("${oidcIssuer}/api/firstfactor")
+              + shlex.quote(oidc_start_url(session))
           )
+          location = next(
+              line.split(":", 1)[1].strip()
+              for line in headers.splitlines()
+              if line.lower().startswith("location:")
+          )
+          assert location.startswith("${oidcIssuer}/oauth2/authorize?"), location
+          return location
 
       login_page_session = create_login_session()
       register_headers = machine.succeed(
@@ -384,15 +381,16 @@ in {
       parallel_sessions = [create_login_session(), create_login_session()]
       parallel_commands = []
       for index, session in enumerate(parallel_sessions):
-          authelia_login(f"/tmp/oidc-parallel-{index}.cookies")
+          cookie_file = f"/tmp/oidc-parallel-{index}.cookies"
+          authorization_url = oidc_authorization_url(session, cookie_file)
           parallel_commands.append(
               "curl --silent --show-error --fail-with-body "
-              "--data= --location --cookie "
-              + shlex.quote(f"/tmp/oidc-parallel-{index}.cookies")
+              "--data-urlencode sub=alice --location --cookie "
+              + shlex.quote(cookie_file)
               + " --cookie-jar "
-              + shlex.quote(f"/tmp/oidc-parallel-{index}.cookies")
+              + shlex.quote(cookie_file)
               + " "
-              + shlex.quote(oidc_start_url(session))
+              + shlex.quote(authorization_url)
               + " >"
               + shlex.quote(f"/tmp/oidc-parallel-{index}.html")
           )
@@ -407,7 +405,7 @@ in {
       if not all(status["status"] == "completed" for status in parallel_statuses):
           print(machine.succeed("sed -n '1,120p' /tmp/oidc-parallel-0.html"))
           print(machine.succeed("sed -n '1,120p' /tmp/oidc-parallel-1.html"))
-          print(machine.succeed("journalctl -u zotero-portal -u authelia-development --no-pager -n 200"))
+          print(machine.succeed("journalctl -u zotero-portal -u oidc-provider-mock --no-pager -n 200"))
       assert all(status["status"] == "completed" for status in parallel_statuses), parallel_statuses
       assert parallel_statuses[0]["userID"] == parallel_statuses[1]["userID"], parallel_statuses
       oidc_user_id = parallel_statuses[0]["userID"]
@@ -422,7 +420,7 @@ in {
       oidc_counts = machine.succeed(
           "mariadb --batch --skip-column-names zotero_www "
           "--execute=\"SELECT "
-          "(SELECT COUNT(*) FROM users WHERE email = 'development@example.test'), "
+          "(SELECT COUNT(*) FROM users WHERE email = 'alice@example.com'), "
           "(SELECT COUNT(*) FROM oidc_identities "
           "WHERE issuer = '${oidcIssuer}')\""
       ).strip().split("\t")
@@ -440,7 +438,6 @@ in {
 
       repeated_session = create_login_session()
       cookie_file = "/tmp/oidc-repeated.cookies"
-      authelia_login(cookie_file)
       machine.succeed(
           "mariadb zotero_master --execute="
           + shlex.quote(
@@ -489,7 +486,7 @@ in {
       oidc_flow_cookie = browser_session_cookie()
       repeated_result = machine.succeed(
           "curl --silent --show-error --fail-with-body "
-          "--location --cookie "
+          "--data-urlencode sub=alice --location --cookie "
           + shlex.quote(cookie_file)
           + " --cookie-jar "
           + shlex.quote(cookie_file)
@@ -556,7 +553,7 @@ in {
           + " "
           + shlex.quote(public_url + "/")
       )
-      assert "Signed in as Development User" in account_page, account_page
+      assert "Signed in as Alice Developer" in account_page, account_page
       assert 'src="/library"' in account_page, account_page
       assert 'title="Zotero library"' in account_page, account_page
       assert 'href="/groups"' in account_page, account_page
@@ -856,7 +853,7 @@ in {
       assert 'value="demote-self"' in former_owner_page, former_owner_page
       assert "Become a member of this group?" in former_owner_page, former_owner_page
       members_region = former_owner_page.split('data-members-region=""', 1)[1].split("</section>", 1)[0]
-      assert members_region.find("Development User") < members_region.find("New Group Owner"), members_region
+      assert members_region.find("Alice Developer") < members_region.find("New Group Owner"), members_region
 
       demote_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null "
@@ -1078,7 +1075,7 @@ in {
           if line.lower().startswith("location:")
       )
       assert automatic_location.startswith(
-          "${oidcIssuer}/api/oidc/authorization?"
+          "${oidcIssuer}/oauth2/authorize?"
       ), automatic_location
       refreshed_expiry = int(machine.succeed(
           "mariadb --batch --skip-column-names zotero_www --execute="
@@ -1100,7 +1097,7 @@ in {
       assert flow_expiry < refreshed_expiry
       automatic_result = machine.succeed(
           "curl --silent --show-error --fail-with-body --location "
-          "--cookie "
+          "--data-urlencode sub=alice --cookie "
           + shlex.quote(cookie_file)
           + " --cookie-jar "
           + shlex.quote(cookie_file)
@@ -1148,11 +1145,16 @@ in {
           )
       )
       banned_session = create_login_session()
+      banned_authorization = oidc_authorization_url(
+          banned_session, "/tmp/oidc-banned.cookies"
+      )
       banned_status = machine.succeed(
           "curl --silent --show-error --location "
-          "--data= --output /tmp/oidc-banned.html --write-out='%{http_code}' "
+          "--data-urlencode sub=alice "
+          "--output /tmp/oidc-banned.html --write-out='%{http_code}' "
+          "--cookie /tmp/oidc-banned.cookies "
           "--cookie-jar /tmp/oidc-banned.cookies "
-          + shlex.quote(oidc_start_url(banned_session))
+          + shlex.quote(banned_authorization)
       ).strip()
       assert banned_status == "403", banned_status
       assert login_session_status(banned_session["sessionToken"])["status"] == "pending"
@@ -1170,11 +1172,16 @@ in {
           )
       )
       deleted_session = create_login_session()
+      deleted_authorization = oidc_authorization_url(
+          deleted_session, "/tmp/oidc-deleted.cookies"
+      )
       deleted_status = machine.succeed(
           "curl --silent --show-error --location "
-          "--data= --output /tmp/oidc-deleted.html --write-out='%{http_code}' "
+          "--data-urlencode sub=alice "
+          "--output /tmp/oidc-deleted.html --write-out='%{http_code}' "
+          "--cookie /tmp/oidc-deleted.cookies "
           "--cookie-jar /tmp/oidc-deleted.cookies "
-          + shlex.quote(oidc_start_url(deleted_session))
+          + shlex.quote(deleted_authorization)
       ).strip()
       assert deleted_status == "403", deleted_status
       assert login_session_status(deleted_session["sessionToken"])["status"] == "pending"
@@ -1227,7 +1234,7 @@ in {
           machine.succeed("cat /etc/zotero-dataserver/stream-server.json")
       )
       assert stream_server["listenAddress"] == "127.0.0.1", stream_server
-      assert "statusInterval" not in stream_server, stream_server
+      assert stream_server["statusInterval"] == 0, stream_server
       assert stream_server["redis"] == {
           "url": "redis://127.0.0.1:16389",
           "prefix": "zotero:",

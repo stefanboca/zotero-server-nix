@@ -4,9 +4,9 @@ use openidconnect::{
     ClientId, ClientSecret, EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl, RedirectUrl,
     core::{CoreClient, CoreProviderMetadata},
 };
+
 use serde::Serialize;
 use serde_json::Value;
-use url::Url;
 
 use crate::config::Config;
 
@@ -41,27 +41,16 @@ impl Oidc {
             ClientId::new(config.oidc.client_id.clone()),
             Some(ClientSecret::new(client_secret)),
         )
-        .set_redirect_uri(redirect_url(&config.server.base_uri)?);
+        .set_redirect_uri(
+            RedirectUrl::new(config.oidc.redirect_url.to_string())
+                .context("building OIDC redirect URL")?,
+        );
 
         Ok(Self {
             client,
             http_client,
         })
     }
-}
-
-fn redirect_url(base_uri: &Url) -> anyhow::Result<RedirectUrl> {
-    if !base_uri.has_host() {
-        anyhow::bail!("server base URI must include a host");
-    }
-    let mut url = base_uri.clone();
-    url.set_scheme("https")
-        .map_err(|()| anyhow::anyhow!("server base URI cannot use HTTPS"))?;
-    url.set_path("/auth/oidc/callback");
-    url.set_query(None);
-    url.set_fragment(None);
-
-    RedirectUrl::new(url.to_string()).context("building OIDC redirect URL")
 }
 
 pub fn jwt_claims<T: Serialize>(token: &T) -> anyhow::Result<Value> {
@@ -113,29 +102,5 @@ mod tests {
         assert_eq!(value_string(&claims, "email"), Some("user@example.com"));
         assert_eq!(value_string(&claims, "profile.name"), Some("Example User"));
         assert_eq!(value_string(&claims, "missing"), None);
-    }
-
-    #[test]
-    fn builds_https_callback_from_a_hostname() {
-        let redirect =
-            redirect_url(&Url::parse("zotero.example.com").unwrap()).expect("valid redirect URL");
-
-        assert_eq!(
-            redirect.as_str(),
-            "https://zotero.example.com/auth/oidc/callback"
-        );
-    }
-
-    #[test]
-    fn forces_https_and_replaces_the_path() {
-        let redirect = redirect_url(
-            &Url::parse("http://zotero.example.com:8443/old?query=1#fragment").unwrap(),
-        )
-        .expect("valid redirect URL");
-
-        assert_eq!(
-            redirect.as_str(),
-            "https://zotero.example.com:8443/auth/oidc/callback"
-        );
     }
 }

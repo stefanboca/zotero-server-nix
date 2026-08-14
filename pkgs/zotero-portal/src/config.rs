@@ -14,7 +14,7 @@ const DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60;
 pub struct Config {
     #[serde(default = "default_browser_session_lifetime_seconds")]
     pub browser_session_lifetime_seconds: u64,
-    pub server: ServerConfig,
+    pub server_address: Url,
     pub database: DatabaseConfig,
     pub oidc: OidcConfig,
     pub dataserver_url: Url,
@@ -37,25 +37,23 @@ impl Config {
     pub fn dev() -> Self {
         Self {
             browser_session_lifetime_seconds: DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS,
-            server: ServerConfig {
-                address: Url::parse("http://localhost:3000").unwrap(),
-                base_uri: Url::parse("http://localhost:3000").unwrap(),
-            },
+            server_address: Url::parse("http://127.0.0.1:3000").unwrap(),
             database: DatabaseConfig {
                 url: Url::parse("mysql://development:development@localhost:3306/zotero_www")
                     .unwrap(),
                 max_connections: 5,
             },
             oidc: OidcConfig {
-                issuer: "https://localhost:9091".into(),
+                issuer: "http://localhost:9091".into(),
                 client_id: "zotero".into(),
                 scopes: vec!["profile".into(), "email".into()],
+                redirect_url: Url::parse("http://localhost:8080/auth/oidc/callback").unwrap(),
                 username_claim: "".into(),
                 real_name_claim: "".into(),
                 require_verified_email: false,
             },
             dataserver_url: Url::parse("http://localhost:8080/api").unwrap(),
-            stream_server_url: Url::parse("ws://localhost:8089").unwrap(),
+            stream_server_url: Url::parse("ws://localhost:8080/stream/").unwrap(),
             translation_server_url: Url::parse("http://localhost:1969").unwrap(),
         }
     }
@@ -79,13 +77,6 @@ impl Secrets {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ServerConfig {
-    pub address: Url,
-    pub base_uri: Url,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
     pub url: Url,
     pub max_connections: u32,
@@ -97,6 +88,7 @@ pub struct OidcConfig {
     pub issuer: String,
     pub client_id: String,
     pub scopes: Vec<String>,
+    pub redirect_url: Url,
     pub username_claim: String,
     pub real_name_claim: String,
     pub require_verified_email: bool,

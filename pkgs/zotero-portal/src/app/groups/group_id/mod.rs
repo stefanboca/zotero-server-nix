@@ -1,5 +1,4 @@
 mod delete;
-mod library_slug;
 mod members;
 mod owner;
 mod rename;

@@ -4,7 +4,6 @@
   stdenv,
   tailwindcss_4,
   topcoat-cli,
-  zotero-web-library,
 }:
 rustPlatform.buildRustPackage {
   pname = "zotero-portal";
@@ -14,10 +13,7 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ./Cargo.lock;
   nativeBuildInputs = [tailwindcss_4 topcoat-cli];
-  env = {
-    TAILWIND_CLI = lib.getExe tailwindcss_4;
-    ZOTERO_WEB_LIBRARY = zotero-web-library;
-  };
+  env.TAILWIND_CLI = lib.getExe tailwindcss_4;
 
   # Scan the artifact built by buildRustPackage instead of making Topcoat run
   # a second Cargo build.
@@ -28,7 +24,6 @@ rustPlatform.buildRustPackage {
   postInstall = ''
     mkdir -p $out/bin/assets
     cp -r target/assets/. $out/bin/assets/
-    install -Dm644 ${zotero-web-library}/share/zotero-web-library/static/icons/32/z.svg $out/share/zotero-portal/z.svg
   '';
 
   meta = {

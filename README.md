@@ -41,7 +41,7 @@ Zotero web reader. Desktop clients do not use it.
 
 ## Development backend VM
 
-Run the backend dependencies and Authelia with QEMU:
+Run the backend dependencies and a mock OIDC provider with QEMU:
 
 ```console
 nix run
@@ -49,31 +49,37 @@ nix run
 
 The VM persists its state in `nixos.qcow2` in the current directory. It does
 not build, migrate, install, or run `zotero-portal`; run the portal on the host
-on port `3000`. The development VM sets `portal.enable = false`, while the
-module default remains `true` for normal deployments.
+on port `3000`. Caddy in the VM reaches it through QEMU's host gateway and
+proxies it as part of the unified development origin. The development VM sets
+`portal.enable = false`, while the module default remains `true` for normal
+deployments.
 
 | Service | Host endpoint |
 | --- | --- |
+| Portal and web library | `http://localhost:8080/` |
 | Dataserver API | `http://localhost:8080/api/` |
 | Attachment proxy | `http://localhost:8080/files/` |
 | Proxied stream server | `ws://localhost:8080/stream/` |
 | Direct stream server | `ws://localhost:8089` |
 | Translation server | `http://localhost:1969` |
 | MariaDB | `127.0.0.1:3306` |
-| Authelia issuer | `https://localhost:9091` |
+| Mock OIDC issuer | `http://localhost:9091` |
 
-Configure the host portal with the endpoints above. Its public origin is
-`http://localhost:3000`, and Authelia permits exactly this callback URI:
-`http://localhost:3000/auth/oidc/callback`. Run the portal's database migration
+Configure the host portal to listen on `127.0.0.1:3000`, with
+`http://localhost:8080` as its public origin. Caddy serves the packaged web
+library assets itself and proxies all remaining portal requests to
+`http://10.0.2.2:3000`. The mock provider accepts the resulting callback URI,
+`http://localhost:8080/auth/oidc/callback`. Run the portal's database migration
 from the host; the VM intentionally does not run it.
 
 The Dataserver superuser is `zotero-portal` with password `development`. The
 host portal uses this account when calling the Dataserver API.
 
-Authelia contains four development users: `development`, `alice`, `bob`, and
-`carol`. **The password for every user is `development`.** Each identity gets
-its own Zotero account on first login. The OIDC client ID is `zotero`, and its
-plain client secret is also `development`.
+The mock provider contains three development identities: `alice`, `bob`, and
+`carol`. Its authorization page has a one-click button for each identity;
+there are no passwords. Each identity gets its own Zotero account on first
+login. Use OIDC client ID `zotero` and client secret `development`; the mock
+accepts any development client credentials and redirect URI.
 
 MariaDB has a TCP user named `development` with password `development` and
 access to the `zotero_ids`, `zotero_master`, `zotero_shard`, and `zotero_www`
@@ -83,26 +89,27 @@ databases. For example:
 mariadb --host=127.0.0.1 --port=3306 --user=development --password=development zotero_www
 ```
 
-The Dataserver and OIDC callback intentionally use plain HTTP. Authelia permits
-HTTP localhost callbacks, but Authelia 4.39 requires its issuer itself to use
-HTTPS and has no insecure-issuer switch. Its forwarded port therefore uses a
-development certificate for `localhost`.
+The Dataserver, OIDC issuer, and OIDC callback intentionally use plain HTTP.
+No development certificate or custom trust configuration is required.
 
-The host portal must trust that certificate for OIDC discovery and token
-requests. Point it at the flake's normal-plus-development CA bundle before
-starting it:
+Shut down the guest with `sudo poweroff` and wait for QEMU to exit. Do not use
+QEMU's `Ctrl-a x` shortcut for routine shutdown: it terminates the VM immediately
+and can corrupt Dataserver's MyISAM ID-allocation tables.
+
+The VM console automatically logs in as `nixos`. Its password is also `nixos`,
+and it can run `sudo` without a password. These development credentials are
+only for local use and must not be copied into a real deployment.
+
+Dataserver PHP error summaries are sent to the systemd journal. Follow them
+from the VM console while reproducing a request with:
 
 ```console
-export SSL_CERT_FILE="$(nix build --no-link --print-out-paths .#development-ca-bundle)/ca-bundle.crt"
+sudo journalctl --follow --identifier=zotero-dataserver
 ```
 
-A browser may still show a certificate warning when it opens Authelia; accept
-the certificate or import the development CA into the browser separately.
-
-The VM console automatically logs in as `development`. Its password is also
-`development`, and it can run `sudo` without a password. These development
-credentials and certificates are only for local use and must not be copied
-into a real deployment.
+Unexpected Dataserver errors also include their details in development API
+responses. Full error reports may additionally be archived in the managed
+`zotero-errors` S3 bucket.
 
 ## Basic configuration
 

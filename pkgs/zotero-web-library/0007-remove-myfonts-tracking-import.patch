@@ -1,0 +1,12 @@
+diff --git a/src/scss/base/_fonts.scss b/src/scss/base/_fonts.scss
+index ab28845..229910e 100644
+--- a/src/scss/base/_fonts.scss
++++ b/src/scss/base/_fonts.scss
+@@ -42,7 +42,4 @@
+ */
+ 
+-/* @import must be at top of file, otherwise CSS will not work */
+-@import "//hello.myfonts.net/count/36ac02";
+-
+ @font-face {
+   font-family: AvenirNextLTPro;

@@ -106,6 +106,15 @@
     else "https://${cfg.virtualHost}";
   publicBaseUri = normalizeUri virtualHostUri;
   publicApiBaseUri = "${removeSuffix "/" publicBaseUri}${cfg.apiPath}";
+  citeprocSettings =
+    cfg.citeproc-js-server.settings
+    // {
+      host = "127.0.0.1";
+      localesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl-locales";
+      cslPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl";
+      renamedStylesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/renamed-styles.json";
+      cslDependentPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/dependent";
+    };
   fulltextIndexName = "item_fulltext_index";
   fulltextIndexUrl = "http://127.0.0.1:${toString cfg.fulltext-search.settings.port}/${fulltextIndexName}";
   fulltextIndex = json.generate "zotero-fulltext-index.json" {
@@ -135,6 +144,7 @@
 
       public static $TESTING_SITE = ${phpBool cfg.php.settings.testingSite};
       public static $DEV_SITE = ${phpBool cfg.php.settings.devSite};
+      public static $EXPOSE_ERRORS = ${phpBool cfg.php.settings.exposeErrors};
 
       public static $DEBUG_LOG = ${phpBool cfg.php.settings.debugLog};
 
@@ -335,6 +345,7 @@ in {
         backoff = settingOption int 0 "Number of seconds clients should wait before their next request.";
         testingSite = settingOption bool false "Enable Dataserver's testing-site behavior.";
         devSite = settingOption bool false "Enable development behavior on a testing site.";
+        exposeErrors = settingOption bool false "Return detailed internal errors to API clients. This exposes stack traces and must only be enabled for development.";
         debugLog = settingOption bool false "Enable verbose Dataserver logging.";
         baseUri = settingOption str publicBaseUri "Canonical URI prefix used for Zotero objects and streaming topics.";
         reproxyMap = settingOption (attrsOf (listOf str)) {} "Legacy URI regular expressions and upstream server lists used to emit X-REPROXY-URL responses.";
@@ -430,6 +441,8 @@ in {
       databaseMaxConnections = settingOption int 5 "Maximum MariaDB connections used by the login portal.";
     };
 
+    web-library.package = mkPackageOption pkgs "zotero-web-library" {};
+
     phpfpm.settings = mkOption {
       type = attrsOf (oneOf [str int bool]);
       default = {
@@ -485,6 +498,7 @@ in {
       settings = microserviceSettings "Streaming server" {
         httpPort = settingOption port 8089 "Local streaming-server listen port.";
         listenAddress = settingOption str "127.0.0.1" "Streaming-server listen address.";
+        statusInterval = settingOption int 0 "Seconds between connection-status log messages; 0 disables them.";
       };
     };
     tinymce-clean-server = {
@@ -634,6 +648,11 @@ in {
         virtualHosts.${cfg.virtualHost} = {
           extraConfig = ''
             route {
+              handle_path /static/web-library/* {
+                root * ${cfg.web-library.package}/share/zotero-web-library/static
+                file_server
+              }
+
               handle_path ${removeSuffix "/" cfg.attachment-proxy.path}/* {
                 reverse_proxy 127.0.0.1:${toString cfg.attachment-proxy.settings.port}
               }
@@ -708,14 +727,7 @@ in {
               region = cfg.storage.region;
             };
           });
-        "zotero-dataserver/citeproc-js-server.json".source = json.generate "citeproc-js-server-config.json" (cfg.citeproc-js-server.settings
-          // {
-            host = "127.0.0.1";
-            localesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl-locales";
-            cslPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl";
-            renamedStylesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/renamed-styles.json";
-            cslDependentPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/dependent";
-          });
+        "zotero-dataserver/citeproc-js-server.json".source = json.generate "citeproc-js-server-config.json" citeprocSettings;
         "zotero-dataserver/stream-server.json".source = json.generate "stream-server-config.json" (cfg.stream-server.settings
           // {
             trustedProxies = ["127.0.0.1"];
@@ -944,8 +956,8 @@ in {
         description = "Zotero citeproc-js-server";
         wantedBy = ["phpfpm-zotero-dataserver.service"];
         environment = {
-          NODE_ENV = "citeproc-js-server";
-          NODE_CONFIG_DIR = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/config:/etc/zotero-dataserver";
+          NODE_CONFIG = builtins.toJSON citeprocSettings;
+          NODE_CONFIG_DIR = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/config";
         };
         serviceConfig = {
           ExecStart = "${getExe cfg.citeproc-js-server.package}";

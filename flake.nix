@@ -34,18 +34,8 @@
           })
         ];
       });
-    developmentCaBundleFor = forAllSystems (system: let
-      pkgs = nixpkgsFor.${system};
-      certificates = import "${pkgs.path}/nixos/tests/common/acme/server/snakeoil-certs.nix";
-    in
-      pkgs.runCommand "zotero-development-ca-bundle" {} ''
-        mkdir "$out"
-        cat ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt ${certificates.ca.cert} > "$out/ca-bundle.crt"
-      '');
   in {
-    packages = forAllSystems (system:
-      import ./pkgs nixpkgsFor.${system}
-      // {development-ca-bundle = developmentCaBundleFor.${system};});
+    packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
     overlays.default = _: import ./pkgs;
 
     nixosModules = {
@@ -56,7 +46,7 @@
       default = {
         type = "app";
         program = "${devBackendFor.${system}.config.system.build.vm}/bin/run-nixos-vm";
-        meta.description = "Run a development Zotero backend with Authelia in a VM";
+        meta.description = "Run a development Zotero backend with a mock OIDC provider in a VM";
       };
     });
 
@@ -65,10 +55,7 @@
     in {
       default = pkgs.mkShellNoCC {
         packages = [pkgs.sqlx-cli pkgs.tailwindcss_4 self.packages.${system}.topcoat-cli];
-        env = {
-          TAILWIND_CLI = getExe pkgs.tailwindcss_4;
-          ZOTERO_WEB_LIBRARY = self.packages.${system}.zotero-web-library;
-        };
+        env.TAILWIND_CLI = getExe pkgs.tailwindcss_4;
       };
     });
 
@@ -85,6 +72,7 @@
         pkgs = nixpkgsFor.${system};
         inherit
           (self.packages.${system})
+          oidc-provider-mock
           versitygw
           zotero-attachment-proxy
           zotero-portal

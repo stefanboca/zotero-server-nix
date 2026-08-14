@@ -1,4 +1,5 @@
-use anyhow::Context as _;
+mod library_slug;
+
 use topcoat::{
     Result,
     context::{Cx, CxBuilder, app_context},
@@ -23,28 +24,16 @@ async fn bare_library_layout(cx: &mut CxBuilder, body: Body, next: Next<'_>) -> 
 }
 
 #[page]
-async fn library(cx: &Cx) -> Result {
-    web_library_document(cx).await
+async fn library_page(cx: &Cx) -> Result {
+    library(cx).await
 }
 
-pub(super) async fn web_library_document(cx: &Cx) -> Result {
+pub(self) async fn library(cx: &Cx) -> Result {
     let user = signed_in_user(cx).await?;
-    render_web_library_document(cx, &user).await
-}
-
-pub(super) async fn user_web_library_document(cx: &Cx, library_slug: &str) -> Result {
-    let user = signed_in_user(cx).await?;
-    if library_slug != user.username {
-        return Err(topcoat::router::error::not_found().into());
-    }
-    render_web_library_document(cx, &user).await
-}
-
-async fn render_web_library_document(cx: &Cx, user: &backend::UserSummary) -> Result {
     let access = app_context::<Backend>(cx)
         .web_library_access(user.user_id)
         .await?;
-    let config = web_library_config(user, access)?;
+    let config = web_library_config(&user, access)?;
 
     view! {
         cx =>
@@ -75,6 +64,7 @@ struct WebLibraryConfig {
     streaming_api_url: Url,
     is_recognizer_available: bool,
     website_url: String,
+    base_path: String,
     buy_storage_url: String,
     styles_source_url: String,
     styles_base_url: String,
@@ -87,6 +77,7 @@ struct WebLibraryApiConfig {
     api_authority_part: String,
     api_path: String,
     retry: u8,
+    zotero_schema_version: u16,
 }
 
 #[derive(serde::Serialize)]
@@ -101,16 +92,11 @@ fn web_library_config(
     user: &backend::UserSummary,
     access: WebLibraryAccess,
 ) -> anyhow::Result<Unescaped<String>> {
-    let origin = access.api_url.origin().ascii_serialization();
-    let authority = origin
-        .strip_prefix(&format!("{}://", access.api_url.scheme()))
-        .context("the public Zotero API URL has no authority")?
-        .to_owned();
     let mut api_path = access.api_url.path().trim_start_matches('/').to_owned();
     if !api_path.ends_with('/') {
         api_path.push('/');
     }
-    let website_url = format!("{origin}/");
+    let website_url = format!("{}/", access.api_url.origin().ascii_serialization());
     let config = WebLibraryConfig {
         is_embedded: false,
         portal_mode: true,
@@ -118,9 +104,10 @@ fn web_library_config(
         api_key: access.api_key,
         api_config: WebLibraryApiConfig {
             api_scheme: access.api_url.scheme().to_owned(),
-            api_authority_part: authority,
+            api_authority_part: access.api_url.authority().to_owned(),
             api_path,
             retry: 2,
+            zotero_schema_version: 42, // TODO: get this dynamically
         },
         user_id: user.user_id,
         user_slug: user.username.clone(),
@@ -131,8 +118,9 @@ fn web_library_config(
         },
         streaming_api_url: access.streaming_url,
         is_recognizer_available: false,
-        buy_storage_url: format!("{website_url}settings/storage"),
         website_url,
+        base_path: "/library".to_owned(),
+        buy_storage_url: "/settings#storage".to_owned(),
         styles_source_url: "/static/web-library/styles/styles.json".to_owned(),
         styles_base_url: "/static/web-library/styles/".to_owned(),
     };

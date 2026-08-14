@@ -1,0 +1,13 @@
+diff --git a/src/js/component/item-details/tag-picker.jsx b/src/js/component/item-details/tag-picker.jsx
+index 62a212e..00d4874 100644
+--- a/src/js/component/item-details/tag-picker.jsx
++++ b/src/js/component/item-details/tag-picker.jsx
+@@ -105,7 +105,7 @@ const TagPicker = ({ itemKey, libraryKey, isReadOnly }) => {
+ 	const dispatch = useDispatch();
+ 	const initialTags = useSelector(state => get(state, ['libraries', libraryKey, 'items', itemKey, 'tags'], []));
+ 	const isTouchOrSmall = useSelector(state => state.device.isTouchOrSmall);
+-	const tagColors = useSelector(state => get(state, ['libraries', libraryKey, 'tagColors', 'lookup']));
++	const tagColors = useSelector(state => get(state, ['libraries', libraryKey, 'tagColors', 'lookup'], {}));
+ 
+ 	// tags stored in the item property may require sorting. See #434
+ 	const sortedTags = [...initialTags];

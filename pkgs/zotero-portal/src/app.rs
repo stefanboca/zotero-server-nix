@@ -1,12 +1,11 @@
 mod auth;
 mod export;
+mod fallback;
 mod groups;
 mod import;
 mod library;
-mod path;
 mod search;
 mod settings;
-mod static_assets;
 mod translation;
 mod user;
 mod users;
@@ -80,10 +79,9 @@ pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
         .app_context(backend)
         .build();
 
-    let address = &config.server.address;
-    match address.scheme() {
+    match config.server_address.scheme() {
         "unix" => {
-            let socket = address.path();
+            let socket = config.server_address.path();
             match std::fs::remove_file(&socket) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -98,11 +96,7 @@ pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
                 .context("serving auth portal")
         }
         "http" | "https" => {
-            let host = address
-                .host()
-                .map_or_else(|| String::from("127.0.0.1"), |h| h.to_string());
-            let port = address.port().unwrap_or(80);
-            let listener = tokio::net::TcpListener::bind(format!("{host}:{port}"))
+            let listener = tokio::net::TcpListener::bind(config.server_address.authority())
                 .await
                 .context("binding tcp socket")?;
             topcoat::serve(listener, router)
@@ -204,6 +198,9 @@ async fn canonicalize_trailing_slash(
 
 #[layout]
 async fn root_layout(cx: &Cx, slot: Result) -> Result {
+    if slot.is_err() {
+        eprintln!("{:?}", &slot);
+    }
     if headers(cx).get("x-zotero-fragment").is_some() {
         return slot;
     }
@@ -338,6 +335,7 @@ async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
         StatusCode::NOT_FOUND => "The page may have moved, or you may not have access to it.",
         _ => "The request could not be completed. Please try again",
     };
+    dbg!(&message);
     view! {
         cx =>
         (status)

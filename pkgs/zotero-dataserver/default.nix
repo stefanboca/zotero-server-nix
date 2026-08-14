@@ -69,6 +69,7 @@ in
       ./0004-zero-unlimited-storage.patch
       ./0005-login-path.patch
       ./0006-local-fulltext-index.patch
+      ./0007-optionally-expose-detailed-errors.patch
     ];
 
     composerStrictValidation = false;

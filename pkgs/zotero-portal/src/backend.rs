@@ -17,12 +17,12 @@ use crate::{
     oidc::{Oidc, jwt_claims, merge_claims, value_at_path, value_string},
 };
 
-#[derive(Clone)]
+// TODO: each method accesses only one of db, dataserver, oidc, and client. split them
 pub struct Backend {
     config: Arc<Config>,
     db: MySqlPool,
-    dataserver: Arc<Dataserver>,
-    oidc: Arc<Oidc>,
+    dataserver: Dataserver,
+    oidc: Oidc,
     client: reqwest::Client,
 }
 
@@ -118,13 +118,11 @@ impl IdentityLock<'_> {
 
 impl Backend {
     pub async fn new(config: Arc<Config>, secrets: Secrets, db: MySqlPool) -> anyhow::Result<Self> {
-        let oidc = Oidc::discover(&config, secrets.oidc_client_secret).await?;
-        let dataserver = Dataserver::new(&config, secrets.dataserver_super_password)?;
         Ok(Self {
+            oidc: Oidc::discover(&config, secrets.oidc_client_secret).await?,
+            dataserver: Dataserver::new(&config, secrets.dataserver_super_password)?,
             config,
             db,
-            dataserver: Arc::new(dataserver),
-            oidc: Arc::new(oidc),
             client: reqwest::Client::new(),
         })
     }
@@ -237,7 +235,17 @@ impl Backend {
         token_hash: &[u8],
         flow: &OidcFlow,
     ) -> anyhow::Result<bool> {
-        match sqlx::query( "INSERT INTO oidc_flows (tokenHash, state, nonce, pkceVerifier, sessionToken, returnPath, expires) VALUES (?, ?, ?, ?, ?, ?, ?)", ) .bind(token_hash) .bind(&flow.state) .bind(&flow.nonce) .bind(&flow.pkce_verifier) .bind(&flow.session_token) .bind(&flow.return_path) .bind(flow.expires) .execute(&self.db) .await {
+        match
+        sqlx::query("INSERT INTO oidc_flows (tokenHash, state, nonce, pkceVerifier, sessionToken, returnPath, expires) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(token_hash)
+            .bind(&flow.state)
+            .bind(&flow.nonce)
+            .bind(&flow.pkce_verifier)
+            .bind(&flow.session_token)
+            .bind(&flow.return_path)
+            .bind(flow.expires)
+            .execute(&self.db)
+            .await {
             Ok(_) => Ok(true),
             Err(error) if is_duplicate_key(&error) => Ok(false),
             Err(error) => Err(error.into()),
