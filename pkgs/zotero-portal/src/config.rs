@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::Context as _;
@@ -25,17 +26,20 @@ pub struct Config {
 pub struct Secrets {
     pub(crate) oidc_client_secret: String,
     pub(crate) dataserver_super_password: String,
+    cookie_key: String,
 }
 
 impl Config {
-    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
+    pub fn from_file(path: &Path) -> anyhow::Result<Arc<Self>> {
         let contents = fs::read_to_string(path)
             .with_context(|| format!("reading configuration {}", path.display()))?;
-        toml::from_str(&contents).context("decoding TOML configuration")
+        toml::from_str(&contents)
+            .map(Arc::new)
+            .context("decoding TOML configuration")
     }
 
-    pub fn dev() -> Self {
-        Self {
+    pub fn dev() -> Arc<Self> {
+        Arc::new(Self {
             browser_session_lifetime_seconds: DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS,
             server_address: Url::parse("http://127.0.0.1:3000").unwrap(),
             database: DatabaseConfig {
@@ -46,16 +50,13 @@ impl Config {
             oidc: OidcConfig {
                 issuer: "http://localhost:9091".into(),
                 client_id: "zotero".into(),
-                scopes: vec!["profile".into(), "email".into()],
                 redirect_url: Url::parse("http://localhost:8080/auth/oidc/callback").unwrap(),
-                username_claim: "".into(),
-                real_name_claim: "".into(),
                 require_verified_email: false,
             },
             dataserver_url: Url::parse("http://localhost:8080/api").unwrap(),
             stream_server_url: Url::parse("ws://localhost:8080/stream/").unwrap(),
             translation_server_url: Url::parse("http://localhost:1969").unwrap(),
-        }
+        })
     }
 }
 
@@ -64,6 +65,7 @@ impl Secrets {
         Ok(Self {
             oidc_client_secret: read_credential("oidc-client-secret")?,
             dataserver_super_password: read_credential("dataserver-super-password")?,
+            cookie_key: read_credential("portal-cookie-key")?,
         })
     }
 
@@ -71,7 +73,12 @@ impl Secrets {
         Self {
             oidc_client_secret: "development".into(),
             dataserver_super_password: "development".into(),
+            cookie_key: "development-development-development".into(),
         }
+    }
+
+    pub(crate) fn cookie_key(&self) -> topcoat::cookie::Key {
+        topcoat::cookie::Key::derive_from(self.cookie_key.as_bytes())
     }
 }
 
@@ -87,10 +94,7 @@ pub struct DatabaseConfig {
 pub struct OidcConfig {
     pub issuer: String,
     pub client_id: String,
-    pub scopes: Vec<String>,
     pub redirect_url: Url,
-    pub username_claim: String,
-    pub real_name_claim: String,
     pub require_verified_email: bool,
 }
 

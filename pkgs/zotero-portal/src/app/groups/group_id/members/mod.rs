@@ -11,7 +11,11 @@ use topcoat::{
     view::view,
 };
 
-use crate::{app::request_confirmed, backend::Backend, dataserver::GroupRole};
+use crate::{
+    app::request_confirmed,
+    database::Database,
+    dataserver::{Dataserver, GroupRole},
+};
 
 use super::current_group;
 
@@ -83,14 +87,15 @@ async fn members(cx: &Cx) -> Result {
 #[page(POST)]
 async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
     let (actor_id, group, actor_role) = current_group(cx).await?;
-    let backend = app_context::<Backend>(cx);
+    let database = app_context::<Database>(cx);
+    let dataserver = app_context::<Dataserver>(cx);
 
     match input.operation.as_str() {
         "leave" => {
             if actor_role == GroupRole::Owner {
                 return Err(forbidden().into());
             }
-            if let Err(error) = backend.remove_group_user(group.id, actor_id).await {
+            if let Err(error) = dataserver.remove_group_user(group.id, actor_id).await {
                 eprintln!("failed to leave group: {error:#}");
                 return action_response(
                     cx,
@@ -123,11 +128,11 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
             if actor_role != GroupRole::Admin {
                 return Err(forbidden().into());
             }
-            let actor = backend
+            let actor = database
                 .user_by_id(actor_id)
                 .await?
                 .ok_or_else(|| bad_request("authenticated user does not exist"))?;
-            if let Err(error) = backend
+            if let Err(error) = dataserver
                 .set_group_user(group.id, actor_id, GroupRole::Member)
                 .await
             {
@@ -169,7 +174,7 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
                 .map(|identifier| identifier.strip_prefix('@').unwrap_or(identifier))
                 .filter(|identifier| !identifier.is_empty())
                 .ok_or_else(|| bad_request("member username or email is required"))?;
-            let target = backend
+            let target = database
                 .user_by_identifier(identifier)
                 .await?
                 .ok_or_else(|| bad_request("user is not a group member"))?;
@@ -181,7 +186,7 @@ async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
             if !actor_role.can_manage() && target.user_id != actor_id {
                 return Err(forbidden().into());
             }
-            if let Err(error) = backend.remove_group_user(group.id, target.user_id).await {
+            if let Err(error) = dataserver.remove_group_user(group.id, target.user_id).await {
                 eprintln!("failed to remove group member: {error:#}");
                 return action_response(
                     cx,

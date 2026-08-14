@@ -8,16 +8,14 @@ CREATE TABLE `oidc_identities` (
     FOREIGN KEY (`userID`) REFERENCES `users` (`userID`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE `oidc_flows` (
+CREATE TABLE `browser_sessions` (
   `tokenHash` binary(32) NOT NULL,
-  `state` varchar(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  `nonce` varchar(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  `pkceVerifier` varchar(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  `sessionToken` char(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  `expires` bigint unsigned NOT NULL,
-  `consumed` tinyint unsigned NOT NULL DEFAULT 0,
+  `userID` int unsigned NOT NULL,
+  `expiresAt` timestamp(6) NOT NULL,
+  `createdAt` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `lastSeenAt` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (`tokenHash`),
-  UNIQUE KEY `state` (`state`),
-  UNIQUE KEY `sessionToken` (`sessionToken`),
-  KEY `expires` (`expires`)
+  KEY `expiresAt` (`expiresAt`),
+  CONSTRAINT `browser_sessions_ibfk_1`
+    FOREIGN KEY (`userID`) REFERENCES `users` (`userID`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
-base64 = "0.23.1"
+jiff = { version = "0.2", features = ["serde"] }
 openidconnect = {
   version = "4.0.1",
   default-features = false,
@@ -19,7 +19,6 @@ sqlx = {
   default-features = false,
   features = ["macros", "migrate", "mysql", "runtime-tokio"]
 }
-time = { version = "0.3.55", features = ["formatting", "parsing"] }
 tokio = {
   version = "1.53.1",
   features = ["fs", "macros", "net", "rt-multi-thread", "signal"]

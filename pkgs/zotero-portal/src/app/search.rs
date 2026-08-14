@@ -4,7 +4,7 @@ use topcoat::{
     router::{Body, Response, route},
 };
 
-use crate::{app::translation::proxy_translation, backend::TranslationEndpoint};
+use crate::{app::translation::proxy_translation, dataserver::TranslationEndpoint};
 
 #[route(POST)]
 async fn search(cx: &Cx, body: Body) -> Result<Response> {

@@ -40,6 +40,7 @@
     authSalt = "${generatedCredentialDir}/auth-salt";
     attachmentProxySecret = "${generatedCredentialDir}/attachment-proxy-secret";
     dataserverSuperPassword = "${generatedCredentialDir}/dataserver-super-password";
+    portalCookieKey = "${generatedCredentialDir}/portal-cookie-key";
     s3AccessKeyId =
       if cfg.storage.accessKeyIdFile != null
       then cfg.storage.accessKeyIdFile
@@ -64,6 +65,11 @@
     {
       generate = true;
       name = "dataserver-super-password";
+      bytes = 32;
+    }
+    {
+      generate = true;
+      name = "portal-cookie-key";
       bytes = 32;
     }
     {
@@ -426,9 +432,6 @@ in {
         type = path;
         description = "File containing the OIDC client secret.";
       };
-      scopes = settingOption (listOf str) ["profile" "email"] "OIDC scopes requested in addition to the mandatory openid scope.";
-      usernameClaim = settingOption str "preferred_username" "OIDC claim used as the initial Zotero username; dotted paths address nested claims.";
-      realNameClaim = settingOption str "name" "OIDC claim synchronized to the Zotero profile real name; dotted paths address nested claims.";
       requireVerifiedEmail = settingOption bool true "Reject identities whose OIDC email_verified claim is not true.";
       browserSessionLifetimeSeconds = mkOption {
         type = nullOr int;
@@ -683,29 +686,20 @@ in {
       optionalAttrs cfg.portal.enable {
         "zotero-dataserver/portal.toml".source = toml.generate "zotero-portal.toml" (
           {
-            server = {
-              socket = "/run/zotero-portal/zotero-portal.sock";
-              base_uri = cfg.virtualHost;
-            };
+            server_address = "unix:///run/zotero-portal/zotero-portal.sock";
             database = {
-              socket = toString config.services.mysql.settings.mysqld.socket;
-              user = "zotero-portal";
-              name = "zotero_www";
+              url = "mysql://zotero-portal@localhost/zotero_www?socket=${toString config.services.mysql.settings.mysqld.socket}";
               max_connections = cfg.portal.databaseMaxConnections;
             };
             oidc = {
               issuer = cfg.portal.issuer;
               client_id = cfg.portal.clientId;
-              scopes = cfg.portal.scopes;
-            };
-            identity = {
-              username_claim = cfg.portal.usernameClaim;
-              real_name_claim = cfg.portal.realNameClaim;
+              redirect_url = "${removeSuffix "/" publicBaseUri}/auth/oidc/callback";
               require_verified_email = cfg.portal.requireVerifiedEmail;
             };
-            dataserver.url = publicApiBaseUri;
-            streaming.url = cfg.stream-server.publicUri;
-            translation_server.url = "http://127.0.0.1:${toString cfg.translation-server.settings.port}";
+            dataserver_url = publicApiBaseUri;
+            stream_server_url = cfg.stream-server.publicUri;
+            translation_server_url = "http://127.0.0.1:${toString cfg.translation-server.settings.port}";
           }
           // optionalAttrs (cfg.portal.browserSessionLifetimeSeconds != null) {
             browser_session_lifetime_seconds = cfg.portal.browserSessionLifetimeSeconds;
@@ -824,6 +818,7 @@ in {
             LoadCredential = [
               "oidc-client-secret:${cfg.portal.clientSecretFile}"
               "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
+              "portal-cookie-key:${credentialFiles.portalCookieKey}"
             ];
           };
       };

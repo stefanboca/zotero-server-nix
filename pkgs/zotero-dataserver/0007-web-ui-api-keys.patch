@@ -1,0 +1,151 @@
+diff --git a/controllers/KeysController.php b/controllers/KeysController.php
+index 631d182..ad790f8 100644
+--- a/controllers/KeysController.php
++++ b/controllers/KeysController.php
+@@ -193,7 +193,7 @@ class KeysController extends ApiController {
+ 						$userID = $this->authenticateKeyJSON($json);
+ 					}
+ 					
+-					$fields = $this->getFieldsFromJSON($json);
++					$fields = $this->getFieldsFromJSON($json, $isSuper, true);
+ 				}
+ 				else {
+ 					if (!$isWebsite) {
+@@ -278,7 +278,7 @@ class KeysController extends ApiController {
+ 						$userID = $this->authenticateKeyJSON($json);
+ 					}
+ 					
+-					$fields = $this->getFieldsFromJSON($json);
++					$fields = $this->getFieldsFromJSON($json, $isSuper, false);
+ 				}
+ 				else {
+ 					if (!$isWebsite) {
+@@ -301,6 +301,9 @@ class KeysController extends ApiController {
+ 					if (!$keyObj) {
+ 						$this->e404("Key '$key' does not exist");
+ 					}
++					if ($keyObj->webUI) {
++						$this->e400("Web UI keys cannot be updated");
++					}
+ 					foreach ($fields as $field=>$val) {
+ 						if ($field == 'accessJSON') {
+ 							// JSON format -- use setPermissionsFromAccessJSON
+@@ -361,7 +361,7 @@ class KeysController extends ApiController {
+ 	}
+ 	
+ 	
+-	protected function getFieldsFromJSON($json) {
++	protected function getFieldsFromJSON($json, $isSuper, $isNew) {
+ 		if (!isset($json['name'])) {
+ 			throw new Exception("Key name not provided", Z_ERROR_INVALID_INPUT);
+ 		}
+@@ -369,5 +369,14 @@ class KeysController extends ApiController {
+ 		$fields = [];
+ 		$fields['name'] = $json['name'];
++		if (array_key_exists('webUI', $json)) {
++			if (!$isSuper) {
++				$this->e403();
++			}
++			if (!$isNew) {
++				$this->e400("The webUI flag cannot be changed after key creation");
++			}
++			$fields['webUI'] = (bool) $json['webUI'];
++		}
+ 		// Return original access JSON format for use with setPermissionsFromAccessJSON()
+ 		if (!empty($json['access'])) {
+ 			$fields['accessJSON'] = $json['access'];
+diff --git a/misc/db-updates/2026-08-14/addWebUIToKeys b/misc/db-updates/2026-08-14/addWebUIToKeys
+new file mode 100755
+index 0000000..3500235
+--- /dev/null
++++ b/misc/db-updates/2026-08-14/addWebUIToKeys
+@@ -0,0 +1,8 @@
++#!/usr/bin/env php
++<?php
++set_include_path("../../../include");
++require("header.inc.php");
++
++Zotero_Admin_DB::query(
++	"ALTER TABLE `keys` ADD COLUMN webUI TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER name"
++);
+diff --git a/misc/master.sql b/misc/master.sql
+index 0ae10d0..c8f1600 100644
+--- a/misc/master.sql
++++ b/misc/master.sql
+@@ -169,6 +169,7 @@ CREATE TABLE `keys` (
+   `key` char(24) CHARACTER SET utf8 COLLATE utf8_bin NOT NULL,
+   `userID` int(10) unsigned NOT NULL,
+   `name` varchar(255) CHARACTER SET utf8 COLLATE utf8_bin NOT NULL,
++  `webUI` tinyint(1) unsigned NOT NULL DEFAULT '0',
+   `dateAdded` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   `lastUsed` timestamp NOT NULL DEFAULT '0000-00-00 00:00:00',
+   PRIMARY KEY (`keyID`),
+diff --git a/model/Key.inc.php b/model/Key.inc.php
+index e8db5f9..de5ca89 100644
+--- a/model/Key.inc.php
++++ b/model/Key.inc.php
+@@ -29,6 +29,7 @@ class Zotero_Key {
+ 	private $key;
+ 	private $userID;
+ 	private $name;
++	private $webUI = false;
+ 	private $dateAdded;
+ 	private $permissions = array();
+ 	
+@@ -47,6 +48,7 @@ class Zotero_Key {
+ 			case 'key':
+ 			case 'userID':
+ 			case 'name':
++			case 'webUI':
+ 				break;
+ 			
+ 			default:
+@@ -67,6 +69,7 @@ class Zotero_Key {
+ 			
+ 			case 'userID':
+ 			case 'name':
++			case 'webUI':
+ 				break;
+ 			
+ 			default:
+@@ -270,9 +273,10 @@ class Zotero_Key {
+ 			'key',
+ 			'userID',
+-			'name'
++			'name',
++			'webUI'
+ 		);
+ 		
+-		$sql = "INSERT INTO `keys` (keyID, `key`, userID, name) VALUES (?, ?, ?, ?)";
++		$sql = "INSERT INTO `keys` (keyID, `key`, userID, name, webUI) VALUES (?, ?, ?, ?, ?)";
+ 		$params = array($this->id);
+ 		foreach ($fields as $field) {
+ 			$params[] = $this->$field;
+@@ -550,6 +554,9 @@ class Zotero_Key {
+ 			}
+ 		}
+ 		$json['name'] = $this->name;
++		if ($isWebsite) {
++			$json['webUI'] = (bool) $this->webUI;
++		}
+ 		
+ 		if ($this->permissions) {
+ 			$json['access'] = [
+@@ -651,7 +658,7 @@ class Zotero_Key {
+ 			$cacheKey = "keyInfoByID_" . $this->id;
+ 			$row = Z_Core::$MC->get($cacheKey);
+ 			if (!$row) {
+-				$sql = "SELECT `key`, userID, name FROM `keys` WHERE keyID=?";
++				$sql = "SELECT `key`, userID, name, webUI FROM `keys` WHERE keyID=?";
+ 				$row = Zotero_DB::rowQuery($sql, $this->id);
+ 				if ($row) {
+ 					Z_Core::$MC->set($cacheKey, $row, 60);
+@@ -662,7 +669,7 @@ class Zotero_Key {
+ 			$cacheKey = "keyInfoByKey_" . $this->key;
+ 			$row = Z_Core::$MC->get($cacheKey);
+ 			if (!$row) {
+-				$sql = "SELECT keyID, userID, name FROM `keys` WHERE `key`=?";
++				$sql = "SELECT keyID, userID, name, webUI FROM `keys` WHERE `key`=?";
+ 				$row = Zotero_DB::rowQuery($sql, $this->key);
+ 				if ($row) {
+ 					Z_Core::$MC->set($cacheKey, $row, 60);

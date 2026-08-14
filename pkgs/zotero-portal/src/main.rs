@@ -12,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
         let config = Config::from_file(&config_path)?;
 
         if migrate_only {
-            return migrate(&config).await;
+            return migrate(config).await;
         }
         (config, Secrets::from_systemd()?)
     };

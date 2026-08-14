@@ -7,7 +7,7 @@ use topcoat::{
 
 use crate::{
     app::{authenticated_user, username_label},
-    backend::Backend,
+    database::Database,
 };
 
 #[shard]
@@ -17,8 +17,8 @@ pub(crate) async fn member_search_shard(cx: &Cx, query: String) -> Result {
     if query.chars().count() < 3 || query.chars().count() > 128 {
         return view! {};
     }
-    let backend = app_context::<Backend>(cx);
-    let candidates = backend.search_users(query, &[], 10).await?;
+    let database = app_context::<Database>(cx);
+    let candidates = database.search_users(query, 10).await?;
     view! {
         <div class="p-3">
             if candidates.is_empty() {

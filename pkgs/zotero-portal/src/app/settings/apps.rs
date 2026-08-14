@@ -12,7 +12,7 @@ use topcoat::{
 
 use crate::{
     app::{request_confirmed, signed_in_user},
-    backend::Backend,
+    dataserver::Dataserver,
 };
 
 #[derive(Deserialize)]
@@ -24,9 +24,11 @@ struct RevokeClient {
 #[route(POST)]
 async fn revoke_client(cx: &Cx, Form(input): Form<RevokeClient>) -> Result<Response> {
     let user = signed_in_user(cx).await?;
-    let backend = app_context::<Backend>(cx);
+    let dataserver = app_context::<Dataserver>(cx);
     if input.all {
-        backend.revoke_all_connected_clients(user.user_id).await?;
+        dataserver
+            .revoke_all_connected_clients(user.user_id)
+            .await?;
         if request_confirmed(cx) {
             return StatusCode::NO_CONTENT.into_response(cx);
         }
@@ -36,13 +38,13 @@ async fn revoke_client(cx: &Cx, Form(input): Form<RevokeClient>) -> Result<Respo
             .handle
             .as_deref()
             .ok_or_else(|| bad_request("a connected app is required"))?;
-        let client = backend
+        let client = dataserver
             .connected_clients(user.user_id)
             .await?
             .into_iter()
             .find(|client| client.handle == handle)
             .ok_or_else(not_found)?;
-        if !backend
+        if !dataserver
             .revoke_connected_client(user.user_id, &client.handle)
             .await?
         {

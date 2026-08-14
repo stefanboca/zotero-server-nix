@@ -2,7 +2,7 @@ mod apps;
 mod sessions;
 mod storage;
 
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use jiff::Timestamp;
 use topcoat::{
     Result,
     context::{Cx, app_context},
@@ -14,9 +14,8 @@ use topcoat::{
 
 use crate::{
     app::{confirmation_dialog, signed_in_user, toast_script, username_label},
-    backend::{self, Backend, UserSummary},
-    dataserver::StorageUsage,
-    epoch_seconds,
+    database::{self, Database, UserSummary},
+    dataserver::{Dataserver, StorageUsage},
 };
 
 #[topcoat::router::query_params(error = bad_request)]
@@ -29,8 +28,9 @@ struct SettingsQuery {
 async fn settings(cx: &Cx) -> Result {
     let parameters = query_params::<SettingsQuery>(cx)?;
     let user = signed_in_user(cx).await?;
-    let backend = app_context::<Backend>(cx);
-    let usage = backend.storage_usage(user.user_id).await?;
+    let usage = app_context::<Dataserver>(cx)
+        .storage_usage(user.user_id)
+        .await?;
     let toast = match parameters.notice.as_deref() {
         Some("browser-session-revoked") => Some("Browser session signed out.".to_owned()),
         Some("client-revoked") => Some(format!(
@@ -158,24 +158,21 @@ async fn browser_sessions_shard(cx: &Cx, refresh: bool) -> Result {
     let user = signed_in_user(cx).await?;
     let current_handle = session::token_hash(cx)
         .await?
-        .map(|hash| backend::session_handle(&*hash))
+        .map(|hash| database::session_handle(&*hash))
         .unwrap_or_default();
-    let browser_sessions = app_context::<Backend>(cx)
-        .browser_sessions_for_user(user.user_id)
+    let browser_sessions = app_context::<Database>(cx)
+        .browser_sessions_for_user(app_context::<Dataserver>(cx), user.user_id)
         .await?;
-    let now = epoch_seconds()?;
+    let now = Timestamp::now();
     view! {
         <ul
             class="mt-5 divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800"
         >
             for browser_session in browser_sessions {
                 let is_current = browser_session.handle == current_handle;
-                let last_active = display_epoch_timestamp(
-                    now,
-                    browser_session.last_seen_at,
-                )?;
-                let created = display_epoch_timestamp(now, browser_session.created_at)?;
-                let expires = display_epoch_timestamp(now, browser_session.expires_at)?;
+                let last_active = display_timestamp(now, browser_session.last_seen_at);
+                let created = display_timestamp(now, browser_session.created_at);
+                let expires = display_timestamp(now, browser_session.expires_at);
                 <li
                     class="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"
                     data-confirm-item=""
@@ -269,10 +266,10 @@ async fn browser_sessions_shard(cx: &Cx, refresh: bool) -> Result {
 async fn connected_apps_shard(cx: &Cx, refresh: bool) -> Result {
     let _ = refresh;
     let user = signed_in_user(cx).await?;
-    let connected_clients = app_context::<Backend>(cx)
+    let connected_clients = app_context::<Dataserver>(cx)
         .connected_clients(user.user_id)
         .await?;
-    let now = epoch_seconds()?;
+    let now = Timestamp::now();
     view! {
         if connected_clients.is_empty() {
             <p class="mt-5 text-stone-600 dark:text-stone-400">"No connected apps."</p>
@@ -388,11 +385,12 @@ fn format_storage_size(mebibytes: f64) -> String {
     }
 }
 
-fn format_relative_time(now: u64, timestamp: u64) -> String {
-    if timestamp > now {
-        return format_future_time(timestamp - now);
+fn format_relative_time(now: Timestamp, timestamp: Timestamp) -> String {
+    let seconds = now.duration_until(timestamp).as_secs();
+    if seconds > 0 {
+        return format_future_time(seconds.unsigned_abs());
     }
-    let seconds = now - timestamp;
+    let seconds = seconds.unsigned_abs();
     match seconds {
         0..60 => "just now".to_owned(),
         60..3600 => format!("{} ago", time_unit(seconds / 60, "minute")),
@@ -432,28 +430,22 @@ struct DisplayTimestamp {
     relative: String,
 }
 
-fn display_epoch_timestamp(now: u64, timestamp: u64) -> Result<DisplayTimestamp> {
-    let datetime = OffsetDateTime::from_unix_timestamp(i64::try_from(timestamp)?)?;
-    display_timestamp(now, datetime)
+fn display_client_timestamp(
+    now: Timestamp,
+    value: Option<&str>,
+) -> Result<Option<DisplayTimestamp>> {
+    let timestamp = value.map(str::parse::<Timestamp>).transpose()?;
+    Ok(timestamp.map(|timestamp| display_timestamp(now, timestamp)))
 }
 
-fn display_client_timestamp(now: u64, value: Option<&str>) -> Result<Option<DisplayTimestamp>> {
-    value
-        .map(|value| OffsetDateTime::parse(value, &Rfc3339))
-        .transpose()?
-        .map(|datetime| display_timestamp(now, datetime))
-        .transpose()
-}
-
-fn display_timestamp(now: u64, datetime: OffsetDateTime) -> Result<DisplayTimestamp> {
-    let timestamp = u64::try_from(datetime.unix_timestamp())?;
-    let datetime = datetime.format(&Rfc3339)?;
+fn display_timestamp(now: Timestamp, timestamp: Timestamp) -> DisplayTimestamp {
+    let datetime = timestamp.to_string();
     let absolute = format!("{} UTC", datetime.trim_end_matches('Z').replace('T', " "));
-    Ok(DisplayTimestamp {
+    DisplayTimestamp {
         datetime,
         absolute,
         relative: format_relative_time(now, timestamp),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -469,15 +461,29 @@ mod tests {
 
     #[test]
     fn formats_session_activity_without_client_javascript() {
-        assert_eq!(format_relative_time(10_000, 10_000), "just now");
-        assert_eq!(format_relative_time(10_000, 9_880), "2 minutes ago");
-        assert_eq!(format_relative_time(10_000, 2_800), "2 hours ago");
-        assert_eq!(format_relative_time(10_000, 10_120), "in 2 minutes");
+        let timestamp = |second| Timestamp::new(second, 0).expect("valid timestamp");
+        assert_eq!(
+            format_relative_time(timestamp(10_000), timestamp(10_000)),
+            "just now"
+        );
+        assert_eq!(
+            format_relative_time(timestamp(10_000), timestamp(9_880)),
+            "2 minutes ago"
+        );
+        assert_eq!(
+            format_relative_time(timestamp(10_000), timestamp(2_800)),
+            "2 hours ago"
+        );
+        assert_eq!(
+            format_relative_time(timestamp(10_000), timestamp(10_120)),
+            "in 2 minutes"
+        );
     }
 
     #[test]
     fn formats_exact_client_time_for_native_tooltips() {
-        let timestamp = display_client_timestamp(1_786_176_000, Some("2026-08-08T09:30:00Z"))
+        let now = Timestamp::new(1_786_176_000, 0).expect("valid timestamp");
+        let timestamp = display_client_timestamp(now, Some("2026-08-08T09:30:00Z"))
             .expect("valid timestamp")
             .expect("present timestamp");
         assert_eq!(timestamp.datetime, "2026-08-08T09:30:00Z");

@@ -14,13 +14,12 @@ impl UserId {
         Self(value)
     }
 
-    pub(crate) fn from_runtime(value: f64) -> Option<Self> {
-        (value.is_finite() && value.fract() == 0.0 && value >= 1.0 && value <= u64::MAX as f64)
-            .then_some(Self(value as u64))
-    }
-
-    pub(crate) const fn get(self) -> u64 {
-        self.0
+    pub(crate) fn from_runtime(value: &str) -> Option<Self> {
+        value
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value != 0)
+            .map(Self)
     }
 }
 

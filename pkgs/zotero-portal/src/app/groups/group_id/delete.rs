@@ -11,7 +11,10 @@ use topcoat::{
     view::view,
 };
 
-use crate::{app::request_confirmed, backend::Backend, dataserver::GroupRole};
+use crate::{
+    app::request_confirmed,
+    dataserver::{Dataserver, GroupRole},
+};
 
 use super::{super::groups_notice_location, current_group};
 
@@ -29,7 +32,7 @@ async fn delete_group(cx: &Cx, Form(input): Form<DeleteGroup>) -> Result {
     if input.confirmation != group.name {
         return Err(bad_request("group name confirmation did not match").into());
     }
-    let result = app_context::<Backend>(cx).delete_group(group.id).await;
+    let result = app_context::<Dataserver>(cx).delete_group(group.id).await;
     let notice = if let Err(error) = result {
         eprintln!("failed to delete group: {error:#}");
         if request_confirmed(cx) {

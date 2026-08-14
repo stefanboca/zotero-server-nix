@@ -16,8 +16,8 @@ use crate::{
         authenticated_user, confirmation_dialog, toast_script, username_label,
         users::member_search_shard,
     },
-    backend::{Backend, UserSummary},
-    dataserver::{Group, GroupRole},
+    database::{Database, UserSummary},
+    dataserver::{Dataserver, Group, GroupRole},
     id::UserId,
 };
 
@@ -25,9 +25,12 @@ use crate::{
 pub(super) struct GroupId(pub(super) u64);
 
 impl GroupId {
-    fn from_runtime(value: f64) -> Option<Self> {
-        (value.is_finite() && value.fract() == 0.0 && value >= 1.0 && value <= u64::MAX as f64)
-            .then_some(Self(value as u64))
+    fn from_runtime(value: &str) -> Option<Self> {
+        value
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value != 0)
+            .map(Self)
     }
 }
 
@@ -147,8 +150,8 @@ pub(super) async fn current_group_by_id(
     group_id: u64,
 ) -> Result<(UserId, Group, GroupRole)> {
     let user_id = authenticated_user(cx).await?;
-    let backend = app_context::<Backend>(cx);
-    let group = backend.group(group_id).await?.ok_or_else(not_found)?;
+    let dataserver = app_context::<Dataserver>(cx);
+    let group = dataserver.group(group_id).await?.ok_or_else(not_found)?;
     let role = group.role(user_id).ok_or_else(not_found)?;
     Ok((user_id, group, role))
 }
@@ -156,15 +159,15 @@ pub(super) async fn current_group_by_id(
 #[procedure]
 async fn update_role_runtime(
     cx: &Cx,
-    group_id: f64,
-    user_id: f64,
+    group_id: String,
+    user_id: String,
     requested_role: GroupRole,
 ) -> Result<std::result::Result<GroupRole, String>> {
     let failed = || Err("Couldn’t update the group member role.".to_owned());
-    let Some(group_id) = GroupId::from_runtime(group_id) else {
+    let Some(group_id) = GroupId::from_runtime(&group_id) else {
         return Ok(failed());
     };
-    let Some(user_id) = UserId::from_runtime(user_id) else {
+    let Some(user_id) = UserId::from_runtime(&user_id) else {
         return Ok(failed());
     };
     let (_, group, actor_role) = current_group_by_id(cx, group_id.0).await?;
@@ -179,8 +182,8 @@ async fn update_role_runtime(
     if requested_role != expected_role {
         return Ok(failed());
     }
-    let backend = app_context::<Backend>(cx);
-    if let Err(error) = backend
+    let dataserver = app_context::<Dataserver>(cx);
+    if let Err(error) = dataserver
         .set_group_user(group.id, user_id, requested_role)
         .await
     {
@@ -193,12 +196,12 @@ async fn update_role_runtime(
 #[procedure]
 async fn add_member_runtime(
     cx: &Cx,
-    group_id: f64,
+    group_id: String,
     identifier: String,
     requested_role: GroupRole,
 ) -> Result<std::result::Result<String, String>> {
     let failed = || Err("member-add-failed".to_owned());
-    let Some(group_id) = GroupId::from_runtime(group_id) else {
+    let Some(group_id) = GroupId::from_runtime(&group_id) else {
         return Ok(failed());
     };
     if !matches!(requested_role, GroupRole::Admin | GroupRole::Member) {
@@ -213,14 +216,14 @@ async fn add_member_runtime(
     if !actor_role.can_manage() {
         return Ok(failed());
     }
-    let backend = app_context::<Backend>(cx);
-    let Some(target) = backend.user_by_identifier(identifier).await? else {
+    let database = app_context::<Database>(cx);
+    let Some(target) = database.user_by_identifier(identifier).await? else {
         return Ok(Err("member-not-found".to_owned()));
     };
     if group.role(target.user_id).is_some() {
         return Ok(Err("already-member".to_owned()));
     }
-    if let Err(error) = backend
+    if let Err(error) = app_context::<Dataserver>(cx)
         .set_group_user(group.id, target.user_id, requested_role)
         .await
     {
@@ -239,11 +242,11 @@ async fn show_group(cx: &Cx) -> Result {
 }
 
 #[shard]
-async fn members_shard(cx: &Cx, group_id: f64, refresh: bool) -> Result {
+async fn members_shard(cx: &Cx, group_id: String, refresh: bool) -> Result {
     let _ = refresh;
-    let group_id = GroupId::from_runtime(group_id).ok_or_else(not_found)?;
+    let group_id = GroupId::from_runtime(&group_id).ok_or_else(not_found)?;
     let (actor_id, group, actor_role) = current_group_by_id(cx, group_id.0).await?;
-    let users = app_context::<Backend>(cx)
+    let users = app_context::<Database>(cx)
         .users_by_ids(&group.user_ids())
         .await?;
     view! {
@@ -261,7 +264,7 @@ async fn members_shard(cx: &Cx, group_id: f64, refresh: bool) -> Result {
 async fn group_page(group: &Group, actor_role: GroupRole, toast: Option<&ToastNotice>) -> Result {
     let members_action = format!("/groups/{}/members", group.id);
     let search_results_id = format!("member-search-results-{}", group.id);
-    let runtime_group_id = group.id as f64;
+    let runtime_group_id = group.id.to_string();
     view! {
         signal member_group_id = runtime_group_id;
         signal members_refresh = false;
@@ -783,8 +786,8 @@ async fn administrator_toggle(
     user_id: UserId,
     username: &str,
 ) -> Result {
-    let runtime_group_id = group_id as f64;
-    let runtime_user_id = user_id.get() as f64;
+    let runtime_group_id = group_id.to_string();
+    let runtime_user_id = user_id.to_string();
     view! {
         signal current_role = role;
         signal administrator_role = GroupRole::Admin;

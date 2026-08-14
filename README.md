@@ -179,19 +179,24 @@ does not link a new OIDC identity to an existing user by email. It also does
 not sync OIDC groups or roles. Dataserver has no global administrator role.
 
 After a successful login, the portal retains a durable browser authentication
-session for 30 days by default. A returning authenticated browser skips the
-portal button and starts a fresh OIDC authorization-code flow, allowing the
-provider's own SSO session to complete login without another click while still
-refreshing profile and authorization claims. Set
+session for 30 days by default. A returning authenticated browser skips OIDC;
+it goes directly to the requested portal page, or directly completes a pending
+Zotero desktop login. Set
 `portal.browserSessionLifetimeSeconds` to override the lifetime. The NixOS option
 is `null` by default, so the generated configuration leaves the service's
 30-day application default in effect.
 
 The database stores only a hash of the browser session token, its Zotero user
-binding, and its expiry. The portal rotates the browser cookie after every
-successful OIDC callback. Provider access and refresh tokens are never
-persisted; the access token is used only for the callback's optional UserInfo
-request.
+binding, and its expiry. The transient OIDC state, nonce, PKCE verifier, and
+return path live in an encrypted, short-lived browser cookie instead of the
+database. Provider access and refresh tokens are never persisted; the access
+token is used only for the callback's optional UserInfo request.
+
+The first Web Library request in each browser session creates a dedicated
+full-access Dataserver API key. Dataserver marks these as Web UI keys, so they
+do not appear in the Connected apps list and cannot be edited through the key
+update endpoint. Signing out or revoking a browser session also revokes its
+Web UI key, including when one session revokes another.
 
 Every successful OIDC login also assigns the user Dataserver's upstream
 `unlimited` file-storage quota. This deployment stores unlimited as a zero

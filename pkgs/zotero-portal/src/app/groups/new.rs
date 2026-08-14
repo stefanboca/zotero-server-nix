@@ -8,7 +8,7 @@ use topcoat::{
 
 use crate::{
     app::{authenticated_user, request_confirmed},
-    backend::Backend,
+    dataserver::Dataserver,
 };
 
 use super::groups_notice_location;
@@ -38,7 +38,7 @@ async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result {
     }
 
     let user_id = authenticated_user(cx).await?;
-    let succeeded = if let Err(error) = app_context::<Backend>(cx)
+    let succeeded = if let Err(error) = app_context::<Dataserver>(cx)
         .create_private_group(user_id, name)
         .await
     {

@@ -11,17 +11,10 @@ mod user;
 mod users;
 mod web;
 
-use std::{
-    os::unix::fs::PermissionsExt as _,
-    sync::Arc,
-    time::{Duration, UNIX_EPOCH},
-};
+use jiff::SignedDuration;
+use std::{os::unix::fs::PermissionsExt as _, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
-use sqlx::{
-    ConnectOptions as _, MySqlPool,
-    mysql::{MySqlConnectOptions, MySqlPoolOptions},
-};
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
@@ -38,37 +31,27 @@ use topcoat::{
 
 use crate::{
     app::library::WebLibrary,
-    backend::{self, Backend},
     config::{Config, Secrets},
+    database::{self, Database},
+    dataserver::Dataserver,
     id::UserId,
+    oidc::Oidc,
 };
 
-pub(crate) const FLOW_LIFETIME: Duration = Duration::from_secs(15 * 60);
+pub(crate) const FLOW_LIFETIME: SignedDuration = SignedDuration::from_mins(15);
 
 pub(crate) struct BareLayout;
 
-async fn connect_and_migrate(config: &Config) -> anyhow::Result<MySqlPool> {
-    let db = MySqlPoolOptions::new()
-        .max_connections(config.database.max_connections)
-        .connect_with(MySqlConnectOptions::from_url(&config.database.url)?)
-        .await
-        .context("connecting to MariaDB")?;
-    sqlx::migrate!()
-        .run(&db)
-        .await
-        .context("running database migrations")?;
-    Ok(db)
-}
-
-pub async fn migrate(config: &Config) -> anyhow::Result<()> {
-    connect_and_migrate(config).await?;
+pub async fn migrate(config: Arc<Config>) -> anyhow::Result<()> {
+    Database::new(config).await?;
     Ok(())
 }
 
-pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
-    let config = Arc::new(config);
-    let db = connect_and_migrate(&config).await?;
-    let backend = Backend::new(config.clone(), secrets, db).await?;
+pub async fn serve(config: Arc<Config>, secrets: Secrets) -> anyhow::Result<()> {
+    let cookie_key = secrets.cookie_key();
+    let database = Database::new(config.clone()).await?;
+    let dataserver = Dataserver::new(config.clone(), secrets.dataserver_super_password)?;
+    let oidc = Oidc::new(config.clone(), secrets.oidc_client_secret).await?;
     let router = routes()
         .cookies()
         .sessions(
@@ -76,7 +59,10 @@ pub async fn serve(config: Config, secrets: Secrets) -> anyhow::Result<()> {
                 .lifetime(Duration::from_secs(config.browser_session_lifetime_seconds))
                 .build(),
         )
-        .app_context(backend)
+        .app_context(cookie_key)
+        .app_context(database)
+        .app_context(dataserver)
+        .app_context(oidc)
         .build();
 
     match config.server_address.scheme() {
@@ -126,12 +112,13 @@ pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
     let Some(browser_session) = session::refresh(cx).await? else {
         return Ok(None);
     };
-    let expires = browser_session
-        .expires_at
-        .duration_since(UNIX_EPOCH)?
-        .as_secs();
-    app_context::<Backend>(cx)
-        .refresh_browser_session(&*browser_session.token_hash, expires)
+    let expires = browser_session.expires_at.try_into()?;
+    app_context::<Database>(cx)
+        .refresh_browser_session(
+            app_context::<Dataserver>(cx),
+            &*browser_session.token_hash,
+            expires,
+        )
         .await
         .map_err(Into::into)
 }
@@ -315,11 +302,11 @@ async fn nav_bar(cx: &Cx) -> Result {
     }
 }
 
-async fn navigation_user(cx: &Cx) -> Result<Option<backend::UserSummary>> {
+async fn navigation_user(cx: &Cx) -> Result<Option<database::UserSummary>> {
     let Some(user_id) = current_user(cx).await? else {
         return Ok(None);
     };
-    app_context::<Backend>(cx)
+    app_context::<Database>(cx)
         .user_by_id(user_id)
         .await
         .map_err(Into::into)
@@ -350,9 +337,9 @@ async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
     }
 }
 
-pub(crate) async fn signed_in_user(cx: &Cx) -> Result<backend::UserSummary> {
+pub(crate) async fn signed_in_user(cx: &Cx) -> Result<database::UserSummary> {
     let user_id = authenticated_user(cx).await?;
-    app_context::<Backend>(cx)
+    app_context::<Database>(cx)
         .user_by_id(user_id)
         .await?
         .ok_or_else(|| not_found().into())

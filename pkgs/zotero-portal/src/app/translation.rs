@@ -6,7 +6,7 @@ use topcoat::{
 
 use crate::{
     app::authenticated_user,
-    backend::{Backend, TranslationEndpoint},
+    dataserver::{Dataserver, TranslationEndpoint},
 };
 
 const MAX_TRANSLATION_BODY_SIZE: usize = 5 * 1024 * 1024;
@@ -26,7 +26,7 @@ pub(super) async fn proxy_translation(
         .await
         .map_err(|error| anyhow::anyhow!("reading translation request: {error}"))?
         .to_vec();
-    let response = app_context::<Backend>(cx)
+    let response = app_context::<Dataserver>(cx)
         .translate(endpoint, query.as_deref(), content_type.as_deref(), body)
         .await?;
 

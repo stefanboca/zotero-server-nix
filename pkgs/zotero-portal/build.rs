@@ -1,5 +1,3 @@
-use std::{env, path::Path};
-
 fn main() {
     println!("cargo:rerun-if-changed=migrations");
     println!("cargo:rerun-if-changed=src");

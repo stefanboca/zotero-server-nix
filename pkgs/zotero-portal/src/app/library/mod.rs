@@ -4,13 +4,15 @@ use topcoat::{
     Result,
     context::{Cx, CxBuilder, app_context},
     router::{Body, Next, Response, layer, page},
+    session,
     view::{Unescaped, view},
 };
 use url::Url;
 
 use crate::{
     app::{BareLayout, signed_in_user},
-    backend::{self, Backend, WebLibraryAccess},
+    database::{self, Database},
+    dataserver::{Dataserver, WebLibraryAccess},
     id::UserId,
 };
 
@@ -30,8 +32,11 @@ async fn library_page(cx: &Cx) -> Result {
 
 pub(self) async fn library(cx: &Cx) -> Result {
     let user = signed_in_user(cx).await?;
-    let access = app_context::<Backend>(cx)
-        .web_library_access(user.user_id)
+    let token_hash = session::token_hash(cx)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("authenticated browser session disappeared"))?;
+    let access = app_context::<Database>(cx)
+        .web_library_access(app_context::<Dataserver>(cx), user.user_id, &*token_hash)
         .await?;
     let config = web_library_config(&user, access)?;
 
@@ -89,9 +94,15 @@ struct WebLibraryLibraries {
 }
 
 fn web_library_config(
-    user: &backend::UserSummary,
+    user: &database::UserSummary,
     access: WebLibraryAccess,
 ) -> anyhow::Result<Unescaped<String>> {
+    if !matches!(access.api_url.scheme(), "http" | "https") {
+        anyhow::bail!("Web Library API URL must use HTTP or HTTPS");
+    }
+    if !matches!(access.streaming_url.scheme(), "ws" | "wss") {
+        anyhow::bail!("Web Library streaming URL must use WebSocket");
+    }
     let mut api_path = access.api_url.path().trim_start_matches('/').to_owned();
     if !api_path.ends_with('/') {
         api_path.push('/');
@@ -137,8 +148,8 @@ fn web_library_config(
 mod tests {
     use super::*;
 
-    fn user() -> backend::UserSummary {
-        backend::UserSummary {
+    fn user() -> database::UserSummary {
+        database::UserSummary {
             user_id: UserId::new(42),
             username: "researcher".to_owned(),
             email: "researcher@example.test".to_owned(),
