@@ -1,4 +1,10 @@
 use anyhow::Context as _;
+use reqwest::StatusCode;
+use topcoat::{
+    Result,
+    context::Cx,
+    router::{Body, IntoResponse, Response},
+};
 
 use super::Dataserver;
 
@@ -22,10 +28,26 @@ impl TranslationEndpoint {
 }
 
 pub struct TranslationResponse {
-    pub status: u16,
-    pub body: Vec<u8>,
-    pub content_type: Option<String>,
-    pub link: Option<String>,
+    status: u16,
+    body: Body,
+    content_type: Option<String>,
+    link: Option<String>,
+}
+
+impl IntoResponse for TranslationResponse {
+    fn into_response(self, _: &Cx) -> Result<Response> {
+        let mut builder = Response::builder().status(StatusCode::from_u16(self.status)?);
+        if let Some(content_type) = self.content_type {
+            builder = builder.header("content-type", content_type);
+        }
+        if let Some(link) = self.link {
+            builder = builder.header("link", link);
+        }
+        Ok(builder
+            .header("cache-control", "no-store")
+            .header("x-content-type-options", "nosniff")
+            .body(self.body)?)
+    }
 }
 
 impl Dataserver {
@@ -34,13 +56,16 @@ impl Dataserver {
         endpoint: TranslationEndpoint,
         query: Option<&str>,
         content_type: Option<&str>,
-        body: Vec<u8>,
+        body: Body,
     ) -> anyhow::Result<TranslationResponse> {
         let mut url = self.config.translation_server_url.clone();
         url.set_path(endpoint.path());
         url.set_query(query);
 
-        let mut request = self.client.post(url).body(body);
+        let mut request = self
+            .client
+            .post(url)
+            .body(reqwest::Body::wrap_stream(body.into_data_stream()));
         if let Some(content_type) = content_type {
             request = request.header(reqwest::header::CONTENT_TYPE, content_type);
         }
@@ -59,11 +84,7 @@ impl Dataserver {
             .get(reqwest::header::LINK)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let body = response
-            .bytes()
-            .await
-            .context("reading the Zotero translation response")?
-            .to_vec();
+        let body = Body::new(reqwest::Body::from(response));
         Ok(TranslationResponse {
             status,
             body,

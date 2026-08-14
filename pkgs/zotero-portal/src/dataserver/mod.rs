@@ -4,7 +4,7 @@ mod login;
 mod storage;
 mod translation;
 
-pub use translation::TranslationEndpoint;
+pub use translation::{TranslationEndpoint, TranslationResponse};
 
 use std::sync::Arc;
 

@@ -7,19 +7,28 @@ use serde::{Deserialize, Serialize};
 )]
 #[serde(transparent)]
 #[sqlx(transparent)]
-pub(crate) struct UserId(u64);
+pub(crate) struct UserId(u32);
 
 impl UserId {
-    pub(crate) const fn new(value: u64) -> Self {
+    #[cfg(test)]
+    pub(crate) const fn new(value: u32) -> Self {
         Self(value)
     }
 
     pub(crate) fn from_runtime(value: &str) -> Option<Self> {
         value
-            .parse::<u64>()
+            .parse::<u32>()
             .ok()
             .filter(|value| *value != 0)
             .map(Self)
+    }
+}
+
+impl TryFrom<u64> for UserId {
+    type Error = std::num::TryFromIntError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Ok(Self(value.try_into()?))
     }
 }
 
