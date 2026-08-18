@@ -1,6 +1,7 @@
+mod items;
 pub(super) mod library;
 
-pub(in crate::app) use library::personal_library_root;
+pub(in crate::app) use items::personal_library_root;
 
 use topcoat::{Result, context::Cx, router::path_param};
 

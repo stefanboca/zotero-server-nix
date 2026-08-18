@@ -118,63 +118,6 @@ impl Database {
         Ok(row)
     }
 
-    pub async fn user_profile(&self, user_id: UserId) -> anyhow::Result<UserProfile> {
-        let row = sqlx::query!(
-            "SELECT \
-             MAX(CASE WHEN metaKey = 'profile_realname' THEN metaValue END) AS `real_name?`, \
-             MAX(CASE WHEN metaKey = 'profile_location' THEN metaValue END) AS `location?`, \
-             MAX(CASE WHEN metaKey = 'profile_disciplines' THEN metaValue END) AS `disciplines?`, \
-             MAX(CASE WHEN metaKey = 'profile_affiliation' THEN metaValue END) AS `affiliation?`, \
-             MAX(CASE WHEN metaKey = 'profile_about' THEN metaValue END) AS `about?` \
-             FROM users_meta WHERE userID = ?",
-            user_id
-        )
-        .fetch_one(&self.db)
-        .await?;
-        Ok(UserProfile {
-            real_name: row.real_name,
-            location: row.location,
-            disciplines: row.disciplines,
-            affiliation: row.affiliation,
-            about: row.about,
-        })
-    }
-
-    pub async fn update_user_profile(
-        &self,
-        user_id: UserId,
-        profile: &UserProfile,
-    ) -> anyhow::Result<()> {
-        let mut transaction = self.db.begin().await?;
-        for (key, value) in [
-            ("profile_realname", profile.real_name.as_deref()),
-            ("profile_location", profile.location.as_deref()),
-            ("profile_disciplines", profile.disciplines.as_deref()),
-            ("profile_affiliation", profile.affiliation.as_deref()),
-            ("profile_about", profile.about.as_deref()),
-        ] {
-            if let Some(value) = value {
-                sqlx::query(
-                    "INSERT INTO users_meta (userID, metaKey, metaValue) VALUES (?, ?, ?) \
-                     ON DUPLICATE KEY UPDATE metaValue = VALUES(metaValue)",
-                )
-                .bind(user_id)
-                .bind(key)
-                .bind(value)
-                .execute(&mut *transaction)
-                .await?;
-            } else {
-                sqlx::query("DELETE FROM users_meta WHERE userID = ? AND metaKey = ?")
-                    .bind(user_id)
-                    .bind(key)
-                    .execute(&mut *transaction)
-                    .await?;
-            }
-        }
-        transaction.commit().await?;
-        Ok(())
-    }
-
     pub async fn users_by_ids(&self, user_ids: &[UserId]) -> anyhow::Result<Vec<UserSummary>> {
         if user_ids.is_empty() {
             return Ok(Vec::new());
@@ -214,43 +157,6 @@ impl Database {
         .fetch_optional(&self.db)
         .await?;
         Ok(row)
-    }
-
-    pub async fn search_users(
-        &self,
-        search: &str,
-        limit: usize,
-    ) -> anyhow::Result<Vec<UserSummary>> {
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-
-        let rows = sqlx::query_as!(
-            UserSummary,
-            "SELECT U.userID AS `user_id: UserId`, U.username, U.email, UM.metaValue AS `real_name?` \
-             FROM users U \
-             CROSS JOIN (SELECT ? AS search) S \
-             LEFT JOIN users_meta UM ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' \
-             LEFT JOIN GDN_User GU ON GU.UserID = U.userID \
-             WHERE U.role <> 'deleted' AND COALESCE(GU.Banned, 0) = 0 \
-             AND EXISTS (SELECT 1 FROM oidc_identities OI WHERE OI.userID = U.userID) \
-             AND (LOCATE(S.search, U.username) > 0 \
-                  OR LOCATE(S.search, U.email) > 0 \
-                  OR LOCATE(S.search, COALESCE(UM.metaValue, '')) > 0) \
-             ORDER BY CASE \
-                 WHEN U.username = S.search OR U.email = S.search OR UM.metaValue = S.search THEN 0 \
-                 WHEN U.username LIKE CONCAT(S.search, '%') \
-                      OR U.email LIKE CONCAT(S.search, '%') \
-                      OR UM.metaValue LIKE CONCAT(S.search, '%') THEN 1 \
-                 ELSE 2 \
-             END, COALESCE(NULLIF(UM.metaValue, ''), U.username), U.userID \
-             LIMIT ?",
-            search,
-            limit as u64
-        )
-        .fetch_all(&self.db)
-        .await?;
-        Ok(rows)
     }
 }
 

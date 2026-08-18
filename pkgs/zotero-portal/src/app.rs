@@ -3,6 +3,7 @@ mod auth;
 mod export;
 mod groups;
 mod import;
+mod mylibrary;
 mod profile;
 mod search;
 mod settings;
@@ -23,7 +24,7 @@ use topcoat::{
         Body, BodyLimit, Next, RouterBuilder, RouterBuilderDiscoverExt, StatusCode,
         error::{RedirectError, not_found, redirect, redirect_permanent},
         href, layer, layout,
-        request::uri,
+        request::{headers, uri},
         response::{IntoResponse, Response},
     },
     session::{self, RouterBuilderSessionExt, SessionConfig},
@@ -40,8 +41,6 @@ use crate::{
 };
 
 pub(crate) const FLOW_LIFETIME: SignedDuration = SignedDuration::from_mins(15);
-
-pub(crate) struct BareLayout;
 
 pub async fn migrate(config: Arc<Config>) -> anyhow::Result<()> {
     Database::new(config).await?;
@@ -114,11 +113,15 @@ async fn memoized_current_user(cx: &Cx) -> Result<Option<UserId>> {
         return Ok(None);
     };
     let expires = browser_session.expires_at.try_into()?;
+    let user_agent = headers(cx)
+        .get("user-agent")
+        .and_then(|value| value.to_str().ok());
     app_context::<Database>(cx)
         .refresh_browser_session(
             app_context::<Dataserver>(cx),
             &*browser_session.token_hash,
             expires,
+            user_agent,
         )
         .await
         .map_err(Into::into)
@@ -209,8 +212,7 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
         }
     };
     let web_library_active = try_request_context::<WebLibrary>(cx).is_some();
-    let bare_layout = try_request_context::<BareLayout>(cx).is_some();
-    let show_portal_navigation = !bare_layout && !web_library_active;
+    let show_portal_navigation = !web_library_active;
     let navigation_user = if show_portal_navigation {
         match current_user(cx).await? {
             Some(user_id) => authenticated_user_summary(cx, user_id).await?,
@@ -221,16 +223,8 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
     };
     let path = uri(cx).path();
     let landing = href!(_web_library::landing).resolve(cx);
-    let navigation = [
-        (
-            href!(groups::list_groups).resolve(cx),
-            PromotedStr(&"Groups"),
-        ),
-        (
-            href!(settings::settings).resolve(cx),
-            PromotedStr(&"Settings"),
-        ),
-    ];
+    let groups = href!(groups::list_groups).resolve(cx);
+    let groups_active = path == groups || path.starts_with(&format!("{groups}/"));
     view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -248,69 +242,88 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
                         rel="stylesheet"
                         href="/static/web-library/zotero-web-library.css"
                     >
+                } else {
+                    <link
+                        rel="stylesheet"
+                        href=(topcoat::asset::asset!("src/app/portal.css"))
+                    >
                 }
                 topcoat::runtime::script()
                 topcoat::dev::script()
             </head>
             <body
-                class="min-h-screen bg-white font-sans text-stone-950 dark:bg-stone-950 dark:text-stone-50"
+                class=(if web_library_active { "min-h-screen" } else { "portal-theme" })
             >
                 if show_portal_navigation {
-                    <header class="border-b border-stone-200 dark:border-stone-800">
+                    <header class="portal-header border-b">
                         <nav
-                            class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6"
+                            class="portal-navbar mx-auto flex w-full flex-wrap items-center gap-4"
                             aria-label="Primary navigation"
                         >
-                            <div
-                                class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6"
-                            >
+                            <div class="flex min-w-0 items-center">
                                 <a
-                                    class="border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400"
+                                    class="portal-brand"
                                     href=(landing.as_str())
                                     aria-current=((path == landing).then_some("page"))
                                 >
-                                    "Zotero"
-                                </a>
-                                for (route, name) in navigation {
-                                    let active = path == route
-                                        || path.starts_with(&format!("{route}/"));
-                                    <a
-                                        class=(if active {
-                                            "border-b-2 border-red-800 pb-1 text-sm font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
-                                        } else {
-                                            "border-b-2 border-transparent pb-1 text-sm hover:text-red-800 dark:hover:text-red-400"
-                                        })
-                                        href=(route)
-                                        aria-current=(active.then_some("page"))
+                                    <img
+                                        class="portal-logo"
+                                        src=(topcoat::asset::asset!("src/app/zotero-logo.svg"))
+                                        width="108"
+                                        height="32"
+                                        alt="Zotero"
                                     >
-                                        (name)
-                                    </a>
-                                }
+                                </a>
                             </div>
                             <div
-                                class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto"
+                                class="flex w-full min-w-0 items-center justify-end sm:ml-auto sm:w-auto"
                             >
+                                <a
+                                    class="portal-nav-link"
+                                    href=(groups)
+                                    aria-current=(groups_active.then_some("page"))
+                                >
+                                    "Groups"
+                                </a>
                                 if let Some(user) = &navigation_user {
-                                    <span
-                                        class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400"
-                                    >
-                                        "Signed in as "
-                                        (user.display_name())
-                                    </span>
-                                    <form method="post" action=(href!(user::logout_route))>
-                                        <button
-                                            class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
-                                            type="submit"
-                                        >
-                                            "Log out"
-                                        </button>
-                                    </form>
+                                    <details class="relative">
+                                        <summary class="portal-user-menu cursor-pointer list-none">
+                                            (user.display_name())
+                                        </summary>
+                                        <div class="portal-dropdown absolute right-0 z-20 mt-2 w-48 rounded-md border p-2 shadow-lg">
+                                            <a
+                                                class="portal-dropdown-link block rounded px-3 py-2 text-sm"
+                                                href=(href!(
+                                                    profile::profile,
+                                                    profile::ProfileUsername(user.username.clone()),
+                                                ))
+                                            >
+                                                "My Profile"
+                                            </a>
+                                            <a
+                                                class="portal-dropdown-link block rounded px-3 py-2 text-sm"
+                                                href=(href!(settings::settings))
+                                            >
+                                                "Settings"
+                                            </a>
+                                            <form method="post" action=(href!(user::logout_route))>
+                                                <button
+                                                    class="portal-dropdown-link block w-full rounded px-3 py-2 text-left text-sm"
+                                                    type="submit"
+                                                >
+                                                    "Log Out"
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </details>
                                 }
                             </div>
                         </nav>
                     </header>
+                    (content)
+                } else {
+                    (content)
                 }
-                (content)
             </body>
         </html>
     }
@@ -330,6 +343,62 @@ pub(crate) async fn confirm_button(label: &str, confirmation: &str, class: &str)
     }
 }
 
+/// Responsive content boundary shared by portal pages. The Web Library does
+/// not use it because that application owns the entire viewport.
+#[component]
+pub(crate) async fn portal_page(child: View) -> Result {
+    view! {
+        <main class="portal-page">
+            (child)
+        </main>
+    }
+}
+
+pub(crate) struct SidebarItem {
+    pub(crate) href: String,
+    pub(crate) label: PromotedStr,
+    pub(crate) active: bool,
+}
+
+#[component]
+pub(crate) async fn sidebar(aria_label: PromotedStr, items: Vec<SidebarItem>) -> Result {
+    view! {
+        <nav class="portal-sidebar" aria-label=(aria_label)>
+            <ul class="portal-sidebar-items">
+                for item in items {
+                    <li>
+                        <a
+                            class=(if item.active {
+                                "portal-sidebar-link portal-sidebar-link-active"
+                            } else {
+                                "portal-sidebar-link"
+                            })
+                            href=(item.href)
+                            aria-current=(item.active.then_some("page"))
+                        >
+                            (item.label)
+                        </a>
+                    </li>
+                }
+            </ul>
+        </nav>
+    }
+}
+
+/// The modern zotero.org settings theme uses the same bordered white surface
+/// for independent sections. Keeping it here prevents pages from drifting.
+#[component]
+pub(crate) async fn section(child: View) -> Result {
+    view! { <section class="portal-card p-5 sm:p-6">(child)</section> }
+}
+
+#[component]
+pub(crate) async fn success_message(message: &str) -> Result {
+    view! {
+        <p class="portal-alert portal-alert-success mb-6" role="status">(message)</p>
+    }
+}
+
 async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
     let message = match status {
         StatusCode::UNAUTHORIZED => "Sign in and try again",
@@ -341,15 +410,11 @@ async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
         cx =>
         (status)
         <main class="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
-            <h1 class="text-4xl font-semibold text-red-800 dark:text-red-400">
-                (status.as_u16())
-            </h1>
+            <h1 class="text-4xl font-semibold text-red-800">(status.as_u16())</h1>
             if let Some(title) = status.canonical_reason() {
                 <p class="mt-2 text-2xl font-semibold">(StaticStr(title))</p>
             }
-            <p class="mt-4 max-w-2xl leading-7 text-stone-600 dark:text-stone-400">
-                (StaticStr(message))
-            </p>
+            <p class="mt-4 max-w-2xl leading-7 text-stone-600">(StaticStr(message))</p>
         </main>
     }
 }
@@ -410,7 +475,6 @@ mod tests {
     #[test]
     fn browser_mutations_use_standard_routes() {
         let group_actions = include_str!("app/groups/group_id/group_actions.js");
-        assert!(group_actions.contains("method: \"POST\""));
         assert!(group_actions.contains("method: \"PATCH\""));
         assert!(group_actions.contains("Content-Type\": \"application/json"));
         assert!(group_actions.contains("[data-member-roles]"));

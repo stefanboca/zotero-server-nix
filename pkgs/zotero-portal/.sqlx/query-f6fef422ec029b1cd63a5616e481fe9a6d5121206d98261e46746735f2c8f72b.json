@@ -1,26 +1,42 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT U.userID AS `user_id: UserId`, U.username, U.email, UM.metaValue AS `real_name?` FROM users U CROSS JOIN (SELECT ? AS search) S LEFT JOIN users_meta UM ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' LEFT JOIN GDN_User GU ON GU.UserID = U.userID WHERE U.role <> 'deleted' AND COALESCE(GU.Banned, 0) = 0 AND EXISTS (SELECT 1 FROM oidc_identities OI WHERE OI.userID = U.userID) AND (LOCATE(S.search, U.username) > 0 OR LOCATE(S.search, U.email) > 0 OR LOCATE(S.search, COALESCE(UM.metaValue, '')) > 0) ORDER BY CASE WHEN U.username = S.search OR U.email = S.search OR UM.metaValue = S.search THEN 0 WHEN U.username LIKE CONCAT(S.search, '%') OR U.email LIKE CONCAT(S.search, '%') OR UM.metaValue LIKE CONCAT(S.search, '%') THEN 1 ELSE 2 END, COALESCE(NULLIF(UM.metaValue, ''), U.username), U.userID LIMIT ?",
+  "query": "SELECT GI.groupID AS `group_id!: u64`, GI.inviteeUserID AS `invitee_user_id: UserId`, U.username, U.email, UM.metaValue AS `real_name?`, DATE_FORMAT(GI.invitedAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `invited_at!` FROM group_invitations GI JOIN users U ON U.userID = GI.inviteeUserID LEFT JOIN users_meta UM ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' WHERE GI.groupID = ? AND GI.inviteeUserID = ?",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "user_id: UserId",
+        "name": "group_id!: u64",
         "type_info": {
-          "type": "Long",
-          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | AUTO_INCREMENT",
+          "type": "LongLong",
+          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | NO_DEFAULT_VALUE",
           "collation": 63,
-          "max_size": 10
+          "max_size": 20
         },
         "origin": {
           "Table": {
-            "table": "zotero_www.users",
-            "name": "userID"
+            "table": "zotero_www.group_invitations",
+            "name": "groupID"
           }
         }
       },
       {
         "ordinal": 1,
+        "name": "invitee_user_id: UserId",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | MULTIPLE_KEY | UNSIGNED | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 10
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.group_invitations",
+            "name": "inviteeUserID"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "username",
         "type_info": {
           "type": "VarString",
@@ -36,7 +52,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "email",
         "type_info": {
           "type": "VarString",
@@ -52,7 +68,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "real_name?",
         "type_info": {
           "type": "Blob",
@@ -66,6 +82,17 @@
             "name": "metaValue"
           }
         }
+      },
+      {
+        "ordinal": 5,
+        "name": "invited_at!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 128
+        },
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -75,8 +102,10 @@
       false,
       false,
       false,
+      false,
+      true,
       true
     ]
   },
-  "hash": "953d00bfdcc39b185dff1490060d1a8af06c55bc529514bd2f7837fc0f317532"
+  "hash": "f6fef422ec029b1cd63a5616e481fe9a6d5121206d98261e46746735f2c8f72b"
 }

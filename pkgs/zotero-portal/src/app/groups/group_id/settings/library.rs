@@ -1,20 +1,23 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
         content::Form,
         error::see_other,
-        href, page,
+        href, page, query_params,
         response::{IntoResponse, Response},
         route,
     },
     view::{PromotedStr, view},
 };
 
-use crate::{app::groups::group_id::GroupId, dataserver::Dataserver};
+use crate::{
+    app::{groups::group_id::GroupId, section, success_message},
+    dataserver::Dataserver,
+};
 
-use super::settings_context;
+use super::managed_group_settings;
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -38,99 +41,84 @@ struct LibrarySettings {
     file_editing: FileEditing,
 }
 
+#[topcoat::router::query_params(error = bad_request)]
+#[derive(Serialize)]
+struct LibraryQuery {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    saved: Option<bool>,
+}
+
 #[page]
 pub(in crate::app::groups) async fn library(cx: &Cx) -> Result {
-    let group = &settings_context(cx).group;
+    let context = managed_group_settings(cx).await?;
+    let group = &context.group;
+    let query = query_params::<LibraryQuery>(cx)?;
     view! {
-        <header class="border-b border-stone-200 pb-6 dark:border-stone-800">
-            <h1 class="text-3xl font-semibold">"Library Settings"</h1>
-            <p class="mt-2 text-stone-600 dark:text-stone-400">
-                "Control who can view and change the group library."
-            </p>
-        </header>
-        <form
-            class="space-y-8 py-8"
-            method="post"
-            action=(href!(library, GroupId(group.id)))
-        >
-            <fieldset>
-                <legend class="text-xl font-semibold">"Group Type"</legend>
-                <label class="mt-4 flex items-start gap-3">
-                    <input
-                        class="mt-1"
-                        type="radio"
-                        checked="checked"
-                        disabled="disabled"
-                    >
-                    <span>
-                        <strong class="block">"Private Membership"</strong>
-                        <span
-                            class="mt-1 block text-sm text-stone-600 dark:text-stone-400"
-                        >
-                            "Only members can view this group."
-                        </span>
-                    </span>
-                </label>
-            </fieldset>
-            <fieldset class="border-t border-stone-200 pt-6 dark:border-stone-800">
-                <legend class="text-xl font-semibold">"Library Reading"</legend>
-                <label class="mt-4 flex items-center gap-3">
-                    <input type="radio" checked="checked" disabled="disabled">
-                    <span>"Any group member"</span>
-                </label>
-            </fieldset>
-            <fieldset class="border-t border-stone-200 pt-6 dark:border-stone-800">
-                <legend class="text-xl font-semibold">"Library Editing"</legend>
-                <div class="mt-4 space-y-3">
-                    setting_radio(
-                        id: PromotedStr(&"library-edit-members"),
-                        name: PromotedStr(&"library_editing"),
-                        value: PromotedStr(&"members"),
-                        label: PromotedStr(&"Any group member"),
-                        checked: group.library_editing == "members"
-                    )
-                    setting_radio(
-                        id: PromotedStr(&"library-edit-admins"),
-                        name: PromotedStr(&"library_editing"),
-                        value: PromotedStr(&"admins"),
-                        label: PromotedStr(&"Only group admins"),
-                        checked: group.library_editing == "admins"
-                    )
-                </div>
-            </fieldset>
-            <fieldset class="border-t border-stone-200 pt-6 dark:border-stone-800">
-                <legend class="text-xl font-semibold">"File Editing"</legend>
-                <div class="mt-4 space-y-3">
-                    setting_radio(
-                        id: PromotedStr(&"file-edit-members"),
-                        name: PromotedStr(&"file_editing"),
-                        value: PromotedStr(&"members"),
-                        label: PromotedStr(&"Any group member"),
-                        checked: group.file_editing == "members"
-                    )
-                    setting_radio(
-                        id: PromotedStr(&"file-edit-admins"),
-                        name: PromotedStr(&"file_editing"),
-                        value: PromotedStr(&"admins"),
-                        label: PromotedStr(&"Only group admins"),
-                        checked: group.file_editing == "admins"
-                    )
-                    setting_radio(
-                        id: PromotedStr(&"file-edit-none"),
-                        name: PromotedStr(&"file_editing"),
-                        value: PromotedStr(&"none"),
-                        label: PromotedStr(&"No group file storage"),
-                        checked: group.file_editing == "none"
-                    )
-                </div>
-            </fieldset>
-            <button
-                class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700"
-                type="submit"
+        if query.saved == Some(true) {
+            success_message(message: "Settings saved")
+        }
+        section(
+            <form
+                class="space-y-8"
+                method="post"
+                action=(href!(library, GroupId(group.id)))
             >
-                "Save Settings"
-            </button>
-        </form>
+                <fieldset>
+                    <legend class="portal-section-heading">"Library Editing"</legend>
+                    <div class="mt-4 space-y-3">
+                        setting_radio(
+                            id: PromotedStr(&"library-edit-members"),
+                            name: PromotedStr(&"library_editing"),
+                            value: PromotedStr(&"members"),
+                            label: PromotedStr(&"Any group members"),
+                            checked: group.library_editing == "members"
+                        )
+                        setting_radio(
+                            id: PromotedStr(&"library-edit-admins"),
+                            name: PromotedStr(&"library_editing"),
+                            value: PromotedStr(&"admins"),
+                            label: PromotedStr(&"Only group admins"),
+                            checked: group.library_editing == "admins"
+                        )
+                    </div>
+                    <p class="mt-3 text-sm text-stone-600">
+                        "Who can add, edit, and remove items from this group's library?"
+                    </p>
+                </fieldset>
+                <fieldset>
+                    <legend class="portal-section-heading">"File Editing"</legend>
+                    <div class="mt-4 space-y-3">
+                        setting_radio(
+                            id: PromotedStr(&"file-edit-members"),
+                            name: PromotedStr(&"file_editing"),
+                            value: PromotedStr(&"members"),
+                            label: PromotedStr(&"Any group members"),
+                            checked: group.file_editing == "members"
+                        )
+                        setting_radio(
+                            id: PromotedStr(&"file-edit-admins"),
+                            name: PromotedStr(&"file_editing"),
+                            value: PromotedStr(&"admins"),
+                            label: PromotedStr(&"Only group admins"),
+                            checked: group.file_editing == "admins"
+                        )
+                        setting_radio(
+                            id: PromotedStr(&"file-edit-none"),
+                            name: PromotedStr(&"file_editing"),
+                            value: PromotedStr(&"none"),
+                            label: PromotedStr(&"No group file storage"),
+                            checked: group.file_editing == "none"
+                        )
+                    </div>
+                    <p class="mt-3 text-sm text-stone-600">
+                        "Who can work with files stored in the group?"
+                    </p>
+                </fieldset>
+                <button class="portal-button portal-button-primary" type="submit">
+                    "Save Settings"
+                </button>
+            </form>
+        )
     }
 }
 
@@ -159,9 +147,7 @@ async fn setting_radio(
 
 #[route(POST)]
 async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<Response> {
-    let mut group = settings_context(cx).group.clone();
-    group.group_type = "Private".to_owned();
-    group.library_reading = "members".to_owned();
+    let mut group = managed_group_settings(cx).await?.group;
     group.library_editing = match input.library_editing {
         LibraryEditing::Members => "members",
         LibraryEditing::Admins => "admins",
@@ -174,5 +160,10 @@ async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<Res
     }
     .to_owned();
     app_context::<Dataserver>(cx).update_group(&group).await?;
-    see_other(href!(library, GroupId(group.id)).resolve(cx)).into_response(cx)
+    see_other(
+        href!(library, GroupId(group.id))
+            .query(LibraryQuery { saved: Some(true) })
+            .resolve(cx),
+    )
+    .into_response(cx)
 }

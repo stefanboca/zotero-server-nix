@@ -3,9 +3,8 @@ use topcoat::{
     context::{Cx, app_context},
     cookie::{Cookies as _, SameSite, cookie_store, private_cookies},
     router::{
-        Body, Next,
         error::{bad_request, forbidden, redirect, see_other},
-        href, layer, page, query_params,
+        href, page, query_params,
         response::{IntoResponse, Response},
         route,
     },
@@ -14,7 +13,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::{BareLayout, FLOW_LIFETIME, current_user, normalized_return_path},
+    app::{FLOW_LIFETIME, current_user, normalized_return_path, portal_page, section},
     database::Database,
     dataserver::Dataserver,
     id::UserId,
@@ -33,12 +32,6 @@ pub(crate) struct LoginQuery {
 fn redirect_to(query: &LoginQuery) -> Result<String> {
     let value = query.redirect_to.as_deref().unwrap_or("/");
     normalized_return_path(value).ok_or_else(|| bad_request("invalid login return path").into())
-}
-
-#[layer]
-async fn bare_login_layout(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
-    let cx = cx.with(BareLayout);
-    next.run(&cx, body).await
 }
 
 #[page]
@@ -68,25 +61,25 @@ pub(crate) async fn login(cx: &Cx) -> Result {
         }
     };
     view! {
-        <main
-            class="mx-auto flex min-h-screen w-full max-w-lg items-center px-4 py-12 sm:px-6"
-        >
-            <section class="w-full">
-                <h1 class="text-2xl font-semibold">"Sign in to Zotero"</h1>
-                <form
-                    class="mt-5"
-                    method="post"
-                    action=(href!(start).query(&form_query))
-                >
-                    <button
-                        class="cursor-pointer bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-800 dark:bg-red-700 dark:hover:bg-red-600"
-                        type="submit"
+        portal_page(
+            <div class="mx-auto max-w-lg text-center">
+                section(
+                    <h1 class="text-2xl font-semibold">"Sign in to Zotero"</h1>
+                    <form
+                        class="mt-5"
+                        method="post"
+                        action=(href!(start).query(&form_query))
                     >
-                        "Continue with OpenID Connect"
-                    </button>
-                </form>
-            </section>
-        </main>
+                        <button
+                            class="portal-button portal-button-primary"
+                            type="submit"
+                        >
+                            "Continue with OpenID Connect"
+                        </button>
+                    </form>
+                )
+            </div>
+        )
     }
 }
 

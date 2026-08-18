@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT IGNORE INTO group_invitations (groupID, inviterUserID, inviteeUserID) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "80e4d6ac01c588d5b7b659ae9b8a5dd3e8b85aea82cc5b5bfbbb9490b39b7e42"
+}

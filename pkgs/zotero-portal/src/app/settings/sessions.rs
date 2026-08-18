@@ -13,11 +13,10 @@ use topcoat::{
 };
 
 use crate::{
+    app::signed_in_user,
     database::{self, Database},
     dataserver::Dataserver,
 };
-
-use super::settings_user;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,7 +26,7 @@ struct RevokeSession {
 
 #[route(POST)]
 pub(super) async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) -> Result<Response> {
-    let user = settings_user(cx);
+    let user = signed_in_user(cx).await?;
     let database = app_context::<Database>(cx);
     let dataserver = app_context::<Dataserver>(cx);
     let current_handle = session::token_hash(cx)

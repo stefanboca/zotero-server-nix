@@ -24,6 +24,14 @@ impl TryFrom<u64> for UserId {
     }
 }
 
+impl std::str::FromStr for UserId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self(value.parse()?))
+    }
+}
+
 impl Display for UserId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)

@@ -30,6 +30,7 @@ impl Database {
         dataserver: &Dataserver,
         token_hash: &[u8],
         expires_at: Timestamp,
+        user_agent: Option<&str>,
     ) -> anyhow::Result<Option<UserId>> {
         self.delete_expired_browser_sessions(dataserver).await?;
         let mut transaction = self.db.begin().await?;
@@ -40,9 +41,11 @@ impl Database {
         .fetch_optional(&mut *transaction)
         .await?;
         if user_id.is_some() {
+            let user_agent = stored_user_agent(user_agent);
             sqlx::query!(
-                "UPDATE browser_sessions SET expiresAt = FROM_UNIXTIME(?), lastSeenAt = CURRENT_TIMESTAMP(6) WHERE tokenHash = ?",
+                "UPDATE browser_sessions SET expiresAt = FROM_UNIXTIME(?), lastSeenAt = CURRENT_TIMESTAMP(6), userAgent = COALESCE(userAgent, ?) WHERE tokenHash = ?",
                 expires_at.as_second(),
+                user_agent,
                 token_hash
             )
             .execute(&mut *transaction)
@@ -58,14 +61,17 @@ impl Database {
         token_hash: &[u8],
         user_id: UserId,
         expires_at: Timestamp,
+        user_agent: Option<&str>,
     ) -> anyhow::Result<()> {
         self.delete_expired_browser_sessions(dataserver).await?;
         let mut transaction = self.db.begin().await?;
+        let user_agent = stored_user_agent(user_agent);
         sqlx::query!(
-            "INSERT INTO browser_sessions (tokenHash, userID, expiresAt) VALUES (?, ?, FROM_UNIXTIME(?))",
+            "INSERT INTO browser_sessions (tokenHash, userID, expiresAt, userAgent) VALUES (?, ?, FROM_UNIXTIME(?), ?)",
             token_hash,
             user_id,
-            expires_at.as_second()
+            expires_at.as_second(),
+            user_agent
         )
         .execute(&mut *transaction)
         .await?;
@@ -136,6 +142,7 @@ impl Database {
         self.delete_expired_browser_sessions(dataserver).await?;
         let rows = sqlx::query!(
             "SELECT LOWER(HEX(tokenHash)) AS `handle!`, \
+             userAgent AS `user_agent?`, \
              DATE_FORMAT(createdAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `created_at!`, \
              DATE_FORMAT(lastSeenAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `last_seen_at!`, \
              DATE_FORMAT(expiresAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `expires_at!` \
@@ -148,6 +155,7 @@ impl Database {
             .map(|row| {
                 Ok(BrowserSession {
                     handle: row.handle,
+                    user_agent: row.user_agent,
                     created_at: row.created_at.parse()?,
                     last_seen_at: row.last_seen_at.parse()?,
                     expires_at: row.expires_at.parse()?,
@@ -217,4 +225,8 @@ impl Database {
 }
 pub fn session_handle(token_hash: &[u8]) -> String {
     crate::hex_string(token_hash)
+}
+
+fn stored_user_agent(user_agent: Option<&str>) -> Option<String> {
+    user_agent.map(|user_agent| user_agent.chars().take(512).collect())
 }

@@ -6,6 +6,7 @@ use topcoat::{
         HeaderValue, StatusCode,
         error::{bad_request, forbidden},
         header, href, page, query_params,
+        request::headers,
     },
     session,
     view::view,
@@ -85,12 +86,16 @@ async fn callback_inner(cx: &Cx) -> Result {
         dataserver.set_unlimited_storage(user_id).await?;
     }
     let browser_session = session::start(cx).await?;
+    let user_agent = headers(cx)
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok());
     database
         .create_browser_session(
             dataserver,
             &*browser_session.token_hash,
             user_id,
             browser_session.expires_at.try_into()?,
+            user_agent,
         )
         .await?;
 

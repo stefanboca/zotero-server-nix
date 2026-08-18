@@ -46,19 +46,19 @@ impl std::fmt::Display for ApiKeyValue {
 }
 
 impl TryFrom<String> for ApiKeyValue {
-    type Error = &'static str;
+    type Error = anyhow::Error;
 
     fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
         if value.len() == 24 && value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
             Ok(Self(value))
         } else {
-            Err("API key must contain exactly 24 ASCII letters or digits")
+            anyhow::bail!("API key must contain exactly 24 ASCII letters or digits")
         }
     }
 }
 
 impl std::str::FromStr for ApiKeyValue {
-    type Err = &'static str;
+    type Err = anyhow::Error;
 
     fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
         Self::try_from(value.to_owned())
@@ -95,11 +95,19 @@ fn default_access() -> ApiKeyAccess {
     ApiKeyAccess {
         user: ApiKeyLibraryAccess {
             library: true,
-            notes: true,
+            notes: false,
             files: true,
-            write: true,
+            write: false,
         },
-        groups: Default::default(),
+        groups: [(
+            ApiKeyGroupTarget::All,
+            ApiKeyGroupAccess {
+                library: true,
+                write: false,
+            },
+        )]
+        .into_iter()
+        .collect(),
     }
 }
 
@@ -108,48 +116,41 @@ pub(super) async fn key_editor(user_id: UserId, key_value: Option<&ApiKeyValue>)
     view! {
         <form
             class="space-y-8"
+            id="key-editor-form"
             action=(href!(super::savekey::save_key))
             data-key-editor=""
             data-key=(key_value.map(ApiKeyValue::as_str).unwrap_or(""))
         >
-            <div class="space-y-8" data-key-editor-fields="">
-                key_editor_fields(user_id: user_id, key_value: key_value)
-                specific_group_permissions(user_id: user_id, key_value: key_value)
-                <div
-                    class="flex flex-wrap items-center gap-3 border-t border-stone-200 pt-6 dark:border-stone-800"
-                >
-                    <button
-                        class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                        type="submit"
+            <div data-key-editor-fields="">
+                key_name(user_id: user_id, key_value: key_value)
+                <div class="portal-card mt-3">
+                    <h2 class="text-xl font-normal">"Permissions"</h2>
+                    <ul
+                        class="mt-4 list-disc space-y-1 pl-12"
+                        data-permissions-summary=""
                     >
-                        "Save Key"
-                    </button>
-                    <a
-                        class="border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
-                        href=(href!(super::security::security)
-                            .fragment("applications"))
-                    >
-                        "Manage all access keys"
-                    </a>
+                        <li>"No additional permissions selected"</li>
+                    </ul>
+                </div>
+                <div class="portal-card mt-5 space-y-8">
+                    library_permissions(user_id: user_id, key_value: key_value)
+                    specific_group_permissions(user_id: user_id, key_value: key_value)
                 </div>
             </div>
 
-            <div
-                class="border border-green-700 bg-green-50 p-4 text-green-950 dark:border-green-500 dark:bg-green-950 dark:text-green-100"
-                hidden="hidden"
-                role="status"
-                data-key-created=""
-            >
+            <div class="space-y-4" hidden="hidden" role="status" data-key-created="">
                 <p>
-                    "Your new API key has been created. Save it now; it will not be displayed again."
+                    "Your new API key has been created and is displayed below. Please save it now as it will not be accessible again after this point."
                 </p>
-                <code
-                    class="mt-3 block break-all text-lg font-semibold"
-                    data-key-value=""
-                ></code>
+                <div class="portal-alert portal-alert-success text-center">
+                    <code
+                        class="block break-all text-lg font-semibold"
+                        data-key-value=""
+                    ></code>
+                </div>
             </div>
             <p
-                class="border border-green-700 bg-green-50 p-4 text-green-950 dark:border-green-500 dark:bg-green-950 dark:text-green-100"
+                class="portal-alert portal-alert-success"
                 hidden="hidden"
                 role="status"
                 data-key-saved=""
@@ -157,26 +158,42 @@ pub(super) async fn key_editor(user_id: UserId, key_value: Option<&ApiKeyValue>)
                 "Key Saved"
             </p>
             <p
-                class="text-sm text-red-800 dark:text-red-400"
+                class="portal-alert portal-alert-danger text-sm"
                 hidden="hidden"
                 role="alert"
                 data-key-error=""
             ></p>
         </form>
-        if let Some(key_value) = key_value {
-            <form
-                class="mt-8 border-t border-stone-200 pt-6 dark:border-stone-800"
-                method="post"
-                action=(href!(revoke_key))
+
+        <div
+            class="mt-8 flex flex-wrap items-center gap-3 border-t border-stone-200 pt-6"
+            data-key-editor-actions=""
+        >
+            <button
+                class="portal-button portal-button-primary portal-button-large"
+                type="submit"
+                form="key-editor-form"
+                data-save-key=""
             >
-                <input type="hidden" name="key" value=(key_value.as_str())>
-                confirm_button(
-                    label: "Revoke Key",
-                    confirmation: "Permanently revoke this API key? Applications using it will immediately lose access.",
-                    class: "border border-red-800 px-4 py-2 font-medium text-red-800 hover:bg-red-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-950"
-                )
-            </form>
-        }
+                "Save Key"
+            </button>
+            if let Some(key_value) = key_value {
+                <form method="post" action=(href!(revoke_key))>
+                    <input type="hidden" name="key" value=(key_value.as_str())>
+                    confirm_button(
+                        label: "Revoke Key",
+                        confirmation: "Permanently revoke this API key? Applications using it will immediately lose access.",
+                        class: "portal-button portal-button-primary portal-button-large"
+                    )
+                </form>
+            }
+        </div>
+        <a
+            class="mt-4 inline-block text-blue-700 hover:underline"
+            href=(href!(super::security::security).fragment("applications"))
+        >
+            "Manage all access keys"
+        </a>
         <script
             type="module"
             src=(topcoat::asset::asset!("src/app/settings/keys/key_editor.js"))
@@ -185,18 +202,13 @@ pub(super) async fn key_editor(user_id: UserId, key_value: Option<&ApiKeyValue>)
 }
 
 #[component]
-async fn key_editor_fields(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyValue>) -> Result {
+async fn key_name(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyValue>) -> Result {
     let access_key = editor_key(cx, user_id, key_value).await?;
-    let access = access_key
-        .as_ref()
-        .map(|access_key| access_key.access.clone())
-        .unwrap_or_else(default_access);
-    let all_groups = permission_value(access.groups.get(&ApiKeyGroupTarget::All));
     view! {
         <div>
-            <label class="block font-medium" for="key-name">"Key name"</label>
+            <label class="block text-lg" for="key-name">"Key Name"</label>
             <input
-                class="mt-2 w-full border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950"
+                class="mt-1 w-full max-w-[17.5rem] border border-stone-300 bg-white px-3 py-2"
                 id="key-name"
                 name="name"
                 value=(access_key
@@ -208,42 +220,59 @@ async fn key_editor_fields(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyVa
                 autofocus="autofocus"
             >
         </div>
+    }
+}
 
-        <fieldset class="border-t border-stone-200 pt-6 dark:border-stone-800">
-            <legend class="text-xl font-semibold">"Personal Library"</legend>
-            <div class="mt-4 grid gap-3 sm:grid-cols-2">
+#[component]
+async fn library_permissions(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyValue>) -> Result {
+    let access_key = editor_key(cx, user_id, key_value).await?;
+    let access = access_key
+        .as_ref()
+        .map(|access_key| access_key.access.clone())
+        .unwrap_or_else(default_access);
+    let all_groups = permission_value(access.groups.get(&ApiKeyGroupTarget::All));
+    view! {
+        <section class="portal-key-permission-box">
+            <h2 class="text-3xl font-normal">"Personal Library"</h2>
+            <div class="mt-4 space-y-4">
                 permission_checkbox(
                     id: PromotedStr(&"user-library"),
-                    label: PromotedStr(&"Library access"),
+                    label: PromotedStr(&"Allow library access"),
+                    description: PromotedStr(
+                        &"Allow third party to access your library.",
+                    ),
                     name: PromotedStr(&"user-library"),
                     checked: access.user.library
                 )
                 permission_checkbox(
                     id: PromotedStr(&"user-notes"),
-                    label: PromotedStr(&"Notes access"),
+                    label: PromotedStr(&"Allow notes access"),
+                    description: PromotedStr(
+                        &"Allow third party to access your notes.",
+                    ),
                     name: PromotedStr(&"user-notes"),
                     checked: access.user.notes
                 )
                 permission_checkbox(
                     id: PromotedStr(&"user-write"),
-                    label: PromotedStr(&"Write access"),
+                    label: PromotedStr(&"Allow write access"),
+                    description: PromotedStr(
+                        &"Allow third party to make changes to your library.",
+                    ),
                     name: PromotedStr(&"user-write"),
                     checked: access.user.write
                 )
             </div>
-        </fieldset>
+        </section>
 
-        <fieldset class="border-t border-stone-200 pt-6 dark:border-stone-800">
-            <legend class="text-xl font-semibold">"Group Permissions"</legend>
-            <p class="mt-2 text-sm text-stone-600 dark:text-stone-400">
+        <section class="portal-key-permission-box">
+            <h2 class="text-3xl font-normal">"Default Group Permissions"</h2>
+            <p class="mt-4 text-lg">"All Groups"</p>
+            permission_radios(name: "all-groups", group_id: None, selected: all_groups)
+            <p class="mt-2 text-sm text-stone-600">
                 "Allow access to all current and future groups."
             </p>
-            permission_radios(
-                name: "all-groups",
-                group_id: None,
-                selected: all_groups
-            )
-        </fieldset>
+        </section>
     }
 }
 
@@ -277,40 +306,46 @@ async fn specific_group_permissions(
         })
         .collect::<Vec<_>>();
     view! {
-        <fieldset class="border-t border-stone-200 pt-6 dark:border-stone-800">
-            <legend class="text-xl font-semibold">"Specific Groups"</legend>
-            <label class="mt-4 flex items-center gap-3">
+        <section>
+            <h2 class="text-3xl font-normal">"Specific Groups"</h2>
+            <label class="mt-4 flex items-center gap-2 text-lg">
                 <input
                     type="checkbox"
                     checked=(per_group_enabled)
                     data-per-group-toggle=""
                 >
-                <span class="font-medium">"Per Group Permissions"</span>
+                <span>"Per Group Permissions"</span>
             </label>
+            <p class="ml-6 mt-1 text-sm text-stone-600">
+                "Set group by group permissions for this key."
+            </p>
             <div
-                class="mt-5 space-y-5"
+                class="mt-2 space-y-6"
                 hidden=(!per_group_enabled)
                 data-per-group-permissions=""
             >
                 if groups.is_empty() {
-                    <p class="text-sm text-stone-600 dark:text-stone-400">
+                    <p class="text-sm text-stone-600">
                         "You do not currently belong to any groups."
                     </p>
                 }
                 for (group, permission) in groups {
                     let radio_name = format!("group-{}", group.id);
-                    <div class="border border-stone-200 p-4 dark:border-stone-800">
-                        <p class="font-medium">(group.name.as_str())</p>
+                    <div data-key-group=(group.name.as_str())>
+                        <p class="text-lg">(group.name.as_str())</p>
                         permission_radios(
                             key: group.id,
                             name: radio_name.as_str(),
                             group_id: Some(group.id),
                             selected: permission
                         )
+                        <p class="mt-3 text-sm text-stone-600">
+                            "Access level to this group."
+                        </p>
                     </div>
                 }
             </div>
-        </fieldset>
+        </section>
     }
 }
 
@@ -318,13 +353,17 @@ async fn specific_group_permissions(
 async fn permission_checkbox(
     id: PromotedStr,
     label: PromotedStr,
+    description: PromotedStr,
     name: PromotedStr,
     checked: bool,
 ) -> Result {
     view! {
-        <label class="flex items-center gap-3" for=(id)>
-            <input id=(id) type="checkbox" name=(name) checked=(checked)>
-            <span>(label)</span>
+        <label class="flex items-start gap-3" for=(id)>
+            <input class="mt-1" id=(id) type="checkbox" name=(name) checked=(checked)>
+            <span>
+                <span class="block font-medium">(label)</span>
+                <span class="mt-1 block text-sm text-stone-600">(description)</span>
+            </span>
         </label>
     }
 }
@@ -333,7 +372,7 @@ async fn permission_checkbox(
 async fn permission_radios(name: &str, group_id: Option<u64>, selected: &str) -> Result {
     view! {
         <div
-            class="mt-3 flex flex-wrap gap-x-6 gap-y-2"
+            class="mt-3 space-y-2"
             data-group-permission=(group_id
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| "all".to_owned()))
@@ -343,7 +382,7 @@ async fn permission_radios(name: &str, group_id: Option<u64>, selected: &str) ->
                 (PromotedStr(&"read"), PromotedStr(&"Read Only")),
                 (PromotedStr(&"write"), PromotedStr(&"Read/Write")),
             ] {
-                <label class="flex items-center gap-2">
+                <label class="flex items-center gap-2 text-lg">
                     <input
                         type="radio"
                         name=(name)

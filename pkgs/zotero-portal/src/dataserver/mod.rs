@@ -143,18 +143,23 @@ pub struct Group {
     pub owner: UserId,
     pub admins: Vec<UserId>,
     pub members: Vec<UserId>,
-    pub group_type: String,
     pub library_editing: String,
-    pub library_reading: String,
     pub file_editing: String,
     pub description: String,
     pub url: String,
     pub has_image: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct GroupMembership {
+    pub user_id: UserId,
+    pub joined: jiff::Timestamp,
+}
+
 #[derive(Clone, Debug)]
 pub struct GroupItemSummary {
     pub key: String,
+    pub icon_name: &'static str,
     pub title: String,
     pub added_by: Option<String>,
     pub date_modified: jiff::Timestamp,
@@ -187,12 +192,8 @@ struct GroupData {
     admins: Vec<UserId>,
     #[serde(default)]
     members: Vec<UserId>,
-    #[serde(rename = "type")]
-    group_type: String,
     #[serde(rename = "libraryEditing")]
     library_editing: String,
-    #[serde(rename = "libraryReading")]
-    library_reading: String,
     #[serde(rename = "fileEditing")]
     file_editing: String,
     #[serde(default)]

@@ -37,12 +37,11 @@ impl Dataserver {
         user_id: UserId,
         session_handle: &str,
     ) -> anyhow::Result<String> {
-        let keys = self.api_keys(user_id).await?;
-        if let Some(key) = keys
-            .iter()
-            .find(|key| key.user_id == user_id && key.web_ui && key.name == session_handle)
+        if let Some(key) = self
+            .web_library_key_by_name(user_id, session_handle)
+            .await?
         {
-            return Ok(key.key.clone());
+            return Ok(key.key);
         }
 
         let response = self
@@ -74,6 +73,45 @@ impl Dataserver {
         Ok(key.key)
     }
 
+    async fn web_library_key_by_name(
+        &self,
+        user_id: UserId,
+        session_handle: &str,
+    ) -> anyhow::Result<Option<ApiKey>> {
+        if session_handle.len() != 64
+            || !session_handle
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            anyhow::bail!("invalid Web Library session handle");
+        }
+        let response = self
+            .super_request(
+                reqwest::Method::GET,
+                &format!("/users/{user_id}/keys/web-ui/{session_handle}"),
+            )
+            .send()
+            .await
+            .context("looking up the Zotero Web Library API key")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let key = response
+            .error_for_status()
+            .context("Dataserver rejected the Zotero Web Library API key lookup")?
+            .json::<ApiKey>()
+            .await
+            .context("decoding the Zotero Web Library API key")?;
+        if key.user_id != user_id
+            || !key.web_ui
+            || key.name != session_handle
+            || !key.has_full_web_library_access()
+        {
+            anyhow::bail!("Dataserver returned an invalid Zotero Web Library API key");
+        }
+        Ok(Some(key))
+    }
+
     async fn delete_api_key(&self, key: &str) -> anyhow::Result<()> {
         self.super_request(reqwest::Method::DELETE, &format!("/keys/{key}"))
             .send()
@@ -85,12 +123,14 @@ impl Dataserver {
     }
 
     pub async fn access_keys(&self, user_id: UserId) -> anyhow::Result<Vec<ApiKey>> {
-        Ok(self
+        let mut keys = self
             .api_keys(user_id)
             .await?
             .into_iter()
             .filter(|key| key.user_id == user_id && !key.web_ui)
-            .collect())
+            .collect::<Vec<_>>();
+        keys.sort_by_cached_key(|key| (key.name.to_lowercase(), key.name.clone(), key.key.clone()));
+        Ok(keys)
     }
 
     pub async fn access_key(
@@ -190,16 +230,13 @@ impl Dataserver {
         user_id: UserId,
         session_handles: &[String],
     ) -> anyhow::Result<()> {
-        if session_handles.is_empty() {
-            return Ok(());
-        }
-        let keys = self.api_keys(user_id).await?;
-        for key in keys.into_iter().filter(|key| {
-            key.user_id == user_id
-                && key.web_ui
-                && session_handles.iter().any(|handle| handle == &key.name)
-        }) {
-            self.delete_api_key(&key.key).await?;
+        for session_handle in session_handles {
+            if let Some(key) = self
+                .web_library_key_by_name(user_id, session_handle)
+                .await?
+            {
+                self.delete_api_key(&key.key).await?;
+            }
         }
         Ok(())
     }

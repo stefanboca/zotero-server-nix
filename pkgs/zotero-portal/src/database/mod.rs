@@ -1,3 +1,4 @@
+mod invitations;
 mod sessions;
 mod users;
 
@@ -32,21 +33,20 @@ pub struct UserSummary {
     pub real_name: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct UserProfile {
-    pub real_name: Option<String>,
-    pub location: Option<String>,
-    pub disciplines: Option<String>,
-    pub affiliation: Option<String>,
-    pub about: Option<String>,
-}
-
 #[derive(Clone, Debug)]
 pub struct BrowserSession {
     pub handle: String,
+    pub user_agent: Option<String>,
     pub created_at: Timestamp,
     pub last_seen_at: Timestamp,
     pub expires_at: Timestamp,
+}
+
+#[derive(Clone, Debug)]
+pub struct GroupInvitation {
+    pub group_id: u64,
+    pub invitee: UserSummary,
+    pub invited_at: Timestamp,
 }
 
 pub struct LoginCompletionLock<'a>(Transaction<'a, MySql>);

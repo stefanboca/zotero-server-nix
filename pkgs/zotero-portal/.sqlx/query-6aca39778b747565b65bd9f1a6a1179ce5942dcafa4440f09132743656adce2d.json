@@ -1,0 +1,111 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT GI.groupID AS `group_id!: u64`, GI.inviteeUserID AS `invitee_user_id: UserId`, U.username, U.email, UM.metaValue AS `real_name?`, DATE_FORMAT(GI.invitedAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `invited_at!` FROM group_invitations GI JOIN users U ON U.userID = GI.inviteeUserID LEFT JOIN users_meta UM ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' WHERE GI.groupID = ? ORDER BY GI.invitedAt, GI.inviteeUserID",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "group_id!: u64",
+        "type_info": {
+          "type": "LongLong",
+          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 20
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.group_invitations",
+            "name": "groupID"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "invitee_user_id: UserId",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | MULTIPLE_KEY | UNSIGNED | NO_DEFAULT_VALUE",
+          "collation": 63,
+          "max_size": 10
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.group_invitations",
+            "name": "inviteeUserID"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "email",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "real_name?",
+        "type_info": {
+          "type": "Blob",
+          "flags": "BLOB | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 262140
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users_meta",
+            "name": "metaValue"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "invited_at!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 128
+        },
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "6aca39778b747565b65bd9f1a6a1179ce5942dcafa4440f09132743656adce2d"
+}

@@ -1,0 +1,93 @@
+diff --git a/controllers/KeysController.php b/controllers/KeysController.php
+index ad790f8..ab88144 100644
+--- a/controllers/KeysController.php
++++ b/controllers/KeysController.php
+@@ -350,1 +350,34 @@ class KeysController extends ApiController {
+-	private function authenticateKeyJSON($json) {
++	/**
++	 * Return the Web Library key associated with a portal browser session.
++	 * This internal endpoint avoids listing every key owned by the user while
++	 * keeping the raw credential in Dataserver rather than the portal database.
++	 */
++	public function webUIKey() {
++		$this->allowMethods(['GET']);
++
++		if (!$this->permissions->isSuper()) {
++			$this->e403();
++		}
++
++		$userID = $this->objectUserID;
++		$name = $this->objectName;
++		if (!$userID || !preg_match('/\\A[0-9a-f]{64}\\z/D', $name)) {
++			$this->e400("Invalid Web UI key name");
++		}
++
++		$keyObj = Zotero_Keys::getWebUIKeyByName($userID, $name);
++		if (!$keyObj) {
++			$this->e404("Web UI key not found");
++		}
++
++		header('Content-Type: application/json');
++		echo Zotero_Utilities::formatJSON($keyObj->toJSON([
++			'website' => true,
++			'super' => true,
++			'includeEmails' => false
++		]));
++		$this->end();
++	}
++
++
++	private function authenticateKeyJSON($json) {
+diff --git a/include/config/routes.inc.php b/include/config/routes.inc.php
+index fbcbb01..1835d9c 100644
+--- a/include/config/routes.inc.php
++++ b/include/config/routes.inc.php
+@@ -99,1 +99,2 @@ $router->map('/keys/:objectName', array('controller' => 'Keys'));
+-$router->map('/users/i:objectUserID/keys/:objectName', array('controller' => 'Keys'));
++$router->map('/users/i:objectUserID/keys/web-ui/:objectName', ['controller' => 'Keys', 'action' => 'webUIKey']);
++$router->map('/users/i:objectUserID/keys/:objectName', array('controller' => 'Keys'));
+diff --git a/misc/db-updates/2026-08-17/addWebUIKeyLookupIndex b/misc/db-updates/2026-08-17/addWebUIKeyLookupIndex
+new file mode 100755
+index 0000000..7b887e3
+--- /dev/null
++++ b/misc/db-updates/2026-08-17/addWebUIKeyLookupIndex
+@@ -0,0 +1,8 @@
++#!/usr/bin/env php
++<?php
++set_include_path("../../../include");
++require("header.inc.php");
++
++Zotero_Admin_DB::query(
++	"ALTER TABLE `keys` ADD INDEX keys_userID_webUI_name (userID, webUI, name(64))"
++);
+diff --git a/misc/master.sql b/misc/master.sql
+index c8f1600..b766331 100644
+--- a/misc/master.sql
++++ b/misc/master.sql
+@@ -177,1 +177,2 @@ CREATE TABLE `keys` (
+-  KEY `userID` (`userID`)
++  KEY `userID` (`userID`),
++  KEY `keys_userID_webUI_name` (`userID`,`webUI`,`name`(64))
+diff --git a/model/Keys.inc.php b/model/Keys.inc.php
+index b58a24f..3db08da 100644
+--- a/model/Keys.inc.php
++++ b/model/Keys.inc.php
+@@ -69,1 +69,17 @@ class Zotero_Keys {
+-	public static function getUserKeysWithLibrary($userID, $libraryID) {
++	public static function getWebUIKeyByName($userID, $name) {
++		$keyID = Zotero_DB::valueQuery(
++			"SELECT keyID FROM `keys` "
++				. "WHERE userID=? AND webUI=1 AND name=? "
++				. "LIMIT 1",
++			[$userID, $name]
++		);
++		if (!$keyID) {
++			return false;
++		}
++		$keyObj = new Zotero_Key;
++		$keyObj->id = $keyID;
++		return $keyObj;
++	}
++
++
++	public static function getUserKeysWithLibrary($userID, $libraryID) {

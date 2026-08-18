@@ -16,7 +16,7 @@ in
     src = toSource {
       root = ./.;
       fileset = unions [
-        (fileFilter (file: file.hasExt "rs" || file.hasExt "css" || file.hasExt "js") ./.)
+        (fileFilter (file: file.hasExt "rs" || file.hasExt "css" || file.hasExt "js" || file.hasExt "svg") ./.)
         (fileFilter (file: hasPrefix "Cargo" file.name) ./.)
         ./.sqlx
         ./migrations

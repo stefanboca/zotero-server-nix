@@ -48,16 +48,54 @@ function accessFromForm() {
   };
 }
 
+function syncPermissionSummary() {
+  const summary = form?.querySelector("[data-permissions-summary]");
+  if (!summary) return;
+  const entries = [];
+  const access = accessFromForm();
+  if (access.user.library) entries.push("Access to read your personal library");
+  if (access.user.notes) entries.push("Access to read notes in your personal library");
+  if (access.user.write) entries.push("Access to modify your personal library");
+
+  const all = access.groups.all;
+  if (all?.write) {
+    entries.push("Access to read and modify any of your group libraries");
+  } else if (all?.library) {
+    entries.push("Access to read any of your group libraries");
+  }
+
+  if (perGroupToggle.checked) {
+    for (const container of form.querySelectorAll("[data-key-group]")) {
+      const permission = selectedPermission(container.querySelector("[data-group-permission]"));
+      if (permission === "write") {
+        entries.push(`Access to read and modify library for group "${container.dataset.keyGroup}"`);
+      } else if (permission === "read") {
+        entries.push(`Access to read library for group "${container.dataset.keyGroup}"`);
+      }
+    }
+  }
+
+  summary.replaceChildren(...(entries.length ? entries : ["No additional permissions selected"]).map((entry) => {
+    const item = document.createElement("li");
+    item.textContent = entry;
+    return item;
+  }));
+}
+
 perGroupToggle?.addEventListener("change", () => {
   perGroupPermissions.hidden = !perGroupToggle.checked;
+  syncPermissionSummary();
 });
 
 libraryToggle?.addEventListener("change", syncPersonalPermissions);
+form?.addEventListener("change", syncPermissionSummary);
 if (libraryToggle) syncPersonalPermissions();
+syncPermissionSummary();
 
 form?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const submit = form.querySelector("button[type=submit]");
+  const actions = document.querySelector("[data-key-editor-actions]");
+  const submit = actions.querySelector("[data-save-key]");
   const created = form.querySelector("[data-key-created]");
   const saved = form.querySelector("[data-key-saved]");
   const error = form.querySelector("[data-key-error]");
@@ -69,6 +107,13 @@ form?.addEventListener("submit", async (event) => {
   created.hidden = true;
   saved.hidden = true;
   error.hidden = true;
+
+  if (!form.elements.name.value.trim()) {
+    error.textContent = "Key is missing name";
+    error.hidden = false;
+    submit.disabled = false;
+    return;
+  }
 
   try {
     const response = await fetch(endpoint, {
@@ -85,19 +130,20 @@ form?.addEventListener("submit", async (event) => {
     });
     if (!response.ok) {
       const message = (await response.text()).trim();
-      throw new Error(message && !message.startsWith("<") ? message : "Couldn’t save this API key.");
+      throw new Error(message && !message.startsWith("<") ? message : "Error saving key");
     }
     const result = await response.json();
     if (result.created) {
       form.dataset.key = result.key;
       form.querySelector("[data-key-value]").textContent = result.key;
       form.querySelector("[data-key-editor-fields]").hidden = true;
+      actions.hidden = true;
       created.hidden = false;
     } else {
       saved.hidden = false;
     }
   } catch (cause) {
-    error.textContent = cause.message || "Couldn’t save this API key.";
+    error.textContent = cause.message || "Error saving key";
     error.hidden = false;
   } finally {
     submit.disabled = false;

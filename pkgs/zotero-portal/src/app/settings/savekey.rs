@@ -9,9 +9,12 @@ use topcoat::{
     },
 };
 
-use crate::dataserver::{ApiKeyAccess, ApiKeyGroupTarget, Dataserver};
+use crate::{
+    app::signed_in_user,
+    dataserver::{ApiKeyAccess, ApiKeyGroupTarget, Dataserver},
+};
 
-use super::{keys::ApiKeyValue, settings_user};
+use super::keys::ApiKeyValue;
 
 #[topcoat::router::query_params(error = bad_request)]
 #[serde(deny_unknown_fields)]
@@ -41,7 +44,7 @@ pub(in crate::app::settings) async fn save_key(
     cx: &Cx,
     Json(input): Json<SaveKey>,
 ) -> Result<Json<SavedKey>> {
-    let user = settings_user(cx);
+    let user = signed_in_user(cx).await?;
     let query = query_params::<SaveKeyQuery>(cx)?;
     let query_key = query.key.as_ref();
     let name = input.name.trim();

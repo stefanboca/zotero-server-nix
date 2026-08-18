@@ -8,7 +8,7 @@ use topcoat::{
 };
 
 use crate::{
-    app::{authenticated_user, confirm_button},
+    app::{authenticated_user, confirm_button, portal_page, section},
     database::Database,
     dataserver::{Dataserver, Group, GroupRole},
     id::UserId,
@@ -16,16 +16,23 @@ use crate::{
 
 use super::GroupId;
 
-topcoat::router::path_param!(pub(super) group_slug);
+topcoat::router::path_param!(pub(in crate::app) group_slug);
 
-pub(super) async fn current_slug_group(cx: &Cx) -> Result<(UserId, Group, GroupRole)> {
+pub(super) async fn current_slug_group(cx: &Cx) -> Result<(UserId, Group, Option<GroupRole>)> {
     let user_id = authenticated_user(cx).await?;
     let group_id = *path_param::<GroupId>(cx)?;
-    let group = app_context::<Dataserver>(cx)
-        .group(group_id)
+    let group = super::group_by_id(cx, group_id)
         .await?
         .ok_or_else(not_found)?;
-    let role = group.role(user_id).ok_or_else(not_found)?;
+    let role = group.role(user_id);
+    if role.is_none()
+        && app_context::<Database>(cx)
+            .group_invitation(group_id, user_id)
+            .await?
+            .is_none()
+    {
+        return Err(not_found().into());
+    }
     if path_param::<GroupSlug>(cx) != group.slug() {
         return Err(not_found().into());
     }
@@ -33,108 +40,86 @@ pub(super) async fn current_slug_group(cx: &Cx) -> Result<(UserId, Group, GroupR
 }
 
 #[page]
-pub(super) async fn group_overview(cx: &Cx) -> Result {
+pub(in crate::app) async fn group_overview(cx: &Cx) -> Result {
     let (_, group, role) = current_slug_group(cx).await?;
-    let leave_confirmation = format!("Leave “{}”?", group.name);
     view! {
-        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <header class="border-b border-stone-200 pb-6 dark:border-stone-800">
-                <div class="flex flex-wrap items-start justify-between gap-4">
-                    <div>
-                        <h1 class="text-3xl font-semibold">(group.name.as_str())</h1>
-                        <p class="mt-2 text-stone-600 dark:text-stone-400">
-                            (role.user_summary())
-                        </p>
-                    </div>
-                    <a
-                        class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700"
-                        href=(href!(
-                            crate::app::_web_library::group_library_path,
-                            crate::app::_web_library::LibraryGroupId(group.id),
-                            crate::app::_web_library::LibraryGroupSlug(group.slug()),
-                            crate::app::_web_library::LibraryPath(["items"]),
-                        ))
-                    >
-                        "Group Library"
-                    </a>
-                </div>
-            </header>
-            <div class="grid gap-8 py-8 sm:grid-cols-2">
-                <section>
-                    <h2 class="text-xl font-semibold">"About"</h2>
-                    if group.description.trim().is_empty() {
-                        <p class="mt-3 text-stone-600 dark:text-stone-400">
-                            "No description provided."
-                        </p>
-                    } else {
-                        <p
-                            class="mt-3 whitespace-pre-wrap text-stone-600 dark:text-stone-400"
-                        >
-                            (group.description.as_str())
-                        </p>
-                    }
-                    if !group.url.trim().is_empty() {
-                        <p class="mt-3 break-all">
+        portal_page(
+            section(
+                <header class="border-b border-stone-200 pb-6">
+                    <h1 class="text-3xl font-semibold">
+                        (group.name.as_str())
+                    </h1>
+                    if role.is_some() {
+                        <div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                             <a
-                                class="text-red-800 hover:underline dark:text-red-400"
-                                href=(group.url.as_str())
+                                class="text-blue-700 hover:underline"
+                                href=(href!(
+                                crate::app::_web_library::group_library_path,
+                                crate::app::_web_library::LibraryGroupId(group.id),
+                                crate::app::_web_library::LibraryGroupSlug(group.slug()),
+                                crate::app::_web_library::LibraryPath(["items"]),
+                            ))
                             >
-                                (group.url.as_str())
+                                "Group Library"
                             </a>
-                        </p>
+                            if role.is_some_and(GroupRole::can_manage) {
+                                <span aria-hidden="true">"·"</span>
+                                <a
+                                    class="text-blue-700 hover:underline"
+                                    href=(href!(super::group_settings, GroupId(group.id)))
+                                >
+                                    "Group Settings"
+                                </a>
+                            }
+                        </div>
                     }
-                </section>
-                group_details(group: &group, role: role)
-            </div>
-            recent_group_items(group: &group)
-            <div
-                class="flex flex-wrap items-center gap-4 border-t border-stone-200 pt-6 dark:border-stone-800"
-            >
-                if role.can_manage() {
-                    <a
-                        class="text-red-800 hover:underline dark:text-red-400"
-                        href=(href!(super::group_settings, GroupId(group.id)))
-                    >
-                        "Group Settings"
-                    </a>
+                </header>
+                <div class="grid gap-8 py-8 sm:grid-cols-2">
+                    <section>
+                        <h2 class="text-xl font-semibold">"About"</h2>
+                        if group.description.trim().is_empty() {
+                            <p class="mt-3 text-stone-600">
+                                "No description provided."
+                            </p>
+                        } else {
+                            <p class="mt-3 whitespace-pre-wrap text-stone-600">
+                                (group.description.as_str())
+                            </p>
+                        }
+                    </section>
+                    group_details(group: &group, role: role)
+                </div>
+                if role.is_some() {
+                    recent_group_items(group: &group)
+                } else {
+                    <section class="border-t border-stone-200 py-8">
+                        <h2 class="text-xl font-semibold">"Recently Added Items"</h2>
+                        <p class="mt-3 text-stone-600">
+                            "Library will be viewable after joining this group."
+                        </p>
+                    </section>
                 }
-                if role != GroupRole::Owner {
-                    <form
-                        method="post"
-                        action=(href!(super::members::leave_group, GroupId(group.id)))
-                    >
-                        confirm_button(
-                            label: "Leave Group",
-                            confirmation: leave_confirmation.as_str(),
-                            class: "text-red-800 hover:underline dark:text-red-400"
-                        )
-                    </form>
-                }
-            </div>
-        </main>
+            )
+        )
     }
 }
 
 #[component]
-async fn group_details(cx: &Cx, group: &Group, role: GroupRole) -> Result {
+async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Result {
     let owner = app_context::<Database>(cx)
         .user_by_id(group.owner)
         .await?
         .ok_or_else(not_found)?;
     let registered = group.created.strftime("%Y-%m-%d").to_string();
-    let library_access = if role.can_manage() || group.library_editing == "members" {
-        "You can view and edit"
-    } else {
-        "You can only view"
-    };
+    let leave_confirmation = format!("Leave “{}”?", group.name);
     view! {
         <section>
             <h2 class="text-xl font-semibold">"Group Details"</h2>
             <dl class="mt-3 grid grid-cols-[8rem_1fr] gap-3 text-sm">
-                <dt class="text-stone-600 dark:text-stone-400">"Owner"</dt>
+                <dt class="text-stone-600">"Owner"</dt>
                 <dd>
                     <a
-                        class="hover:text-red-800 dark:hover:text-red-400"
+                        class="hover:text-red-800"
                         href=(href!(
                             crate::app::profile::profile,
                             crate::app::profile::ProfileUsername(owner.username.clone()),
@@ -143,16 +128,16 @@ async fn group_details(cx: &Cx, group: &Group, role: GroupRole) -> Result {
                         (owner.display_name())
                     </a>
                 </dd>
-                <dt class="text-stone-600 dark:text-stone-400">"Registered"</dt>
+                <dt class="text-stone-600">"Registered"</dt>
                 <dd>
-                    <time datetime=(group.created.to_string())>(registered.as_str())</time>
+                    <time datetime=(group.created.to_string())>
+                        (registered.as_str())
+                    </time>
                 </dd>
-                <dt class="text-stone-600 dark:text-stone-400">"Type"</dt>
-                <dd>(group.group_type.as_str())</dd>
-                <dt class="text-stone-600 dark:text-stone-400">"Members"</dt>
+                <dt class="text-stone-600">"Members"</dt>
                 <dd>
                     <a
-                        class="hover:text-red-800 dark:hover:text-red-400"
+                        class="hover:text-red-800"
                         href=(href!(
                             members::members,
                             GroupId(group.id),
@@ -162,9 +147,51 @@ async fn group_details(cx: &Cx, group: &Group, role: GroupRole) -> Result {
                         (group.user_ids().len())
                     </a>
                 </dd>
-                <dt class="text-stone-600 dark:text-stone-400">"Library access"</dt>
-                <dd>(library_access)</dd>
             </dl>
+            if role.is_some_and(|role| role != GroupRole::Owner) {
+                <form
+                    class="mt-5"
+                    method="post"
+                    action=(href!(super::members::leave_group, GroupId(group.id)))
+                >
+                    confirm_button(
+                        label: "Leave Group",
+                        confirmation: leave_confirmation.as_str(),
+                        class: "portal-button portal-button-danger text-sm"
+                    )
+                </form>
+            }
+            if role.is_none() {
+                <div class="mt-5">
+                    <p class="text-stone-600">
+                        "You have been invited to join this group."
+                    </p>
+                    <div class="mt-3 flex flex-wrap gap-3">
+                        <form
+                            method="post"
+                            action=(href!(super::accept_invitation, GroupId(group.id)))
+                        >
+                            <button
+                                class="portal-button portal-button-primary"
+                                type="submit"
+                            >
+                                "Join"
+                            </button>
+                        </form>
+                        <form
+                            method="post"
+                            action=(href!(super::ignore_invitation, GroupId(group.id)))
+                        >
+                            <button
+                                class="portal-button portal-button-secondary"
+                                type="submit"
+                            >
+                                "Ignore"
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            }
         </section>
     }
 }
@@ -176,23 +203,23 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
         .await?;
     let total = recently_added.total;
     view! {
-        <section class="border-t border-stone-200 py-8 dark:border-stone-800">
+        <section class="border-t border-stone-200 py-8">
             <h2 class="text-xl font-semibold">"Recently Added Items"</h2>
             if recently_added.items.is_empty() {
-                <p class="mt-3 text-stone-600 dark:text-stone-400">
+                <p class="mt-3 text-stone-600">
                     "There are not yet any items in this collection."
                 </p>
             } else {
                 <div class="mt-4 overflow-x-auto">
                     <table class="w-full border-collapse text-left text-sm">
-                        <thead class="border-y border-stone-300 dark:border-stone-700">
+                        <thead class="border-b border-stone-300">
                             <tr>
                                 <th class="px-3 py-2 font-semibold">"Title"</th>
                                 <th class="px-3 py-2 font-semibold">"Added By"</th>
                                 <th class="px-3 py-2 font-semibold">"Date Modified"</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-stone-200 dark:divide-stone-800">
+                        <tbody class="portal-striped-rows">
                             for item in recently_added.items {
                                 let title = if item.title.trim().is_empty() {
                                     "Untitled"
@@ -206,14 +233,26 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
                                 );
                                 <tr>
                                     <td class="px-3 py-3">
+                                        let icon = format!(
+                                            "/static/web-library/icons/16/item-type/{}@1x.svg",
+                                            item.icon_name,
+                                        );
+                                        <img
+                                            class="portal-item-type-icon"
+                                            src=(icon)
+                                            width="16"
+                                            height="16"
+                                            alt=""
+                                        >
                                         <a
-                                            class="font-medium hover:text-red-800 dark:hover:text-red-400"
+                                            class="font-medium hover:text-red-800"
                                             href=(href!(
                                                 crate::app::_web_library::group_library_path,
                                                 crate::app::_web_library::LibraryGroupId(group.id),
                                                 crate::app::_web_library::LibraryGroupSlug(group.slug()),
                                                 crate::app::_web_library::LibraryPath([
                                                     "items",
+                                                    "itemKey",
                                                     item.key.as_str(),
                                                 ]),
                                             ))
@@ -221,24 +260,26 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
                                             (title)
                                         </a>
                                     </td>
-                                    <td class="px-3 py-3 text-stone-600 dark:text-stone-400">
+                                    <td class="px-3 py-3 text-stone-600">
                                         (item.added_by.as_deref().unwrap_or("Unknown"))
                                     </td>
-                                    <td class="whitespace-nowrap px-3 py-3 text-stone-600 dark:text-stone-400">
-                                        <time datetime=(datetime.as_str())>(modified.as_str())</time>
+                                    <td class="whitespace-nowrap px-3 py-3 text-stone-600">
+                                        <time datetime=(datetime.as_str())>
+                                            (modified.as_str())
+                                        </time>
                                     </td>
                                 </tr>
                             }
                         </tbody>
                     </table>
                 </div>
-                <p class="mt-4 text-stone-600 dark:text-stone-400">
+                <p class="mt-4 text-stone-600">
                     "See all "
                     (total)
                     (if total == 1 { " item" } else { " items" })
                     " for this group in the "
                     <a
-                        class="text-red-800 hover:underline dark:text-red-400"
+                        class="text-blue-700 hover:underline"
                         href=(href!(
                             crate::app::_web_library::group_library_path,
                             crate::app::_web_library::LibraryGroupId(group.id),

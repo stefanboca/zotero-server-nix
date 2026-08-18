@@ -9,6 +9,7 @@ use topcoat::{
     },
 };
 
+use crate::database::Database;
 use crate::dataserver::{Dataserver, GroupRole};
 
 use super::current_group;
@@ -20,5 +21,8 @@ pub(super) async fn delete_group(cx: &Cx) -> Result<Response> {
         return Err(forbidden().into());
     }
     app_context::<Dataserver>(cx).delete_group(group.id).await?;
+    app_context::<Database>(cx)
+        .delete_group_invitations(group.id)
+        .await?;
     see_other(href!(crate::app::groups::list_groups).resolve(cx)).into_response(cx)
 }

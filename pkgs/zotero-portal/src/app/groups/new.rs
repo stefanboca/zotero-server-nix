@@ -16,6 +16,7 @@ use crate::{
     app::{
         authenticated_user,
         groups::group_id::{GroupId, library_settings},
+        portal_page, section,
     },
     dataserver::Dataserver,
 };
@@ -32,64 +33,47 @@ struct CreateGroup {
 pub(super) async fn new_group(cx: &Cx) -> Result {
     authenticated_user(cx).await?;
     view! {
-        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <h1 class="text-3xl font-semibold">"Create a Group"</h1>
-            <p class="mt-3 max-w-2xl text-stone-600 dark:text-stone-400">
-                "Groups on this private server are invitation-free and visible only to their members."
-            </p>
-            <form
-                class="mt-8 max-w-xl space-y-6"
-                method="post"
-                action=(href!(new_group))
-            >
-                <div>
-                    <label class="block font-medium" for="group-name">
-                        "Group name"
-                    </label>
-                    <input
-                        class="mt-2 w-full border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950"
-                        id="group-name"
-                        name="name"
-                        required="required"
-                        maxlength="255"
-                        autofocus="autofocus"
-                    >
-                </div>
-                <fieldset>
-                    <legend class="font-medium">"Group type"</legend>
-                    <label class="mt-3 flex items-start gap-3">
+        portal_page(
+            section(
+                <h1 class="text-3xl font-semibold">"Create a Group"</h1>
+                <p class="mt-3 max-w-2xl text-stone-600">
+                    "Groups are visible only to their members."
+                </p>
+                <form
+                    class="mt-8 max-w-xl space-y-6"
+                    method="post"
+                    action=(href!(new_group))
+                >
+                    <div>
+                        <label class="block font-medium" for="group-name">
+                            "Group name"
+                        </label>
                         <input
-                            class="mt-1"
-                            type="radio"
-                            checked="checked"
-                            disabled="disabled"
+                            class="mt-2 w-full border border-stone-300 bg-white px-3 py-2"
+                            id="group-name"
+                            name="name"
+                            required="required"
+                            maxlength="255"
+                            autofocus="autofocus"
                         >
-                        <span>
-                            <strong class="block">"Private Membership"</strong>
-                            <span
-                                class="mt-1 block text-sm text-stone-600 dark:text-stone-400"
-                            >
-                                "Only members can view the group and its library."
-                            </span>
-                        </span>
-                    </label>
-                </fieldset>
-                <div class="flex flex-wrap gap-3">
-                    <button
-                        class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700"
-                        type="submit"
-                    >
-                        "Create Group"
-                    </button>
-                    <a
-                        class="border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
-                        href=(href!(super::list_groups))
-                    >
-                        "Cancel"
-                    </a>
-                </div>
-            </form>
-        </main>
+                    </div>
+                    <div class="flex flex-wrap gap-3">
+                        <button
+                            class="portal-button portal-button-primary"
+                            type="submit"
+                        >
+                            "Create Group"
+                        </button>
+                        <a
+                            class="portal-button portal-button-secondary"
+                            href=(href!(super::list_groups))
+                        >
+                            "Cancel"
+                        </a>
+                    </div>
+                </form>
+            )
+        )
     }
 }
 

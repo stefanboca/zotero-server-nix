@@ -2,10 +2,15 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{error::not_found, href, page, path_param},
-    view::view,
+    view::{component, view},
 };
 
-use crate::{app::authenticated_user, database::Database};
+use crate::{
+    app::{authenticated_user, portal_page, section},
+    database::Database,
+    dataserver::Dataserver,
+    id::UserId,
+};
 
 topcoat::router::path_param!(pub(super) profile_username);
 
@@ -19,68 +24,76 @@ pub(super) async fn profile(cx: &Cx) -> Result {
         .await?
         .filter(|user| user.username == username)
         .ok_or_else(not_found)?;
-    let profile = app_context::<Database>(cx)
-        .user_profile(user.user_id)
-        .await?;
-
     view! {
-        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <header class="border-b border-stone-200 pb-6 dark:border-stone-800">
-                <h1 class="text-3xl font-semibold">(user.display_name())</h1>
-                <p class="mt-2 text-stone-600 dark:text-stone-400">
-                    <span class="font-mono font-semibold">
-                        (user.username.as_str())
-                    </span>
-                </p>
-            </header>
-            if profile.location.is_some() || profile.disciplines.is_some()
-                || profile.affiliation.is_some() || profile.about.is_some() {
-                <section class="border-b border-stone-200 py-8 dark:border-stone-800">
-                    <h2 class="text-xl font-semibold">"Profile"</h2>
-                    <dl class="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-[10rem_1fr]">
-                        if let Some(location) = profile.location.as_deref() {
-                            <dt class="text-stone-600 dark:text-stone-400">
-                                "Location"
-                            </dt>
-                            <dd class="whitespace-pre-wrap">(location)</dd>
+        portal_page(
+            <div class="space-y-6">
+                <header>
+                    <h1 class="text-3xl font-semibold">(user.display_name())</h1>
+                    <p class="mt-2 text-stone-600">
+                        <span class="font-mono font-semibold">
+                            (user.username.as_str())
+                        </span>
+                    </p>
+                    <div class="mt-3 flex flex-wrap gap-4 text-sm">
+                        if actor_id == user.user_id {
+                            <a
+                                class="text-blue-700 hover:underline"
+                                href=(href!(
+                                crate::app::_web_library::personal_library_root,
+                                crate::app::_web_library::UserSlug(user.username.clone()),
+                            ))
+                            >
+                                "Library"
+                            </a>
                         }
-                        if let Some(disciplines) = profile
-                            .disciplines
-                            .as_deref() {
-                            <dt class="text-stone-600 dark:text-stone-400">
-                                "Disciplines"
-                            </dt>
-                            <dd class="whitespace-pre-wrap">(disciplines)</dd>
-                        }
-                        if let Some(affiliation) = profile
-                            .affiliation
-                            .as_deref() {
-                            <dt class="text-stone-600 dark:text-stone-400">
-                                "Affiliation"
-                            </dt>
-                            <dd class="whitespace-pre-wrap">(affiliation)</dd>
-                        }
-                        if let Some(about) = profile.about.as_deref() {
-                            <dt class="text-stone-600 dark:text-stone-400">"About"</dt>
-                            <dd class="whitespace-pre-wrap">(about)</dd>
-                        }
-                    </dl>
-                </section>
+                    </div>
+                </header>
+                profile_groups(actor_id: actor_id, profile_user_id: user.user_id)
+            </div>
+        )
+    }
+}
+
+#[component]
+async fn profile_groups(cx: &Cx, actor_id: UserId, profile_user_id: UserId) -> Result {
+    let mut groups = app_context::<Dataserver>(cx)
+        .groups_for_user(actor_id)
+        .await?;
+    groups.retain(|group| group.role(profile_user_id).is_some());
+    groups.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    view! {
+        section(
+            <h2 class="text-xl font-semibold">"Groups"</h2>
+            if groups.is_empty() {
+                <p class="mt-3 text-stone-600">"No shared groups."</p>
+            } else {
+                <ul class="mt-4 divide-y divide-stone-200">
+                    for group in groups {
+                        <li
+                            class="flex flex-wrap items-center justify-between gap-3 py-3"
+                        >
+                            <a
+                                class="font-medium text-blue-700 hover:underline"
+                                href=(href!(
+                                    crate::app::groups::group_overview,
+                                    crate::app::groups::GroupId(group.id),
+                                    crate::app::groups::GroupSlug(group.slug()),
+                                ))
+                            >
+                                (group.name.as_str())
+                            </a>
+                            <span class="text-sm text-stone-600">
+                                (group.user_ids().len())
+                                (if group.user_ids().len() == 1 {
+                                    " member"
+                                } else {
+                                    " members"
+                                })
+                            </span>
+                        </li>
+                    }
+                </ul>
             }
-            if actor_id == user.user_id {
-                <section class="py-8">
-                    <h2 class="text-xl font-semibold">"Library"</h2>
-                    <a
-                        class="mt-5 inline-flex border border-red-800 px-4 py-2 font-medium text-red-800 hover:bg-red-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-950"
-                        href=(href!(
-                            crate::app::_web_library::personal_library_root,
-                            crate::app::_web_library::UserSlug(user.username.clone()),
-                        ))
-                    >
-                        "Open My Library"
-                    </a>
-                </section>
-            }
-        </main>
+        )
     }
 }

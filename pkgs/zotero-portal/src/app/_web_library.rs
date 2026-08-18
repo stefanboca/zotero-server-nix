@@ -156,11 +156,6 @@ fn web_library_menus(
     user: &database::UserSummary,
     group_library: bool,
 ) -> serde_json::Value {
-    let library = href!(
-        user_slug::library::personal_library_root,
-        user_slug::UserSlug(user.username.clone()),
-    )
-    .resolve(cx);
     let profile = href!(
         crate::app::profile::profile,
         crate::app::profile::ProfileUsername(user.username.clone()),
@@ -171,7 +166,6 @@ fn web_library_menus(
     let logout = href!(crate::app::user::logout_route).resolve(cx);
     json!({
         "desktop": [
-            {"label": "My Library", "href": library, "active": !group_library},
             {"label": "Groups", "href": groups, "active": group_library},
             {
                 "label": user.display_name(),
@@ -186,7 +180,6 @@ fn web_library_menus(
             }
         ],
         "mobile": [
-            {"label": "My Library", "href": library, "active": !group_library},
             {"label": "Groups", "href": groups, "active": group_library},
             {"label": user.display_name(), "href": profile, "className": "separated"},
             {"label": "Settings", "href": settings},

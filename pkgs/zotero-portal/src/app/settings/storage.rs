@@ -8,12 +8,12 @@ use topcoat::{
 };
 
 use crate::{
-    app::confirm_button,
+    app::{confirm_button, section, signed_in_user},
     dataserver::{Dataserver, StorageUsage},
     id::UserId,
 };
 
-use super::{display_timestamp, format_storage_size, settings_user};
+use super::{display_timestamp, format_storage_size};
 
 #[memoize]
 async fn memoized_storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {
@@ -35,33 +35,31 @@ async fn storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {
 
 #[page]
 pub(in crate::app) async fn storage(cx: &Cx) -> Result {
-    let user_id = settings_user(cx).user_id;
+    let user_id = signed_in_user(cx).await?.user_id;
     view! {
-        <header class="border-b border-stone-200 pb-6 dark:border-stone-800">
-            <h1 class="text-3xl font-semibold">"Storage"</h1>
-            <p class="mt-2 text-stone-600 dark:text-stone-400">
-                "Review file-storage usage for your libraries."
-            </p>
-        </header>
-        current_plan(user_id: user_id)
-        current_usage(user_id: user_id)
-        <section class="border-t border-stone-200 py-8 dark:border-stone-800">
-            <h2 class="text-xl font-semibold">"Purge Storage in My Library"</h2>
-            <p class="mt-2 text-stone-600 dark:text-stone-400">
-                "Use this to free space after disabling file syncing for My Library or switching it to WebDAV storage. Synced clients may upload the files again if file syncing remains enabled."
-            </p>
-            <form
-                class="mt-5"
-                method="post"
-                action=(href!(purge::purge_personal_storage))
-            >
-                confirm_button(
-                    label: "Purge My Library Storage",
-                    confirmation: "Permanently remove all stored files for My Library?",
-                    class: "border border-red-800 px-4 py-2 font-medium text-red-800 hover:bg-red-50 dark:border-red-400 dark:text-red-400 dark:hover:bg-red-950"
-                )
-            </form>
-        </section>
+        <div class="space-y-6">
+            section(
+                <div>
+                    current_plan(user_id: user_id)
+                    current_usage(user_id: user_id)
+                </div>
+            )
+            section(
+                <form
+                    method="post"
+                    action=(href!(purge::purge_personal_storage))
+                >
+                    confirm_button(
+                        label: "Purge Storage in My Library",
+                        confirmation: "This will permanently delete all files you have synced to your personal library (My Library) on this Zotero server. This does not delete items, notes, local files, or files in group libraries. Continue?",
+                        class: "portal-button portal-button-danger"
+                    )
+                </form>
+                <p class="mt-2 text-sm text-stone-600">
+                    "Use this to free up space for group libraries you own after disabling file syncing for My Library or switching to WebDAV storage."
+                </p>
+            )
+        </div>
     }
 }
 
@@ -77,15 +75,15 @@ async fn current_plan(cx: &Cx, user_id: UserId) -> Result {
         .map(|expiration| display_timestamp(jiff::Timestamp::now(), expiration).absolute)
         .unwrap_or_else(|| "Never".to_owned());
     view! {
-        <section class="border-b border-stone-200 py-8 dark:border-stone-800">
-            <h2 class="text-xl font-semibold">"Current Plan"</h2>
-            <dl class="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-[10rem_1fr]">
-                <dt class="text-stone-600 dark:text-stone-400">"Quota"</dt>
-                <dd class="font-medium">(quota)</dd>
-                <dt class="text-stone-600 dark:text-stone-400">"Expiration"</dt>
-                <dd class="font-medium">(expiration)</dd>
+        <div>
+            <h2 class="portal-storage-heading">"Current Plan"</h2>
+            <dl class="portal-storage-details">
+                <dt>"Quota"</dt>
+                <dd>(quota)</dd>
+                <dt>"Expiration"</dt>
+                <dd>(expiration)</dd>
             </dl>
-        </section>
+        </div>
     }
 }
 
@@ -94,12 +92,12 @@ async fn current_usage(cx: &Cx, user_id: UserId) -> Result {
     let usage = storage_usage(cx, user_id).await?;
     let mut group_usage = usage.groups.clone();
     group_usage.sort_by_key(|usage| usage.group_id);
+    let library_usage = format!("My Library - {}", format_storage_size(usage.library_mb),);
+    let total_usage = format!("Total - {}", format_storage_size(usage.total_mb));
     view! {
-        <section class="py-8">
-            <h2 class="text-xl font-semibold">"Current Usage"</h2>
-            <dl class="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-[10rem_1fr]">
-                <dt class="text-stone-600 dark:text-stone-400">"My Library"</dt>
-                <dd class="font-medium">(format_storage_size(usage.library_mb))</dd>
+        <dl class="portal-storage-details portal-storage-usage">
+                <dt>"Current Usage"</dt>
+                <dd>(library_usage)</dd>
                 for usage in group_usage {
                     group_storage_usage(
                         key: usage.group_id,
@@ -107,13 +105,9 @@ async fn current_usage(cx: &Cx, user_id: UserId) -> Result {
                         usage_mb: usage.usage_mb
                     )
                 }
-                <dt class="text-stone-600 dark:text-stone-400">"Total"</dt>
-                <dd class="font-medium">(format_storage_size(usage.total_mb))</dd>
-            </dl>
-            <p class="mt-4 text-sm text-stone-600 dark:text-stone-400">
-                "Usage includes your personal library and group libraries you own."
-            </p>
-        </section>
+                <dt aria-hidden="true"></dt>
+                <dd>(total_usage)</dd>
+        </dl>
     }
 }
 
@@ -124,8 +118,9 @@ async fn group_storage_usage(cx: &Cx, group_id: u64, usage_mb: f64) -> Result {
         .await?
         .map(|group| group.name)
         .unwrap_or_else(|| format!("Group {group_id}"));
+    let usage = format!("{group_name} - {}", format_storage_size(usage_mb));
     view! {
-        <dt class="text-stone-600 dark:text-stone-400">(group_name)</dt>
-        <dd class="font-medium">(format_storage_size(usage_mb))</dd>
+        <dt aria-hidden="true"></dt>
+        <dd>(usage)</dd>
     }
 }

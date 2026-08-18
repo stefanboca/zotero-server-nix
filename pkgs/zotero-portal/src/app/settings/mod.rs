@@ -10,27 +10,12 @@ pub(in crate::app) use storage::storage as storage_route;
 use jiff::Timestamp;
 use topcoat::{
     Result,
-    context::{Cx, request_context},
-    router::{
-        Body, Next, error::rewrite, href, layer, layout, request::uri, response::Response, route,
-    },
+    context::Cx,
+    router::{Body, error::rewrite, href, layout, request::uri, response::Response, route},
     view::{PromotedStr, view},
 };
 
-use crate::{app::signed_in_user, database};
-
-#[derive(Clone)]
-pub(super) struct SettingsUser(database::UserSummary);
-
-pub(super) fn settings_user(cx: &Cx) -> &database::UserSummary {
-    &request_context::<SettingsUser>(cx).0
-}
-
-#[layer]
-async fn authenticated_settings(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
-    let cx = cx.with(SettingsUser(signed_in_user(cx).await?));
-    next.run(&cx, body).await
-}
+use crate::app::{SidebarItem, portal_page, sidebar};
 
 #[route(GET)]
 pub(super) async fn settings(cx: &Cx) -> Result<Response> {
@@ -39,47 +24,42 @@ pub(super) async fn settings(cx: &Cx) -> Result<Response> {
 
 #[layout]
 async fn settings_layout(cx: &Cx, slot: Result) -> Result {
-    let _ = settings_user(cx);
+    let slot = slot?;
     let path = uri(cx).path();
     let settings_root = href!(settings).resolve(cx);
-    let navigation = [
-        (href!(profile::profile).resolve(cx), PromotedStr(&"Profile")),
-        (
-            href!(security::security).resolve(cx),
-            PromotedStr(&"Security"),
-        ),
-        (href!(storage::storage).resolve(cx), PromotedStr(&"Storage")),
+    let profile = href!(profile::profile).resolve(cx);
+    let security = href!(security::security).resolve(cx);
+    let storage = href!(storage::storage).resolve(cx);
+    let navigation = vec![
+        SidebarItem {
+            active: path == profile || path == settings_root,
+            href: profile,
+            label: PromotedStr(&"Profile"),
+        },
+        SidebarItem {
+            active: path == security,
+            href: security,
+            label: PromotedStr(&"Security"),
+        },
+        SidebarItem {
+            active: path == storage,
+            href: storage,
+            label: PromotedStr(&"Storage"),
+        },
     ];
     view! {
-        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <div class="grid gap-8 md:grid-cols-[11rem_minmax(0,1fr)]">
-                <nav aria-label="Settings sections">
-                    <h2 class="text-lg font-semibold">"Settings"</h2>
-                    <ul
-                        class="mt-3 border-y border-stone-200 py-2 dark:border-stone-800"
-                    >
-                        for (href, label) in navigation {
-                            let active = path == href
-                                || (href.ends_with("/profile") && path == settings_root);
-                            <li>
-                                <a
-                                    class=(if active {
-                                        "block border-l-2 border-red-800 bg-red-50 px-3 py-2 font-semibold text-red-800 dark:border-red-400 dark:bg-red-950 dark:text-red-400"
-                                    } else {
-                                        "block border-l-2 border-transparent px-3 py-2 hover:bg-stone-100 dark:hover:bg-stone-900"
-                                    })
-                                    href=(href)
-                                    aria-current=(active.then_some("page"))
-                                >
-                                    (label)
-                                </a>
-                            </li>
-                        }
-                    </ul>
-                </nav>
-                <div class="min-w-0">(slot?)</div>
+        portal_page(
+            <div class="portal-settings-heading-row">
+                <h1 class="portal-settings-heading">"Settings"</h1>
             </div>
-        </main>
+            <div class="portal-settings-layout">
+                sidebar(
+                    aria_label: PromotedStr(&"Settings sections"),
+                    items: navigation
+                )
+                <div class="min-w-0">(slot)</div>
+            </div>
+        )
     }
 }
 
@@ -102,7 +82,7 @@ fn format_relative_time(now: Timestamp, timestamp: Timestamp) -> String {
     }
     let seconds = seconds.unsigned_abs();
     match seconds {
-        0..60 => "just now".to_owned(),
+        0..60 => format!("{} ago", time_unit(seconds, "second")),
         60..3600 => format!("{} ago", time_unit(seconds / 60, "minute")),
         3600..86400 => format!("{} ago", time_unit(seconds / 3600, "hour")),
         86400..2_592_000 => format!("{} ago", time_unit(seconds / 86400, "day")),
@@ -174,7 +154,7 @@ mod tests {
         let timestamp = |second| Timestamp::new(second, 0).expect("valid timestamp");
         assert_eq!(
             format_relative_time(timestamp(10_000), timestamp(10_000)),
-            "just now"
+            "0 seconds ago"
         );
         assert_eq!(
             format_relative_time(timestamp(10_000), timestamp(9_880)),

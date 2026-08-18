@@ -10,15 +10,14 @@ use topcoat::{
     context::{Cx, app_context},
     router::{
         content::Json,
-        error::{bad_request, forbidden, not_found, see_other},
-        href, path_param,
+        error::{bad_request, forbidden, see_other},
+        href,
         response::{IntoResponse, Response},
         route,
     },
 };
 
 use crate::{
-    app::authenticated_user,
     database::Database,
     dataserver::{Dataserver, Group, GroupRole},
     id::UserId,
@@ -68,13 +67,8 @@ pub(super) struct MemberResponse {
 }
 
 pub(super) async fn managed_group(cx: &Cx) -> Result<Group> {
-    let actor_id = authenticated_user(cx).await?;
-    let group_id = *path_param::<GroupId>(cx)?;
-    let group = app_context::<Dataserver>(cx)
-        .group(group_id)
-        .await?
-        .ok_or_else(not_found)?;
-    if !group.role(actor_id).is_some_and(GroupRole::can_manage) {
+    let (_, group, role) = current_group(cx).await?;
+    if !role.can_manage() {
         return Err(forbidden().into());
     }
     Ok(group)

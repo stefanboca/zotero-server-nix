@@ -43,6 +43,37 @@
       hash = fontHashes.${extension};
     };
 
+  websiteFontHashes = {
+    "0_0" = {
+      woff = "sha256-ngtOyqjbcuerf0CBhgkbYTGGr1xm45npnuQm3sqCG4E=";
+      woff2 = "sha256-56M3/+SfYSJB6JcefsRnVArmuljc+WLkXXDI1jQdtrg=";
+    };
+    "1_0" = {
+      woff = "sha256-WQjtCy6eN1dQ3QcbrFkQve5zg1Piy4X7hTO2XigBC34=";
+      woff2 = "sha256-dU/V95wuyTHedJteazZcDtC03J3NoNgo0xvEL3KSGEM=";
+    };
+    "2_0" = {
+      woff = "sha256-w8ycxUNHFTdxlzpOJqPfAScu9sGaR7kReDQtysYqZF8=";
+      woff2 = "sha256-tTJTza0boVoKz903BlzObcwWIy3caMARxHAYhwNnQgM=";
+    };
+    "3_0" = {
+      woff = "sha256-IW6ScsDMZpnkZ/zSvudwNqOM+N4XUzP92qWKbNw7Kmk=";
+      woff2 = "sha256-THhUapgYVljXt4t2Ig780t40Z8giDmYV1YEvudXqI90=";
+    };
+    "4_0" = {
+      woff = "sha256-hEhYnt3l12Y7YBXlxYPeluCvdUjRuZWjv2AJxwvO0I4=";
+      woff2 = "sha256-QAuwq1qeVFkfMF3QKMU7QUF+e4vHIWrDRtwAknF5jZs=";
+    };
+    "5_0" = {
+      inherit (fontHashes) woff woff2;
+    };
+  };
+  websiteFont = variant: extension:
+    fetchurl {
+      url = "https://www.zotero.org/static/fonts/36AC02_${variant}.${extension}";
+      hash = websiteFontHashes.${variant}.${extension};
+    };
+
   styles = fetchurl {
     url = "https://www.zotero.org/styles-files/styles.json";
     hash = "sha256-ge+/0Khgn390e2XFMoav8Wz4NJKVcQ/Sxxkk9V1GB1c=";
@@ -93,6 +124,16 @@ in
       cp ${font "woff2"} src/static/fonts/36AC02_5_0.woff2
       cp ${font "ttf"} src/static/fonts/36AC02_5_0.ttf
       cp ${font "svg"} src/static/fonts/36AC02_5_0.svg
+      cp ${websiteFont "0_0" "woff"} src/static/fonts/36AC02_0_0.woff
+      cp ${websiteFont "0_0" "woff2"} src/static/fonts/36AC02_0_0.woff2
+      cp ${websiteFont "1_0" "woff"} src/static/fonts/36AC02_1_0.woff
+      cp ${websiteFont "1_0" "woff2"} src/static/fonts/36AC02_1_0.woff2
+      cp ${websiteFont "2_0" "woff"} src/static/fonts/36AC02_2_0.woff
+      cp ${websiteFont "2_0" "woff2"} src/static/fonts/36AC02_2_0.woff2
+      cp ${websiteFont "3_0" "woff"} src/static/fonts/36AC02_3_0.woff
+      cp ${websiteFont "3_0" "woff2"} src/static/fonts/36AC02_3_0.woff2
+      cp ${websiteFont "4_0" "woff"} src/static/fonts/36AC02_4_0.woff
+      cp ${websiteFont "4_0" "woff2"} src/static/fonts/36AC02_4_0.woff2
       cp ${styles} data/styles.json
       cp ${styles} src/static/styles/styles.json
       unzip -p ${zotero}/lib/app/omni.ja chrome/content/zotero/xpcom/citeproc.js > citeproc.js

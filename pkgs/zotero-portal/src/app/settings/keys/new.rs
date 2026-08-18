@@ -1,19 +1,30 @@
-use topcoat::{Result, context::Cx, router::page, view::view};
+use topcoat::{
+    Result,
+    context::Cx,
+    router::{href, page},
+    view::view,
+};
 
-use super::{super::settings_user, key_editor};
+use crate::app::signed_in_user;
+
+use super::key_editor;
 
 #[page]
 pub(in crate::app::settings) async fn new_key(cx: &Cx) -> Result {
-    let user = settings_user(cx);
+    let user = signed_in_user(cx).await?;
     view! {
-        <header class="border-b border-stone-200 pb-6 dark:border-stone-800">
-            <h1 class="text-3xl font-semibold">"New Private Key"</h1>
-            <p class="mt-2 text-stone-600 dark:text-stone-400">
-                "Create an API key with only the permissions it needs."
-            </p>
-        </header>
-        <section class="py-8">
-            key_editor(user_id: user.user_id, key_value: None)
-        </section>
+        <div class="portal-key-editor-page">
+            <a
+                class="text-blue-700 hover:underline"
+                href=(href!(super::super::security::security)
+                    .fragment("applications"))
+            >
+                "Manage all access keys"
+            </a>
+            <header>
+                <h1 class="text-[2.5rem] font-normal leading-tight">"New Key"</h1>
+            </header>
+            <div class="mt-6">key_editor(user_id: user.user_id, key_value: None)</div>
+        </div>
     }
 }

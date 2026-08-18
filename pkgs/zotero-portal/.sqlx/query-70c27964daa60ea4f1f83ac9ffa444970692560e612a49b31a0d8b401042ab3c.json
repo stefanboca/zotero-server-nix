@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO browser_sessions (tokenHash, userID, expiresAt, userAgent) VALUES (?, ?, FROM_UNIXTIME(?), ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "70c27964daa60ea4f1f83ac9ffa444970692560e612a49b31a0d8b401042ab3c"
+}

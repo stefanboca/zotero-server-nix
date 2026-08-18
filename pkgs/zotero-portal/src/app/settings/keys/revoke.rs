@@ -11,9 +11,9 @@ use topcoat::{
     },
 };
 
-use crate::dataserver::Dataserver;
+use crate::{app::signed_in_user, dataserver::Dataserver};
 
-use super::{super::settings_user, ApiKeyValue};
+use super::ApiKeyValue;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,7 +26,7 @@ pub(in crate::app::settings) async fn revoke_key(
     cx: &Cx,
     Form(input): Form<RevokeKey>,
 ) -> Result<Response> {
-    let user = settings_user(cx);
+    let user = signed_in_user(cx).await?;
     if !app_context::<Dataserver>(cx)
         .delete_access_key(user.user_id, input.key.as_str())
         .await?

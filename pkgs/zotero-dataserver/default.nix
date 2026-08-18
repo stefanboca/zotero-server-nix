@@ -70,6 +70,7 @@ in
       ./0005-login-path.patch
       ./0006-local-fulltext-index.patch
       ./0007-web-ui-api-keys.patch
+      ./0008-web-ui-key-lookup.patch
     ];
 
     composerStrictValidation = false;

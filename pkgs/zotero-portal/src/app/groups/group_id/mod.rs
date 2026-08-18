@@ -1,12 +1,14 @@
 mod delete;
 mod group_slug;
+mod invitations;
+mod invite;
 mod members;
 mod owner;
 mod settings;
 
 use topcoat::{
     Result,
-    context::{Cx, app_context},
+    context::{Cx, app_context, memoize},
     router::{
         error::{not_found, see_other},
         href, path_param,
@@ -21,15 +23,37 @@ use crate::{
     id::UserId,
 };
 
+pub(in crate::app) use group_slug::{GroupSlug, group_overview};
+pub(in crate::app::groups) use invitations::{
+    InviteeUserId, accept_invitation, cancel_invitation, ignore_invitation,
+};
+pub(super) use invite::invite_members;
 pub(super) use settings::{library_settings, members_settings, settings as group_settings};
 
-topcoat::router::path_param!(pub(super) group_id: u64, error = not_found);
+topcoat::router::path_param!(pub(in crate::app) group_id: u64, error = not_found);
+
+#[memoize]
+async fn memoized_group(cx: &Cx, group_id: u64) -> Result<Option<Group>> {
+    app_context::<Dataserver>(cx)
+        .group(group_id)
+        .await
+        .map_err(Into::into)
+}
+
+async fn group_by_id(cx: &Cx, group_id: u64) -> Result<Option<Group>> {
+    match memoized_group(cx, group_id).await {
+        Ok(group) => Ok(group.clone()),
+        Err(error) => {
+            eprintln!("failed to load group {group_id}: {error:#}");
+            Err(anyhow::anyhow!("failed to load group").into())
+        }
+    }
+}
 
 pub(super) async fn current_group(cx: &Cx) -> Result<(UserId, Group, GroupRole)> {
     let group_id = *path_param::<GroupId>(cx)?;
     let user_id = authenticated_user(cx).await?;
-    let dataserver = app_context::<Dataserver>(cx);
-    let group = dataserver.group(group_id).await?.ok_or_else(not_found)?;
+    let group = group_by_id(cx, group_id).await?.ok_or_else(not_found)?;
     let role = group.role(user_id).ok_or_else(not_found)?;
     Ok((user_id, group, role))
 }

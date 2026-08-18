@@ -33,6 +33,29 @@ struct GroupUserXml {
 }
 
 #[derive(Deserialize)]
+struct GroupUsersFeed {
+    #[serde(default, rename = "entry")]
+    entries: Vec<GroupUserEntry>,
+}
+
+#[derive(Deserialize)]
+struct GroupUserEntry {
+    published: String,
+    content: GroupUserContent,
+}
+
+#[derive(Deserialize)]
+struct GroupUserContent {
+    user: GroupUserData,
+}
+
+#[derive(Deserialize)]
+struct GroupUserData {
+    #[serde(rename = "@id")]
+    id: UserId,
+}
+
+#[derive(Deserialize)]
 struct GroupItemEnvelope {
     key: String,
     data: GroupItemData,
@@ -42,6 +65,11 @@ struct GroupItemEnvelope {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GroupItemData {
+    item_type: String,
+    #[serde(default)]
+    content_type: String,
+    #[serde(default)]
+    link_mode: String,
     #[serde(default)]
     title: String,
     date_modified: jiff::Timestamp,
@@ -59,6 +87,92 @@ struct GroupItemUser {
     #[serde(default)]
     name: String,
     username: String,
+}
+
+// Mirrors Web Library's item icon selection so the portal uses the same
+// symbols as the library instead of maintaining a second visual vocabulary.
+fn group_item_icon(item: &GroupItemData) -> &'static str {
+    if item.item_type == "attachment" {
+        let is_file = matches!(
+            item.link_mode.as_str(),
+            "linked_file" | "imported_file" | "imported_url"
+        );
+        if item.content_type == "application/pdf" && is_file {
+            return if item.link_mode == "linked_file" {
+                "attachment-pdf-link"
+            } else {
+                "attachment-pdf"
+            };
+        }
+        if item.content_type == "application/epub+zip" && is_file {
+            return if item.link_mode == "linked_file" {
+                "attachment-epub-link"
+            } else {
+                "attachment-epub"
+            };
+        }
+        if item.content_type.starts_with("image/") && is_file {
+            return if item.link_mode == "linked_file" {
+                "attachment-image-link"
+            } else {
+                "attachment-image"
+            };
+        }
+        if item.content_type.starts_with("video/") && is_file {
+            return if item.link_mode == "linked_file" {
+                "attachment-video-link"
+            } else {
+                "attachment-video"
+            };
+        }
+        return match item.link_mode.as_str() {
+            "linked_url" => "attachment-web-link",
+            "imported_url" => "attachment-snapshot",
+            "linked_file" => "attachment-link",
+            _ => "document",
+        };
+    }
+    match item.item_type.as_str() {
+        "artwork" => "artwork",
+        "audioRecording" => "audio-recording",
+        "bill" => "bill",
+        "blogPost" => "blog-post",
+        "book" => "book",
+        "bookSection" => "book-section",
+        "case" => "case",
+        "computerProgram" => "computer-program",
+        "conferencePaper" => "conference-paper",
+        "dataset" => "dataset",
+        "dictionaryEntry" => "dictionary-entry",
+        "document" => "document",
+        "email" => "email",
+        "encyclopediaArticle" => "encyclopedia-article",
+        "film" => "film",
+        "forumPost" => "forum-post",
+        "hearing" => "hearing",
+        "instantMessage" => "instant-message",
+        "interview" => "interview",
+        "journalArticle" => "journal-article",
+        "letter" => "letter",
+        "magazineArticle" => "magazine-article",
+        "manuscript" => "manuscript",
+        "map" => "map",
+        "newspaperArticle" => "newspaper-article",
+        "note" => "note",
+        "patent" => "patent",
+        "podcast" => "podcast",
+        "preprint" => "preprint",
+        "presentation" => "presentation",
+        "radioBroadcast" => "radio-broadcast",
+        "report" => "report",
+        "standard" => "standard",
+        "statute" => "statute",
+        "thesis" => "thesis",
+        "tvBroadcast" => "tv-broadcast",
+        "videoRecording" => "video-recording",
+        "webpage" => "webpage",
+        _ => "document",
+    }
 }
 
 fn total_results(response: &reqwest::Response) -> anyhow::Result<u64> {
@@ -87,17 +201,9 @@ impl GroupRole {
 
     pub fn display_name(self) -> &'static str {
         match self {
-            Self::Owner => "Group owner",
+            Self::Owner => "Owner",
             Self::Admin => "Administrator",
             Self::Member => "Member",
-        }
-    }
-
-    pub fn user_summary(self) -> &'static str {
-        match self {
-            Self::Owner => "You are the owner",
-            Self::Admin => "You are an administrator",
-            Self::Member => "You are a member",
         }
     }
 }
@@ -105,27 +211,6 @@ impl GroupRole {
 impl std::fmt::Display for GroupRole {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.wire_name())
-    }
-}
-
-impl std::str::FromStr for GroupRole {
-    type Err = &'static str;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value {
-            "owner" => Ok(Self::Owner),
-            "admin" => Ok(Self::Admin),
-            "member" => Ok(Self::Member),
-            _ => Err("unknown group role"),
-        }
-    }
-}
-
-impl TryFrom<String> for GroupRole {
-    type Error = &'static str;
-
-    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
-        value.parse()
     }
 }
 
@@ -165,7 +250,7 @@ pub(crate) fn group_slug(value: &str) -> String {
         .trim()
         .chars()
         .filter(|character| {
-            character.is_alphabetic()
+            character.is_alphanumeric()
                 || character.is_whitespace()
                 || matches!(character, '.' | '_' | '-')
         })
@@ -188,9 +273,7 @@ impl From<GroupEnvelope> for Group {
             owner: value.data.owner,
             admins: value.data.admins,
             members: value.data.members,
-            group_type: value.data.group_type,
             library_editing: value.data.library_editing,
-            library_reading: value.data.library_reading,
             file_editing: value.data.file_editing,
             description: value.data.description,
             url: value.data.url,
@@ -200,6 +283,21 @@ impl From<GroupEnvelope> for Group {
 }
 
 impl Dataserver {
+    pub async fn group_memberships(&self, group_id: u64) -> anyhow::Result<Vec<GroupMembership>> {
+        let response = self
+            .super_request(reqwest::Method::GET, &format!("/groups/{group_id}/users"))
+            .send()
+            .await
+            .context("listing Zotero group members")?
+            .error_for_status()
+            .context("Dataserver rejected group member listing")?;
+        let body = response
+            .text()
+            .await
+            .context("reading Zotero group member listing")?;
+        decode_group_memberships(&body)
+    }
+
     pub async fn groups_for_user(&self, user_id: UserId) -> anyhow::Result<Vec<Group>> {
         let mut groups = Vec::new();
         loop {
@@ -272,17 +370,21 @@ impl Dataserver {
         Ok(RecentGroupItems {
             items: items
                 .into_iter()
-                .map(|item| GroupItemSummary {
-                    key: item.key,
-                    title: item.data.title,
-                    added_by: item.meta.created_by_user.map(|user| {
-                        if user.name.trim().is_empty() {
-                            user.username
-                        } else {
-                            user.name
-                        }
-                    }),
-                    date_modified: item.data.date_modified,
+                .map(|item| {
+                    let icon_name = group_item_icon(&item.data);
+                    GroupItemSummary {
+                        key: item.key,
+                        icon_name,
+                        title: item.data.title,
+                        added_by: item.meta.created_by_user.map(|user| {
+                            if user.name.trim().is_empty() {
+                                user.username
+                            } else {
+                                user.name
+                            }
+                        }),
+                        date_modified: item.data.date_modified,
+                    }
                 })
                 .collect(),
             total,
@@ -354,9 +456,9 @@ impl Dataserver {
             id: Some(group.id),
             owner: group.owner,
             name: &group.name,
-            group_type: &group.group_type,
+            group_type: "Private",
             library_editing: &group.library_editing,
-            library_reading: &group.library_reading,
+            library_reading: "members",
             file_editing: &group.file_editing,
             has_image: u8::from(group.has_image),
             description: &group.description,
@@ -398,6 +500,23 @@ impl Dataserver {
     }
 }
 
+fn decode_group_memberships(body: &str) -> anyhow::Result<Vec<GroupMembership>> {
+    let feed: GroupUsersFeed =
+        quick_xml::de::from_str(body).context("decoding Zotero group member listing")?;
+    feed.entries
+        .into_iter()
+        .map(|entry| {
+            Ok(GroupMembership {
+                user_id: entry.content.user.id,
+                joined: entry
+                    .published
+                    .parse()
+                    .context("Dataserver returned an invalid group join date")?,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,6 +535,8 @@ mod tests {
     fn group_slugs_match_the_web_library() {
         assert_eq!(group_slug(" Research & Notes "), "research__notes");
         assert_eq!(group_slug("Crème brûlée"), "crème_brûlée");
+        assert_eq!(group_slug("Test 2"), "test_2");
+        assert_eq!(group_slug("test2"), "test2");
     }
 
     #[test]
@@ -427,9 +548,7 @@ mod tests {
             owner: UserId::new(1),
             admins: vec![UserId::new(1), UserId::new(2)],
             members: vec![UserId::new(1), UserId::new(2), UserId::new(3)],
-            group_type: "Private".to_owned(),
             library_editing: "members".to_owned(),
-            library_reading: "members".to_owned(),
             file_editing: "members".to_owned(),
             description: String::new(),
             url: String::new(),
@@ -475,5 +594,26 @@ mod tests {
         assert_eq!(decoded.name, "Research & <notes> \"team\"'s");
         assert_eq!(decoded.description, "One < two & three");
         assert_eq!(decoded.url, "https://example.test/?a=1&b=2");
+    }
+
+    #[test]
+    fn decodes_group_membership_join_dates_from_atom() {
+        let memberships = decode_group_memberships(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+                <feed xmlns="http://www.w3.org/2005/Atom"
+                      xmlns:xfer="http://zotero.org/ns/transfer">
+                    <entry>
+                        <published>2026-08-18T20:15:16Z</published>
+                        <content type="application/xml">
+                            <xfer:user id="42" role="member"/>
+                        </content>
+                    </entry>
+                </feed>"#,
+        )
+        .expect("valid group member feed");
+
+        assert_eq!(memberships.len(), 1);
+        assert_eq!(memberships[0].user_id, UserId::new(42));
+        assert_eq!(memberships[0].joined.to_string(), "2026-08-18T20:15:16Z");
     }
 }

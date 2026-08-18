@@ -9,13 +9,11 @@ use topcoat::{
     },
 };
 
-use crate::dataserver::Dataserver;
-
-use super::super::settings_user;
+use crate::{app::signed_in_user, dataserver::Dataserver};
 
 #[route(POST)]
 pub(super) async fn purge_personal_storage(cx: &Cx) -> Result<Response> {
-    let user = settings_user(cx);
+    let user = signed_in_user(cx).await?;
     app_context::<Dataserver>(cx)
         .purge_personal_storage(user.user_id)
         .await?;

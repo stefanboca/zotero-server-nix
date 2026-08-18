@@ -1,6 +1,6 @@
 {
   "db_name": "MySQL",
-  "query": "SELECT LOWER(HEX(tokenHash)) AS `handle!`, DATE_FORMAT(createdAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `created_at!`, DATE_FORMAT(lastSeenAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `last_seen_at!`, DATE_FORMAT(expiresAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `expires_at!` FROM browser_sessions WHERE userID = ? ORDER BY lastSeenAt DESC",
+  "query": "SELECT LOWER(HEX(tokenHash)) AS `handle!`, userAgent AS `user_agent?`, DATE_FORMAT(createdAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `created_at!`, DATE_FORMAT(lastSeenAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `last_seen_at!`, DATE_FORMAT(expiresAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `expires_at!` FROM browser_sessions WHERE userID = ? ORDER BY lastSeenAt DESC",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,22 @@
       },
       {
         "ordinal": 1,
+        "name": "user_agent?",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 2048
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.browser_sessions",
+            "name": "userAgent"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "created_at!",
         "type_info": {
           "type": "VarString",
@@ -26,7 +42,7 @@
         "origin": "Expression"
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "last_seen_at!",
         "type_info": {
           "type": "VarString",
@@ -37,7 +53,7 @@
         "origin": "Expression"
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "expires_at!",
         "type_info": {
           "type": "VarString",
@@ -55,8 +71,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "3526bc9ad71f830a965a98b3eb47803fd3a56290af48c78b26709fcf9ec3319b"
+  "hash": "dc47f556f848f4163233e5d17d31b33adc92fb1ad8b588ae34dad4dde130b5df"
 }
