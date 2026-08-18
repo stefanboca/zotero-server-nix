@@ -45,11 +45,11 @@ pub(super) async fn new_group(cx: &Cx) -> Result {
                     action=(href!(new_group))
                 >
                     <div>
-                        <label class="block font-medium" for="group-name">
+                        <label class="portal-form-label" for="group-name">
                             "Group name"
                         </label>
                         <input
-                            class="mt-2 w-full border border-stone-300 bg-white px-3 py-2"
+                            class="portal-form-control portal-form-control-block"
                             id="group-name"
                             name="name"
                             required="required"

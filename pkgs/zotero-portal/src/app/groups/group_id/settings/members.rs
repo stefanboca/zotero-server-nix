@@ -78,25 +78,25 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result {
                 data-redirect=(group_overview.as_str())
                 data-removed-redirect=(groups.as_str())
             >
-                <div class="mt-5 overflow-x-auto">
-                    <table class="w-full border-collapse text-left text-sm">
-                        <thead class="border-b border-stone-300">
+                <div class="portal-table-scroll">
+                    <table class="portal-compact-table">
+                        <thead>
                             <tr>
-                                <th class="px-3 py-2 font-semibold">"Username"</th>
-                                <th class="px-3 py-2 font-semibold">"Full Name"</th>
-                                <th class="px-3 py-2 font-semibold">"Member Since"</th>
-                                <th class="px-3 py-2 font-semibold">"Role"</th>
+                                <th>"Username"</th>
+                                <th>"Full Name"</th>
+                                <th>"Member Since"</th>
+                                <th>"Role"</th>
                             </tr>
                         </thead>
-                        <tbody class="portal-striped-rows">
+                        <tbody>
                             for member in users {
                                 let member_role = group
                                     .role(member.user_id)
                                     .unwrap_or(GroupRole::Member);
                                 <tr>
-                                    <td class="px-3 py-3 font-mono font-semibold">
+                                    <td class="font-mono font-semibold">
                                         <a
-                                            class="text-blue-700 hover:underline"
+                                            class="portal-link"
                                             href=(href!(
                                                 crate::app::profile::profile,
                                                 crate::app::profile::ProfileUsername(
@@ -107,24 +107,27 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result {
                                             (member.username.as_str())
                                         </a>
                                     </td>
-                                    <td class="px-3 py-3">(member.display_name())</td>
-                                    <td class="whitespace-nowrap px-3 py-3">
-                                        if let Some(joined) = joined_by_user.get(&member.user_id) {
+                                    <td>(member.display_name())</td>
+                                    <td class="whitespace-nowrap">
+                                        if let Some(joined) = joined_by_user
+                                            .get(&member.user_id) {
                                             <time datetime=(joined.to_string())>
-                                                (joined.strftime("%Y-%m-%d %H:%M:%S").to_string())
+                                                (joined
+                                                    .strftime("%Y-%m-%d %H:%M:%S")
+                                                    .to_string())
                                             </time>
                                         } else {
                                             "--"
                                         }
                                     </td>
-                                    <td class="px-3 py-3">
+                                    <td>
                                         if member_role != GroupRole::Owner {
                                             <label>
                                                 <span class="sr-only">
                                                     (format!("Role for {}", member.display_name()))
                                                 </span>
                                                 <select
-                                                    class="w-full border border-stone-300 bg-white px-3 py-2 text-sm sm:w-auto"
+                                                    class="portal-form-control w-full text-sm sm:w-auto"
                                                     data-member-role=""
                                                     data-user-id=(member.user_id.to_string())
                                                     data-current-role=(member_role.to_string())
@@ -146,9 +149,7 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result {
                                                     >
                                                         "Member"
                                                     </option>
-                                                    <option value="remove">
-                                                        "Remove"
-                                                    </option>
+                                                    <option value="remove">"Remove"</option>
                                                 </select>
                                             </label>
                                         } else {
@@ -188,28 +189,26 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result {
         section(
             <h2 class="portal-section-heading">"Member Invitations"</h2>
             if !invitations.is_empty() {
-                <div class="mt-5 overflow-x-auto">
-                    <table class="w-full border-collapse text-left text-sm">
-                        <thead class="border-b border-stone-300">
+                <div class="portal-table-scroll">
+                    <table class="portal-compact-table">
+                        <thead>
                             <tr>
-                                <th class="px-3 py-2 font-semibold">"Username"</th>
-                                <th class="px-3 py-2 font-semibold">"Full Name"</th>
-                                <th class="px-3 py-2 font-semibold">"Invited On"</th>
-                                <th class="px-3 py-2 font-semibold">
-                                    "Cancel Invitation"
-                                </th>
+                                <th>"Username"</th>
+                                <th>"Full Name"</th>
+                                <th>"Invited On"</th>
+                                <th>"Cancel Invitation"</th>
                             </tr>
                         </thead>
-                        <tbody class="portal-striped-rows">
+                        <tbody>
                             for invitation in invitations {
                                 let date = invitation
                                     .invited_at
                                     .strftime("%Y-%m-%d %H:%M:%S")
                                     .to_string();
                                 <tr>
-                                    <td class="px-3 py-3 font-mono font-semibold">
+                                    <td class="font-mono font-semibold">
                                         <a
-                                            class="text-blue-700 hover:underline"
+                                            class="portal-link"
                                             href=(href!(
                                                 crate::app::profile::profile,
                                                 crate::app::profile::ProfileUsername(
@@ -220,15 +219,13 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result {
                                             (invitation.invitee.username.as_str())
                                         </a>
                                     </td>
-                                    <td class="px-3 py-3">
-                                        (invitation.invitee.display_name())
-                                    </td>
-                                    <td class="whitespace-nowrap px-3 py-3">
+                                    <td>(invitation.invitee.display_name())</td>
+                                    <td class="whitespace-nowrap">
                                         <time datetime=(invitation.invited_at.to_string())>
                                             (date.as_str())
                                         </time>
                                     </td>
-                                    <td class="px-3 py-3">
+                                    <td>
                                         <form
                                             method="post"
                                             action=(href!(
@@ -237,7 +234,7 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result {
                                             super::super::InviteeUserId(invitation.invitee.user_id),
                                         ))
                                         >
-                                            <button class="text-red-800 hover:underline" type="submit">
+                                            <button class="portal-link-danger" type="submit">
                                                 "Cancel"
                                             </button>
                                         </form>
@@ -251,7 +248,7 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result {
                 <p class="mt-2 text-stone-600">"No pending invitations."</p>
             }
             <a
-                class="mt-4 inline-block text-blue-700 hover:underline"
+                class="portal-link mt-4 inline-block"
                 href=(href!(super::super::invite_members, GroupId(group_id)))
             >
                 "Send More Invitations"

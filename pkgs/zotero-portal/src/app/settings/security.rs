@@ -14,7 +14,7 @@ use crate::{
     id::UserId,
 };
 
-use super::{display_client_timestamp, display_timestamp};
+use super::{format_relative_time, format_timestamp, parse_client_timestamp};
 
 #[page]
 pub(super) async fn security(cx: &Cx) -> Result {
@@ -46,7 +46,7 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result {
             <p class="mt-2">
                 "These are active sessions that are logged in to this account in a browser on this Zotero server."
             </p>
-            <div class="mt-5 overflow-x-auto">
+            <div class="portal-table-scroll">
                 <table class="portal-table min-w-[40rem]">
                     <thead>
                         <tr>
@@ -59,25 +59,11 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result {
                     <tbody>
                         for browser_session in browser_sessions {
                             let is_current = browser_session.handle == current_handle;
-                            let last_active = display_timestamp(
-                                now,
-                                browser_session.last_seen_at,
-                            );
-                            let created = display_timestamp(
-                                now,
-                                browser_session.created_at,
-                            );
-                            let created_title = format!("Created {}", created.absolute);
-                            let expires = display_timestamp(
-                                now,
-                                browser_session.expires_at,
-                            );
-                            let expires_text = expires
-                                .absolute
-                                .strip_suffix(" UTC")
-                                .unwrap_or(expires.absolute.as_str());
+                            let last_active = browser_session.last_seen_at;
+                            let expires = browser_session.expires_at;
+                            let expires_text = format_timestamp(expires);
                             <tr data-browser-session-item="">
-                                <td class="font-medium" title=(created_title.as_str())>
+                                <td class="font-medium">
                                     (browser_platform(
                                         browser_session.user_agent.as_deref(),
                                     ))
@@ -90,19 +76,17 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result {
                                         "Now"
                                     } else {
                                         <time
-                                            datetime=(last_active.datetime.as_str())
-                                            title=(last_active.absolute.as_str())
+                                            datetime=(last_active.to_string())
                                         >
-                                            (last_active.relative.as_str())
+                                            (format_relative_time(now, last_active))
                                         </time>
                                     }
                                 </td>
                                 <td>
                                     <time
-                                        datetime=(expires.datetime.as_str())
-                                        title=(expires.absolute.as_str())
+                                        datetime=(expires.to_string())
                                     >
-                                        (expires_text)
+                                        (expires_text.as_str())
                                     </time>
                                 </td>
                                 <td>
@@ -211,7 +195,7 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result {
             if access_keys.is_empty() {
                 <p class="mt-5">"No application keys."</p>
             } else {
-                <div class="mt-5 overflow-x-auto">
+                <div class="portal-table-scroll">
                     <table class="portal-table">
                         <thead>
                             <tr>
@@ -224,38 +208,23 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result {
                         </thead>
                         <tbody>
                             for key in access_keys {
-                                let last_connected = display_client_timestamp(
-                                    now,
-                                    key.last_used.as_deref(),
-                                )?;
-                                let added = display_client_timestamp(
-                                    now,
-                                    (!key.date_added.is_empty())
-                                        .then_some(key.date_added.as_str()),
-                                )?;
-                                let added_title = added
-                                    .as_ref()
-                                    .map(|added| format!("Added {}", added.absolute));
+                                let last_connected =
+                                    parse_client_timestamp(key.last_used.as_deref())?;
                                 let recent_ips = if key.recent_ips.is_empty() {
                                     "--".to_owned()
                                 } else {
                                     key.recent_ips.join(", ")
                                 };
                                 <tr data-key-item="">
-                                    <td
-                                        class="break-words font-medium"
-                                        title=(added_title.as_deref())
-                                    >
+                                    <td class="break-words font-medium">
                                         (key.name.as_str())
                                     </td>
                                     <td>
-                                        if let Some(last_connected) = last_connected
-                                            .as_ref() {
+                                        if let Some(last_connected) = last_connected {
                                             <time
-                                                datetime=(last_connected.datetime.as_str())
-                                                title=(last_connected.absolute.as_str())
+                                                datetime=(last_connected.to_string())
                                             >
-                                                (last_connected.relative.as_str())
+                                                (format_relative_time(now, last_connected))
                                             </time>
                                         } else {
                                             "--"
@@ -268,7 +237,7 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result {
                                             .parse::<super::keys::ApiKeyValue>()
                                             .map_err(anyhow::Error::msg)?;
                                         <a
-                                            class="text-blue-700 hover:underline"
+                                            class="portal-link"
                                             href=(href!(
                                         super::keys::edit_key_route,
                                         super::keys::EditKeyId(key_id),

@@ -75,10 +75,7 @@ pub(super) async fn list_groups(cx: &Cx) -> Result {
                     <div>
                         <h1 class="text-3xl font-semibold">"Zotero Groups"</h1>
                         <div class="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm">
-                            <a
-                                class="text-blue-700 hover:underline"
-                                href=(href!(r#new::new_group))
-                            >
+                            <a class="portal-link" href=(href!(r#new::new_group))>
                                 "Create a New Group"
                             </a>
                         </div>
@@ -94,13 +91,7 @@ pub(super) async fn list_groups(cx: &Cx) -> Result {
 async fn groups_list(cx: &Cx) -> Result {
     let user = signed_in_user(cx).await?;
     let dataserver = app_context::<Dataserver>(cx);
-    let mut groups = dataserver.groups_for_user(user.user_id).await?;
-    groups.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
-            .then_with(|| left.name.cmp(&right.name))
-    });
+    let groups = dataserver.groups_for_user(user.user_id).await?;
     let total = groups.len();
     view! {
         if !groups.is_empty() {
@@ -126,7 +117,7 @@ async fn more_groups(offset: usize) -> Result {
 
         <div class="pt-5" :hidden=$(load.get())>
             <button
-                class="text-blue-700 hover:underline"
+                class="portal-link"
                 type="button"
                 @click=$(|_event: topcoat::runtime::Event| load.set(true))
             >
@@ -144,15 +135,9 @@ async fn groups_page(cx: &Cx, offset: String, load: bool) -> Result {
     }
     let user = signed_in_user(cx).await?;
     let offset = offset.parse::<usize>()?;
-    let mut groups = app_context::<Dataserver>(cx)
+    let groups = app_context::<Dataserver>(cx)
         .groups_for_user(user.user_id)
         .await?;
-    groups.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
-            .then_with(|| left.name.cmp(&right.name))
-    });
     let next_offset = offset.saturating_add(GROUPS_PER_PAGE);
     view! {
         for group in groups.iter().skip(offset).take(GROUPS_PER_PAGE) {
@@ -173,7 +158,7 @@ async fn group_card(group: &Group, user_id: UserId) -> Result {
         <article class="border-b border-stone-300 py-5">
             <h3 class="text-lg font-semibold">
                 <a
-                    class="text-blue-700 hover:underline"
+                    class="portal-link"
                     href=(href!(
                             group_id::group_overview,
                             group_id::GroupId(group.id),
@@ -184,7 +169,7 @@ async fn group_card(group: &Group, user_id: UserId) -> Result {
                 </a>
             </h3>
             <a
-                class="mt-1 inline-block text-sm text-blue-700 hover:underline"
+                class="portal-link mt-1 inline-block text-sm"
                 href=(href!(
                     crate::app::_web_library::group_library_path,
                     crate::app::_web_library::LibraryGroupId(group.id),
@@ -197,21 +182,21 @@ async fn group_card(group: &Group, user_id: UserId) -> Result {
             if role.can_manage() {
                 <div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                     <a
-                        class="text-blue-700 hover:underline"
+                        class="portal-link"
                         href=(href!(group_id::group_settings, group_id::GroupId(group.id)))
                     >
                         "Manage Profile"
                     </a>
                     <span aria-hidden="true">"·"</span>
                     <a
-                        class="text-blue-700 hover:underline"
+                        class="portal-link"
                         href=(href!(group_id::members_settings, group_id::GroupId(group.id)))
                     >
                         "Manage Members"
                     </a>
                     <span aria-hidden="true">"·"</span>
                     <a
-                        class="text-blue-700 hover:underline"
+                        class="portal-link"
                         href=(href!(group_id::library_settings, group_id::GroupId(group.id)))
                     >
                         "Manage Library"
@@ -240,7 +225,7 @@ async fn incoming_invitations(cx: &Cx, user_id: UserId) -> Result {
     }
     view! {
         section(
-            <h2 class="text-xl font-semibold">"Group Invitations"</h2>
+            <h2 class="portal-section-heading">"Group Invitations"</h2>
             <div class="mt-4 divide-y divide-stone-200">
                 for invitation in invitations {
                     incoming_invitation(
@@ -267,7 +252,7 @@ async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result {
         >
             <div>
                 <a
-                    class="font-semibold text-blue-700 hover:underline"
+                    class="portal-link font-semibold"
                     href=(href!(
                         group_id::group_overview,
                         group_id::GroupId(group.id),

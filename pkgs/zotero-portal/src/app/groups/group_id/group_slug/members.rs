@@ -36,7 +36,7 @@ pub(super) async fn members(cx: &Cx) -> Result {
                         >
                             <div>
                                 <a
-                                    class="font-medium hover:text-red-800"
+                                    class="portal-link font-medium"
                                     href=(href!(
                                     crate::app::profile::profile,
                                     crate::app::profile::ProfileUsername(user.username.clone()),

@@ -45,11 +45,11 @@ async fn invitation_form(group: &Group, identifiers: &str, error: Option<&str>) 
                     action=(href!(invite_members, GroupId(group.id)))
                 >
                     <div>
-                        <label class="block font-medium" for="invite-identifiers">
+                        <label class="portal-form-label" for="invite-identifiers">
                             "Invite Members"
                         </label>
                         <textarea
-                            class="mt-2 min-h-40 w-full border border-stone-300 bg-white px-3 py-2"
+                            class="portal-form-control portal-form-control-block min-h-40"
                             id="invite-identifiers"
                             name="identifiers"
                             required="required"

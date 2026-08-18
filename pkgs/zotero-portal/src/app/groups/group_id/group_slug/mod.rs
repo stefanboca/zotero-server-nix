@@ -46,13 +46,13 @@ pub(in crate::app) async fn group_overview(cx: &Cx) -> Result {
         portal_page(
             section(
                 <header class="border-b border-stone-200 pb-6">
-                    <h1 class="text-3xl font-semibold">
-                        (group.name.as_str())
-                    </h1>
+                    <h1 class="text-3xl font-semibold">(group.name.as_str())</h1>
                     if role.is_some() {
-                        <div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                        <div
+                            class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+                        >
                             <a
-                                class="text-blue-700 hover:underline"
+                                class="portal-link"
                                 href=(href!(
                                 crate::app::_web_library::group_library_path,
                                 crate::app::_web_library::LibraryGroupId(group.id),
@@ -65,7 +65,7 @@ pub(in crate::app) async fn group_overview(cx: &Cx) -> Result {
                             if role.is_some_and(GroupRole::can_manage) {
                                 <span aria-hidden="true">"·"</span>
                                 <a
-                                    class="text-blue-700 hover:underline"
+                                    class="portal-link"
                                     href=(href!(super::group_settings, GroupId(group.id)))
                                 >
                                     "Group Settings"
@@ -119,7 +119,7 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
                 <dt class="text-stone-600">"Owner"</dt>
                 <dd>
                     <a
-                        class="hover:text-red-800"
+                        class="portal-link"
                         href=(href!(
                             crate::app::profile::profile,
                             crate::app::profile::ProfileUsername(owner.username.clone()),
@@ -137,7 +137,7 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
                 <dt class="text-stone-600">"Members"</dt>
                 <dd>
                     <a
-                        class="hover:text-red-800"
+                        class="portal-link"
                         href=(href!(
                             members::members,
                             GroupId(group.id),
@@ -211,15 +211,15 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
                 </p>
             } else {
                 <div class="mt-4 overflow-x-auto">
-                    <table class="w-full border-collapse text-left text-sm">
-                        <thead class="border-b border-stone-300">
+                    <table class="portal-compact-table">
+                        <thead>
                             <tr>
-                                <th class="px-3 py-2 font-semibold">"Title"</th>
-                                <th class="px-3 py-2 font-semibold">"Added By"</th>
-                                <th class="px-3 py-2 font-semibold">"Date Modified"</th>
+                                <th>"Title"</th>
+                                <th>"Added By"</th>
+                                <th>"Date Modified"</th>
                             </tr>
                         </thead>
-                        <tbody class="portal-striped-rows">
+                        <tbody>
                             for item in recently_added.items {
                                 let title = if item.title.trim().is_empty() {
                                     "Untitled"
@@ -227,12 +227,12 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
                                     item.title.as_str()
                                 };
                                 let datetime = item.date_modified.to_string();
-                                let modified = format!(
-                                    "{} UTC",
-                                    datetime.trim_end_matches('Z').replace('T', " "),
-                                );
+                                let modified = item
+                                    .date_modified
+                                    .strftime("%Y-%m-%d %H:%M:%S")
+                                    .to_string();
                                 <tr>
-                                    <td class="px-3 py-3">
+                                    <td>
                                         let icon = format!(
                                             "/static/web-library/icons/16/item-type/{}@1x.svg",
                                             item.icon_name,
@@ -245,7 +245,7 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
                                             alt=""
                                         >
                                         <a
-                                            class="font-medium hover:text-red-800"
+                                            class="portal-link font-medium"
                                             href=(href!(
                                                 crate::app::_web_library::group_library_path,
                                                 crate::app::_web_library::LibraryGroupId(group.id),
@@ -260,10 +260,10 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
                                             (title)
                                         </a>
                                     </td>
-                                    <td class="px-3 py-3 text-stone-600">
+                                    <td class="text-stone-600">
                                         (item.added_by.as_deref().unwrap_or("Unknown"))
                                     </td>
-                                    <td class="whitespace-nowrap px-3 py-3 text-stone-600">
+                                    <td class="whitespace-nowrap text-stone-600">
                                         <time datetime=(datetime.as_str())>
                                             (modified.as_str())
                                         </time>
@@ -279,7 +279,7 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
                     (if total == 1 { " item" } else { " items" })
                     " for this group in the "
                     <a
-                        class="text-blue-700 hover:underline"
+                        class="portal-link"
                         href=(href!(
                             crate::app::_web_library::group_library_path,
                             crate::app::_web_library::LibraryGroupId(group.id),

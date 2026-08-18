@@ -299,7 +299,7 @@ impl Dataserver {
     }
 
     pub async fn groups_for_user(&self, user_id: UserId) -> anyhow::Result<Vec<Group>> {
-        let mut groups = Vec::new();
+        let mut groups = Vec::<Group>::new();
         loop {
             let start = groups.len().to_string();
             let response = self
@@ -326,6 +326,8 @@ impl Dataserver {
                 break;
             }
         }
+        groups
+            .sort_by_cached_key(|group| (group.name.to_lowercase(), group.name.clone(), group.id));
         Ok(groups)
     }
 

@@ -13,7 +13,7 @@ use crate::{
     id::UserId,
 };
 
-use super::{display_timestamp, format_storage_size};
+use super::{format_storage_size, format_timestamp};
 
 #[memoize]
 async fn memoized_storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {
@@ -45,10 +45,7 @@ pub(in crate::app) async fn storage(cx: &Cx) -> Result {
                 </div>
             )
             section(
-                <form
-                    method="post"
-                    action=(href!(purge::purge_personal_storage))
-                >
+                <form method="post" action=(href!(purge::purge_personal_storage))>
                     confirm_button(
                         label: "Purge Storage in My Library",
                         confirmation: "This will permanently delete all files you have synced to your personal library (My Library) on this Zotero server. This does not delete items, notes, local files, or files in group libraries. Continue?",
@@ -72,7 +69,7 @@ async fn current_plan(cx: &Cx, user_id: UserId) -> Result {
         .unwrap_or_else(|| "Unlimited".to_owned());
     let expiration = usage
         .expiration
-        .map(|expiration| display_timestamp(jiff::Timestamp::now(), expiration).absolute)
+        .map(format_timestamp)
         .unwrap_or_else(|| "Never".to_owned());
     view! {
         <div>
@@ -96,17 +93,17 @@ async fn current_usage(cx: &Cx, user_id: UserId) -> Result {
     let total_usage = format!("Total - {}", format_storage_size(usage.total_mb));
     view! {
         <dl class="portal-storage-details portal-storage-usage">
-                <dt>"Current Usage"</dt>
-                <dd>(library_usage)</dd>
-                for usage in group_usage {
-                    group_storage_usage(
-                        key: usage.group_id,
-                        group_id: usage.group_id,
-                        usage_mb: usage.usage_mb
-                    )
-                }
-                <dt aria-hidden="true"></dt>
-                <dd>(total_usage)</dd>
+            <dt>"Current Usage"</dt>
+            <dd>(library_usage)</dd>
+            for usage in group_usage {
+                group_storage_usage(
+                    key: usage.group_id,
+                    group_id: usage.group_id,
+                    usage_mb: usage.usage_mb
+                )
+            }
+            <dt aria-hidden="true"></dt>
+            <dd>(total_usage)</dd>
         </dl>
     }
 }

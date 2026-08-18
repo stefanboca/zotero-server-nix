@@ -140,9 +140,9 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result {
                     action=(href!(settings, GroupId(context.group.id)))
                 >
                     <div>
-                        <label class="block font-medium" for="group-name">"Name"</label>
+                        <label class="portal-form-label" for="group-name">"Name"</label>
                         <input
-                            class="mt-2 w-full border border-stone-300 bg-white px-3 py-2"
+                            class="portal-form-control portal-form-control-block"
                             id="group-name"
                             name="name"
                             value=(context.group.name.as_str())
@@ -151,11 +151,11 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result {
                         >
                     </div>
                     <div>
-                        <label class="block font-medium" for="group-description">
+                        <label class="portal-form-label" for="group-description">
                             "Description"
                         </label>
                         <textarea
-                            class="mt-2 min-h-32 w-full border border-stone-300 bg-white px-3 py-2"
+                            class="portal-form-control portal-form-control-block min-h-32"
                             id="group-description"
                             name="description"
                             maxlength="10000"
@@ -181,63 +181,67 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result {
                 section(
                     <h2 class="portal-section-heading">"Owner Options"</h2>
                     if has_transfer_candidates {
-                    <section class="mt-6">
-                        <h3 class="portal-section-heading">"Transfer Ownership"</h3>
+                        <section class="mt-6">
+                            <h3 class="portal-section-heading">"Transfer Ownership"</h3>
+                            <form
+                                class="mt-4"
+                                method="post"
+                                action=(href!(
+                            super::owner::transfer_owner,
+                            GroupId(context.group.id),
+                        ))
+                            >
+                                <label class="inline-block max-w-full">
+                                    <span class="portal-form-label">"New Owner"</span>
+                                    <select
+                                        class="portal-form-control mt-2 min-w-64 max-w-full"
+                                        name="username"
+                                        required="required"
+                                    >
+                                        for user in users {
+                                            <option value=(user.username.as_str())>
+                                                (user.username.as_str())
+                                            </option>
+                                        }
+                                    </select>
+                                </label>
+                                <div class="mt-4">
+                                    confirm_button(
+                                        label: "Transfer",
+                                        confirmation: transfer_confirmation.as_str(),
+                                        class: "portal-button portal-button-secondary"
+                                    )
+                                </div>
+                            </form>
+                        </section>
+                    }
+                    <section
+                        class=(if has_transfer_candidates {
+                            "mt-8 border-t border-stone-200 pt-8"
+                        } else {
+                            "mt-6"
+                        })
+                    >
+                        <h3 class="portal-section-heading text-red-800">
+                            "Delete Group"
+                        </h3>
+                        <p class="mt-2 text-stone-600">
+                            "Permanently deletes the group and its synced library data."
+                        </p>
                         <form
                             class="mt-4"
                             method="post"
                             action=(href!(
-                            super::owner::transfer_owner,
-                            GroupId(context.group.id),
-                        ))
-                        >
-                            <label class="inline-block max-w-full">
-                                <span class="block font-medium">"New Owner"</span>
-                                <select
-                                    class="mt-2 min-w-64 max-w-full border border-stone-300 bg-white px-3 py-2"
-                                    name="username"
-                                    required="required"
-                                >
-                                    for user in users {
-                                        <option value=(user.username.as_str())>
-                                            (user.username.as_str())
-                                        </option>
-                                    }
-                                </select>
-                            </label>
-                            <div class="mt-4">
-                                confirm_button(
-                                    label: "Transfer",
-                                    confirmation: transfer_confirmation.as_str(),
-                                    class: "portal-button portal-button-secondary"
-                                )
-                            </div>
-                        </form>
-                    </section>
-                    }
-                    <section class=(if has_transfer_candidates {
-                        "mt-8 border-t border-stone-200 pt-8"
-                    } else {
-                        "mt-6"
-                    })>
-                    <h3 class="portal-section-heading text-red-800">"Delete Group"</h3>
-                    <p class="mt-2 text-stone-600">
-                        "Permanently deletes the group and its synced library data."
-                    </p>
-                    <form
-                        class="mt-4"
-                        method="post"
-                        action=(href!(
                         super::delete::delete_group,
                         GroupId(context.group.id),
                     ))
-                    >
-                        confirm_button(
-                            label: "Delete Group",
-                            confirmation: delete_confirmation.as_str(),
-                            class: "border border-red-800 px-4 py-2 font-medium text-red-800 hover:bg-red-50"
-                        )
-                    </form>
+                        >
+                            confirm_button(
+                                label: "Delete Group",
+                                confirmation: delete_confirmation.as_str(),
+                                class: "portal-button portal-button-danger-outline"
+                            )
+                        </form>
                     </section>
                 )
             }

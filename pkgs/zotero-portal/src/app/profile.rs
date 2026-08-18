@@ -37,7 +37,7 @@ pub(super) async fn profile(cx: &Cx) -> Result {
                     <div class="mt-3 flex flex-wrap gap-4 text-sm">
                         if actor_id == user.user_id {
                             <a
-                                class="text-blue-700 hover:underline"
+                                class="portal-link"
                                 href=(href!(
                                 crate::app::_web_library::personal_library_root,
                                 crate::app::_web_library::UserSlug(user.username.clone()),
@@ -73,7 +73,7 @@ async fn profile_groups(cx: &Cx, actor_id: UserId, profile_user_id: UserId) -> R
                             class="flex flex-wrap items-center justify-between gap-3 py-3"
                         >
                             <a
-                                class="font-medium text-blue-700 hover:underline"
+                                class="portal-link font-medium"
                                 href=(href!(
                                     crate::app::groups::group_overview,
                                     crate::app::groups::GroupId(group.id),

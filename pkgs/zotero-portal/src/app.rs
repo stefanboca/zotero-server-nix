@@ -252,7 +252,11 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 topcoat::dev::script()
             </head>
             <body
-                class=(if web_library_active { "min-h-screen" } else { "portal-theme" })
+                class=(if web_library_active {
+                    "min-h-screen"
+                } else {
+                    "portal-theme"
+                })
             >
                 if show_portal_navigation {
                     <header class="portal-header border-b">
@@ -288,9 +292,11 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
                                 if let Some(user) = &navigation_user {
                                     <details class="relative">
                                         <summary class="portal-user-menu cursor-pointer list-none">
-                                            (user.display_name())
+                                            (user.username.as_str())
                                         </summary>
-                                        <div class="portal-dropdown absolute right-0 z-20 mt-2 w-48 rounded-md border p-2 shadow-lg">
+                                        <div
+                                            class="portal-dropdown absolute right-0 z-20 mt-2 w-48 rounded-md border p-2 shadow-lg"
+                                        >
                                             <a
                                                 class="portal-dropdown-link block rounded px-3 py-2 text-sm"
                                                 href=(href!(
@@ -300,6 +306,7 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
                                             >
                                                 "My Profile"
                                             </a>
+                                            <div class="portal-dropdown-divider" role="separator"></div>
                                             <a
                                                 class="portal-dropdown-link block rounded px-3 py-2 text-sm"
                                                 href=(href!(settings::settings))
@@ -347,11 +354,7 @@ pub(crate) async fn confirm_button(label: &str, confirmation: &str, class: &str)
 /// not use it because that application owns the entire viewport.
 #[component]
 pub(crate) async fn portal_page(child: View) -> Result {
-    view! {
-        <main class="portal-page">
-            (child)
-        </main>
-    }
+    view! { <main class="portal-page">(child)</main> }
 }
 
 pub(crate) struct SidebarItem {
@@ -389,7 +392,7 @@ pub(crate) async fn sidebar(aria_label: PromotedStr, items: Vec<SidebarItem>) ->
 /// for independent sections. Keeping it here prevents pages from drifting.
 #[component]
 pub(crate) async fn section(child: View) -> Result {
-    view! { <section class="portal-card p-5 sm:p-6">(child)</section> }
+    view! { <section class="portal-card">(child)</section> }
 }
 
 #[component]

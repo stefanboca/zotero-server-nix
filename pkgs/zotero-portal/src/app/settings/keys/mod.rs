@@ -132,7 +132,7 @@ pub(super) async fn key_editor(user_id: UserId, key_value: Option<&ApiKeyValue>)
                         <li>"No additional permissions selected"</li>
                     </ul>
                 </div>
-                <div class="portal-card mt-5 space-y-8">
+                <div class="portal-card mt-5 space-y-6">
                     library_permissions(user_id: user_id, key_value: key_value)
                     specific_group_permissions(user_id: user_id, key_value: key_value)
                 </div>
@@ -165,10 +165,7 @@ pub(super) async fn key_editor(user_id: UserId, key_value: Option<&ApiKeyValue>)
             ></p>
         </form>
 
-        <div
-            class="mt-8 flex flex-wrap items-center gap-3 border-t border-stone-200 pt-6"
-            data-key-editor-actions=""
-        >
+        <div class="mt-8 flex flex-wrap items-center gap-3" data-key-editor-actions="">
             <button
                 class="portal-button portal-button-primary portal-button-large"
                 type="submit"
@@ -189,7 +186,7 @@ pub(super) async fn key_editor(user_id: UserId, key_value: Option<&ApiKeyValue>)
             }
         </div>
         <a
-            class="mt-4 inline-block text-blue-700 hover:underline"
+            class="portal-link mt-4 inline-block"
             href=(href!(super::security::security).fragment("applications"))
         >
             "Manage all access keys"
@@ -206,9 +203,9 @@ async fn key_name(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyValue>) -> 
     let access_key = editor_key(cx, user_id, key_value).await?;
     view! {
         <div>
-            <label class="block text-lg" for="key-name">"Key Name"</label>
+            <label class="portal-form-label" for="key-name">"Key Name"</label>
             <input
-                class="mt-1 w-full max-w-[17.5rem] border border-stone-300 bg-white px-3 py-2"
+                class="portal-form-control portal-form-control-block max-w-[17.5rem]"
                 id="key-name"
                 name="name"
                 value=(access_key
@@ -233,8 +230,8 @@ async fn library_permissions(cx: &Cx, user_id: UserId, key_value: Option<&ApiKey
     let all_groups = permission_value(access.groups.get(&ApiKeyGroupTarget::All));
     view! {
         <section class="portal-key-permission-box">
-            <h2 class="text-3xl font-normal">"Personal Library"</h2>
-            <div class="mt-4 space-y-4">
+            <h2 class="portal-key-heading">"Personal Library"</h2>
+            <div class="mt-4 space-y-1">
                 permission_checkbox(
                     id: PromotedStr(&"user-library"),
                     label: PromotedStr(&"Allow library access"),
@@ -266,8 +263,8 @@ async fn library_permissions(cx: &Cx, user_id: UserId, key_value: Option<&ApiKey
         </section>
 
         <section class="portal-key-permission-box">
-            <h2 class="text-3xl font-normal">"Default Group Permissions"</h2>
-            <p class="mt-4 text-lg">"All Groups"</p>
+            <h2 class="portal-key-heading">"Default Group Permissions"</h2>
+            <p class="mt-4">"All Groups"</p>
             permission_radios(name: "all-groups", group_id: None, selected: all_groups)
             <p class="mt-2 text-sm text-stone-600">
                 "Allow access to all current and future groups."
@@ -307,8 +304,8 @@ async fn specific_group_permissions(
         .collect::<Vec<_>>();
     view! {
         <section>
-            <h2 class="text-3xl font-normal">"Specific Groups"</h2>
-            <label class="mt-4 flex items-center gap-2 text-lg">
+            <h2 class="portal-key-heading">"Specific Groups"</h2>
+            <label class="mt-4 flex items-center gap-2">
                 <input
                     type="checkbox"
                     checked=(per_group_enabled)
@@ -332,7 +329,7 @@ async fn specific_group_permissions(
                 for (group, permission) in groups {
                     let radio_name = format!("group-{}", group.id);
                     <div data-key-group=(group.name.as_str())>
-                        <p class="text-lg">(group.name.as_str())</p>
+                        <p>(group.name.as_str())</p>
                         permission_radios(
                             key: group.id,
                             name: radio_name.as_str(),
@@ -361,7 +358,7 @@ async fn permission_checkbox(
         <label class="flex items-start gap-3" for=(id)>
             <input class="mt-1" id=(id) type="checkbox" name=(name) checked=(checked)>
             <span>
-                <span class="block font-medium">(label)</span>
+                <span class="portal-form-label">(label)</span>
                 <span class="mt-1 block text-sm text-stone-600">(description)</span>
             </span>
         </label>
@@ -382,7 +379,7 @@ async fn permission_radios(name: &str, group_id: Option<u64>, selected: &str) ->
                 (PromotedStr(&"read"), PromotedStr(&"Read Only")),
                 (PromotedStr(&"write"), PromotedStr(&"Read/Write")),
             ] {
-                <label class="flex items-center gap-2 text-lg">
+                <label class="flex items-center gap-2">
                     <input
                         type="radio"
                         name=(name)

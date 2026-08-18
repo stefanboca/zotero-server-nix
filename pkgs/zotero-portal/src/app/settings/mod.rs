@@ -30,6 +30,15 @@ async fn settings_layout(cx: &Cx, slot: Result) -> Result {
     let profile = href!(profile::profile).resolve(cx);
     let security = href!(security::security).resolve(cx);
     let storage = href!(storage::storage).resolve(cx);
+    let new_key = href!(keys::new_key_route).resolve(cx);
+    let key_routes = new_key
+        .rsplit_once('/')
+        .map_or(new_key.as_str(), |(parent, _)| parent);
+    let security_active = path == security
+        || path == key_routes
+        || path
+            .strip_prefix(key_routes)
+            .is_some_and(|suffix| suffix.starts_with('/'));
     let navigation = vec![
         SidebarItem {
             active: path == profile || path == settings_root,
@@ -37,7 +46,7 @@ async fn settings_layout(cx: &Cx, slot: Result) -> Result {
             label: PromotedStr(&"Profile"),
         },
         SidebarItem {
-            active: path == security,
+            active: security_active,
             href: security,
             label: PromotedStr(&"Security"),
         },
@@ -82,7 +91,7 @@ fn format_relative_time(now: Timestamp, timestamp: Timestamp) -> String {
     }
     let seconds = seconds.unsigned_abs();
     match seconds {
-        0..60 => format!("{} ago", time_unit(seconds, "second")),
+        0..60 => "Now".to_owned(),
         60..3600 => format!("{} ago", time_unit(seconds / 60, "minute")),
         3600..86400 => format!("{} ago", time_unit(seconds / 3600, "hour")),
         86400..2_592_000 => format!("{} ago", time_unit(seconds / 86400, "day")),
@@ -114,28 +123,12 @@ fn time_unit(value: u64, unit: &str) -> String {
     }
 }
 
-struct DisplayTimestamp {
-    datetime: String,
-    absolute: String,
-    relative: String,
+fn parse_client_timestamp(value: Option<&str>) -> Result<Option<Timestamp>> {
+    Ok(value.map(str::parse::<Timestamp>).transpose()?)
 }
 
-fn display_client_timestamp(
-    now: Timestamp,
-    value: Option<&str>,
-) -> Result<Option<DisplayTimestamp>> {
-    let timestamp = value.map(str::parse::<Timestamp>).transpose()?;
-    Ok(timestamp.map(|timestamp| display_timestamp(now, timestamp)))
-}
-
-fn display_timestamp(now: Timestamp, timestamp: Timestamp) -> DisplayTimestamp {
-    let datetime = timestamp.to_string();
-    let absolute = format!("{} UTC", datetime.trim_end_matches('Z').replace('T', " "));
-    DisplayTimestamp {
-        datetime,
-        absolute,
-        relative: format_relative_time(now, timestamp),
-    }
+fn format_timestamp(timestamp: Timestamp) -> String {
+    timestamp.strftime("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 #[cfg(test)]
@@ -154,7 +147,7 @@ mod tests {
         let timestamp = |second| Timestamp::new(second, 0).expect("valid timestamp");
         assert_eq!(
             format_relative_time(timestamp(10_000), timestamp(10_000)),
-            "0 seconds ago"
+            "Now"
         );
         assert_eq!(
             format_relative_time(timestamp(10_000), timestamp(9_880)),
@@ -171,12 +164,10 @@ mod tests {
     }
 
     #[test]
-    fn formats_exact_client_time_for_native_tooltips() {
-        let now = Timestamp::new(1_786_176_000, 0).expect("valid timestamp");
-        let timestamp = display_client_timestamp(now, Some("2026-08-08T09:30:00Z"))
+    fn parses_and_formats_exact_client_time() {
+        let timestamp = parse_client_timestamp(Some("2026-08-08T09:30:00Z"))
             .expect("valid timestamp")
             .expect("present timestamp");
-        assert_eq!(timestamp.datetime, "2026-08-08T09:30:00Z");
-        assert_eq!(timestamp.absolute, "2026-08-08 09:30:00 UTC");
+        assert_eq!(format_timestamp(timestamp), "2026-08-08 09:30:00");
     }
 }

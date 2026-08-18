@@ -168,7 +168,7 @@ fn web_library_menus(
         "desktop": [
             {"label": "Groups", "href": groups, "active": group_library},
             {
-                "label": user.display_name(),
+                "label": user.username,
                 "truncate": true,
                 "dropdown": true,
                 "entries": [
@@ -181,7 +181,7 @@ fn web_library_menus(
         ],
         "mobile": [
             {"label": "Groups", "href": groups, "active": group_library},
-            {"label": user.display_name(), "href": profile, "className": "separated"},
+            {"label": user.username, "href": profile, "className": "separated"},
             {"label": "Settings", "href": settings},
             {"label": "Log Out", "href": logout}
         ]
