@@ -1,11 +1,13 @@
 use topcoat::{
     Result,
-    context::{Cx, CxBuilder, app_context},
+    context::{Cx, app_context},
     cookie::{Cookies as _, SameSite, cookie_store, private_cookies},
     router::{
-        Body, IntoResponse, Next, Response,
+        Body, Next,
         error::{bad_request, forbidden, redirect, see_other},
-        layer, page, query_params, route,
+        href, layer, page, query_params,
+        response::{IntoResponse, Response},
+        route,
     },
     session,
     view::view,
@@ -20,9 +22,12 @@ use crate::{
 };
 
 #[query_params(error = bad_request)]
-struct LoginQuery {
-    session: Option<String>,
-    redirect_to: Option<String>,
+#[derive(serde::Serialize)]
+pub(crate) struct LoginQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) redirect_to: Option<String>,
 }
 
 fn redirect_to(query: &LoginQuery) -> Result<String> {
@@ -31,34 +36,36 @@ fn redirect_to(query: &LoginQuery) -> Result<String> {
 }
 
 #[layer]
-async fn bare_login_layout(cx: &mut CxBuilder, body: Body, next: Next<'_>) -> Result<Response> {
-    cx.insert(BareLayout);
-    next.run(cx, body).await
+async fn bare_login_layout(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
+    let cx = cx.with(BareLayout);
+    next.run(&cx, body).await
 }
 
 #[page]
-async fn login(cx: &Cx) -> Result {
+pub(crate) async fn login(cx: &Cx) -> Result {
     let query = query_params::<LoginQuery>(cx)?;
     let user_id = current_user(cx).await?;
-    let params = if let Some(dataserver_session) = query.session.as_deref() {
+    let form_query = if let Some(dataserver_session) = query.session.as_deref() {
         let database = app_context::<Database>(cx);
         let dataserver = app_context::<Dataserver>(cx);
         if let Some(user_id) = user_id {
             complete_desktop_login(database, dataserver, dataserver_session, user_id).await?;
-            return Err(redirect("/user/login/done").into());
+            return Err(redirect(&href!(done::done).resolve(cx)).into());
         }
         require_pending_desktop_login(dataserver, dataserver_session).await?;
-        url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("session", dataserver_session)
-            .finish()
+        LoginQuery {
+            session: Some(dataserver_session.to_owned()),
+            redirect_to: None,
+        }
     } else {
         let redirect_to = redirect_to(query)?;
         if user_id.is_some() {
             return Err(redirect(&redirect_to).into());
         }
-        url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("redirect_to", &redirect_to)
-            .finish()
+        LoginQuery {
+            session: None,
+            redirect_to: Some(redirect_to),
+        }
     };
     view! {
         <main
@@ -69,7 +76,7 @@ async fn login(cx: &Cx) -> Result {
                 <form
                     class="mt-5"
                     method="post"
-                    action=(format!("/user/login?{params}"))
+                    action=(href!(start).query(&form_query))
                 >
                     <button
                         class="cursor-pointer bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-800 dark:bg-red-700 dark:hover:bg-red-600"
@@ -91,7 +98,7 @@ async fn start(cx: &Cx) -> Result<Response> {
         let dataserver = app_context::<Dataserver>(cx);
         if let Some(user_id) = current_user(cx).await? {
             complete_desktop_login(database, dataserver, dataserver_session, user_id).await?;
-            return see_other("/user/login/done").into_response(cx);
+            return see_other(href!(done::done).resolve(cx)).into_response(cx);
         }
         require_pending_desktop_login(dataserver, dataserver_session).await?;
         "/".to_owned()
@@ -169,4 +176,4 @@ pub(crate) async fn complete_desktop_login(
     Ok(())
 }
 
-mod done;
+pub(crate) mod done;

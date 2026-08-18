@@ -3,7 +3,10 @@ use reqwest::StatusCode;
 use topcoat::{
     Result,
     context::Cx,
-    router::{Body, IntoResponse, Response},
+    router::{
+        Body,
+        response::{IntoResponse, Response},
+    },
 };
 
 use super::Dataserver;

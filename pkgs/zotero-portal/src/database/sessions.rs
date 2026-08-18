@@ -192,30 +192,6 @@ impl Database {
         Ok(true)
     }
 
-    pub async fn revoke_all_browser_sessions(
-        &self,
-        dataserver: &Dataserver,
-        user_id: UserId,
-    ) -> anyhow::Result<u64> {
-        let mut transaction = self.db.begin().await?;
-        let handles = sqlx::query_scalar!(
-            "SELECT LOWER(HEX(tokenHash)) AS `handle!` FROM browser_sessions \
-             WHERE userID = ? FOR UPDATE",
-            user_id
-        )
-        .fetch_all(&mut *transaction)
-        .await?;
-        dataserver
-            .revoke_web_library_api_keys(user_id, &handles)
-            .await?;
-        let revoked = sqlx::query!("DELETE FROM browser_sessions WHERE userID = ?", user_id)
-            .execute(&mut *transaction)
-            .await?
-            .rows_affected();
-        transaction.commit().await?;
-        Ok(revoked)
-    }
-
     pub async fn web_library_access(
         &self,
         dataserver: &Dataserver,

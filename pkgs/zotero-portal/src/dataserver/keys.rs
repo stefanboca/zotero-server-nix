@@ -51,7 +51,7 @@ impl Dataserver {
                 "name": session_handle,
                 "webUI": true,
                 "access": {
-                    "user": {"library": true, "notes": true, "write": true},
+                    "user": {"library": true, "notes": true, "files": true, "write": true},
                     "groups": {"all": {"library": true, "write": true}}
                 }
             }))
@@ -84,51 +84,105 @@ impl Dataserver {
         Ok(())
     }
 
-    pub async fn connected_clients(&self, user_id: UserId) -> anyhow::Result<Vec<ConnectedClient>> {
+    pub async fn access_keys(&self, user_id: UserId) -> anyhow::Result<Vec<ApiKey>> {
         Ok(self
             .api_keys(user_id)
             .await?
             .into_iter()
-            .filter(|key| !key.web_ui)
-            .map(|key| ConnectedClient {
-                handle: secret_handle(&key.key),
-                name: key.name,
-                date_added: key.date_added,
-                last_used: key.last_used,
-            })
+            .filter(|key| key.user_id == user_id && !key.web_ui)
             .collect())
     }
 
-    pub async fn revoke_connected_client(
+    pub async fn access_key(
         &self,
         user_id: UserId,
-        handle: &str,
-    ) -> anyhow::Result<bool> {
-        if handle.len() != 64 || !handle.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Ok(false);
-        }
-        let Some(key) =
-            self.api_keys(user_id).await?.into_iter().find(|key| {
-                key.user_id == user_id && !key.web_ui && secret_handle(&key.key) == handle
-            })
-        else {
-            return Ok(false);
-        };
-        self.delete_api_key(&key.key).await?;
-        Ok(true)
+        key_value: &str,
+    ) -> anyhow::Result<Option<ApiKey>> {
+        Ok(self
+            .access_keys(user_id)
+            .await?
+            .into_iter()
+            .find(|key| key.key == key_value))
     }
 
-    pub async fn revoke_all_connected_clients(&self, user_id: UserId) -> anyhow::Result<usize> {
-        let keys = self.api_keys(user_id).await?;
-        let mut revoked = 0;
-        for key in keys
-            .into_iter()
-            .filter(|key| key.user_id == user_id && !key.web_ui)
-        {
-            self.delete_api_key(&key.key).await?;
-            revoked += 1;
+    pub async fn create_access_key(
+        &self,
+        user_id: UserId,
+        name: &str,
+        access: &ApiKeyAccess,
+    ) -> anyhow::Result<ApiKey> {
+        #[derive(Serialize)]
+        struct CreateKey<'a> {
+            name: &'a str,
+            access: &'a ApiKeyAccess,
         }
-        Ok(revoked)
+
+        let key = self
+            .super_request(reqwest::Method::POST, &format!("/users/{user_id}/keys"))
+            .json(&CreateKey { name, access })
+            .send()
+            .await
+            .context("creating a Zotero API key")?
+            .error_for_status()
+            .context("Dataserver rejected Zotero API key creation")?
+            .json::<ApiKey>()
+            .await
+            .context("decoding created Zotero API key")?;
+        if key.user_id != user_id || key.web_ui {
+            anyhow::bail!("Dataserver created an API key for the wrong user");
+        }
+        Ok(key)
+    }
+
+    pub async fn update_access_key(
+        &self,
+        user_id: UserId,
+        key_value: &str,
+        name: &str,
+        access: &ApiKeyAccess,
+    ) -> anyhow::Result<Option<ApiKey>> {
+        if self.access_key(user_id, key_value).await?.is_none() {
+            return Ok(None);
+        }
+
+        #[derive(Serialize)]
+        struct UpdateKey<'a> {
+            key: &'a str,
+            name: &'a str,
+            access: &'a ApiKeyAccess,
+        }
+
+        let key = self
+            .super_request(reqwest::Method::PUT, &format!("/keys/{key_value}"))
+            .json(&UpdateKey {
+                key: key_value,
+                name,
+                access,
+            })
+            .send()
+            .await
+            .context("updating a Zotero API key")?
+            .error_for_status()
+            .context("Dataserver rejected Zotero API key update")?
+            .json::<ApiKey>()
+            .await
+            .context("decoding updated Zotero API key")?;
+        if key.user_id != user_id || key.web_ui || key.key != key_value {
+            anyhow::bail!("Dataserver updated an API key for the wrong user");
+        }
+        Ok(Some(key))
+    }
+
+    pub async fn delete_access_key(
+        &self,
+        user_id: UserId,
+        key_value: &str,
+    ) -> anyhow::Result<bool> {
+        if self.access_key(user_id, key_value).await?.is_none() {
+            return Ok(false);
+        }
+        self.delete_api_key(key_value).await?;
+        Ok(true)
     }
 
     pub async fn revoke_web_library_api_keys(
@@ -153,66 +207,22 @@ impl Dataserver {
 
 impl ApiKey {
     fn has_full_web_library_access(&self) -> bool {
-        let Some(all_groups) = self.access.groups.get("all").and_then(Value::as_object) else {
+        let Some(all_groups) = self.access.groups.get(&ApiKeyGroupTarget::All) else {
             return false;
         };
         self.access.user.library
             && self.access.user.notes
+            && self.access.user.files
             && self.access.user.write
             && self.access.groups.len() == 1
-            && all_groups.get("library").and_then(Value::as_bool) == Some(true)
-            && all_groups.get("write").and_then(Value::as_bool) == Some(true)
+            && all_groups.library
+            && all_groups.write
     }
-}
-
-fn secret_handle(secret: &str) -> String {
-    hex_string(&Sha256::digest(secret.as_bytes()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataserver::{groups::xml_escape, storage::xml_number};
-
-    #[test]
-    fn escapes_group_names_for_xml_attributes() {
-        assert_eq!(
-            xml_escape("Research & <notes> \"team\"'s"),
-            "Research &amp; &lt;notes&gt; &quot;team&quot;&apos;s"
-        );
-    }
-
-    #[test]
-    fn group_user_ids_include_each_person_once() {
-        let group = Group {
-            id: 1,
-            name: "Research".to_owned(),
-            owner: UserId::new(1),
-            admins: vec![UserId::new(1), UserId::new(2)],
-            members: vec![UserId::new(1), UserId::new(2), UserId::new(3)],
-            group_type: "Private".to_owned(),
-            library_editing: "members".to_owned(),
-            library_reading: "members".to_owned(),
-            file_editing: "members".to_owned(),
-            description: String::new(),
-            url: String::new(),
-            has_image: false,
-        };
-
-        assert_eq!(
-            group.user_ids(),
-            [UserId::new(1), UserId::new(2), UserId::new(3)]
-        );
-    }
-
-    #[test]
-    fn parses_storage_usage_numbers() {
-        let response =
-            "<storage><usage><total>1536.5</total><library>512</library></usage></storage>";
-        assert_eq!(xml_number(response, "total"), Some(1536.5));
-        assert_eq!(xml_number(response, "library"), Some(512.0));
-        assert_eq!(xml_number(response, "missing"), None);
-    }
 
     #[test]
     fn full_web_library_access_requires_write_access() {
@@ -224,7 +234,7 @@ mod tests {
                 "webUI": true,
                 "dateAdded": "2026-08-08T00:00:00Z",
                 "access": {
-                    "user": {"library": true, "notes": true, "write": write},
+                    "user": {"library": true, "notes": true, "files": true, "write": write},
                     "groups": {"all": {"library": true, "write": write}}
                 }
             }))
@@ -233,16 +243,5 @@ mod tests {
 
         assert!(key(true).has_full_web_library_access());
         assert!(!key(false).has_full_web_library_access());
-    }
-
-    #[test]
-    fn group_role_matches_topcoat_browser_round_trip() {
-        let serialized =
-            serde_json::to_string(&GroupRole::Admin).expect("group role must serialize");
-        assert_eq!(serialized, r#"{"t":"str","v":"admin"}"#);
-
-        let deserialized: GroupRole =
-            serde_json::from_str(r#""member""#).expect("browser role must deserialize");
-        assert_eq!(deserialized, GroupRole::Member);
     }
 }

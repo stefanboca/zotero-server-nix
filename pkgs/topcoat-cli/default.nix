@@ -5,14 +5,14 @@
 }:
 rustPlatform.buildRustPackage rec {
   pname = "topcoat-cli";
-  version = "0.5.0";
+  version = "0.6.0";
 
   src = fetchCrate {
     inherit pname version;
-    hash = "sha256-Z/Z9KCIj6M36MvKOpC3b0S24MPpov2nQCdNCg1Fp98U=";
+    hash = "sha256-b1Jz6n2pJN6vZV4MVfdpHxrr8PYKap2PswIjZDG31PA=";
   };
 
-  cargoHash = "sha256-9KeF31rlUp5EuirfvIN7Cs0KUuZFvirYyQWFB4Ud5CE=";
+  cargoHash = "sha256-e+R11tyG9NE7ma9jKQTWT/26eLv4N/eNA6QBIe7puQU=";
   patches = [./bundle-existing-artifact.patch];
 
   # The published crate has a doctest that imports its workspace-only

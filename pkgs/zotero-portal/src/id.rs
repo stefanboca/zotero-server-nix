@@ -14,14 +14,6 @@ impl UserId {
     pub(crate) const fn new(value: u32) -> Self {
         Self(value)
     }
-
-    pub(crate) fn from_runtime(value: &str) -> Option<Self> {
-        value
-            .parse::<u32>()
-            .ok()
-            .filter(|value| *value != 0)
-            .map(Self)
-    }
 }
 
 impl TryFrom<u64> for UserId {

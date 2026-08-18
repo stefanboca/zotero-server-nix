@@ -36,7 +36,7 @@ in
 
     postInstall = ''
       mkdir -p $out/bin/assets
-      cp -r target/assets/. $out/bin/assets/
+      cp -r target/${stdenv.targetPlatform.rust.cargoShortTarget}/$cargoBuildType/assets/. $out/bin/assets/
     '';
 
     meta = {

@@ -1,56 +1,24 @@
-use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        StatusCode,
-        content::Form,
-        error::{bad_request, forbidden},
-        header, page,
+        error::{forbidden, see_other},
+        href,
+        response::{IntoResponse, Response},
+        route,
     },
-    view::view,
 };
 
-use crate::{
-    app::request_confirmed,
-    dataserver::{Dataserver, GroupRole},
-};
+use crate::dataserver::{Dataserver, GroupRole};
 
-use super::{super::groups_notice_location, current_group};
+use super::current_group;
 
-#[derive(Deserialize)]
-struct DeleteGroup {
-    confirmation: String,
-}
-
-#[page(POST)]
-async fn delete_group(cx: &Cx, Form(input): Form<DeleteGroup>) -> Result {
+#[route(POST)]
+pub(super) async fn delete_group(cx: &Cx) -> Result<Response> {
     let (_, group, role) = current_group(cx).await?;
     if role != GroupRole::Owner {
         return Err(forbidden().into());
     }
-    if input.confirmation != group.name {
-        return Err(bad_request("group name confirmation did not match").into());
-    }
-    let result = app_context::<Dataserver>(cx).delete_group(group.id).await;
-    let notice = if let Err(error) = result {
-        eprintln!("failed to delete group: {error:#}");
-        if request_confirmed(cx) {
-            return view! { (StatusCode::BAD_GATEWAY) };
-        }
-        "group-delete-failed"
-    } else {
-        "group-deleted"
-    };
-    let location = groups_notice_location(notice, &group.name)?;
-    if request_confirmed(cx) {
-        return view! {
-            (StatusCode::NO_CONTENT)
-            ((header::LOCATION, location))
-        };
-    }
-    view! {
-        (StatusCode::SEE_OTHER)
-        ((header::LOCATION, location))
-    }
+    app_context::<Dataserver>(cx).delete_group(group.id).await?;
+    see_other(href!(crate::app::groups::list_groups).resolve(cx)).into_response(cx)
 }

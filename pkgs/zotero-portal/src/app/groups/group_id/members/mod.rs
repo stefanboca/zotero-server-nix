@@ -1,215 +1,207 @@
-use serde::Deserialize;
+mod leave;
+
+pub(super) use leave::leave_group;
+
+use std::collections::HashSet;
+
+use serde::{Deserialize, Serialize};
 use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
-        HeaderName, HeaderValue, StatusCode,
-        content::Form,
-        error::{bad_request, forbidden},
-        header, headers, page,
+        content::Json,
+        error::{bad_request, forbidden, not_found, see_other},
+        href, path_param,
+        response::{IntoResponse, Response},
+        route,
     },
-    view::view,
 };
 
 use crate::{
-    app::request_confirmed,
+    app::authenticated_user,
     database::Database,
-    dataserver::{Dataserver, GroupRole},
+    dataserver::{Dataserver, Group, GroupRole},
+    id::UserId,
 };
 
-use super::current_group;
+use super::{GroupId, current_group};
 
 #[derive(Deserialize)]
-struct MemberAction {
-    operation: String,
-    identifier: Option<String>,
+#[serde(deny_unknown_fields)]
+struct CreateMember {
+    identifier: String,
+    role: GroupRole,
 }
 
-fn action_location(
-    group_id: u64,
-    notice: &str,
-    member: Option<&str>,
-    role: Option<&str>,
-    manage: Option<&str>,
-) -> Result<HeaderValue> {
-    let mut query = url::form_urlencoded::Serializer::new(String::new());
-    query.append_pair("notice", notice);
-    if let Some(member) = member {
-        query.append_pair("member", member);
-    }
-    if let Some(role) = role {
-        query.append_pair("role", role);
-    }
-    if let Some(username) = manage {
-        query.append_pair("manage", username);
-    }
-    HeaderValue::try_from(format!("/groups/{group_id}?{}", query.finish())).map_err(Into::into)
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum MemberRoleUpdate {
+    Admin,
+    Member,
+    Remove,
 }
 
-async fn action_response(
-    cx: &Cx,
-    status: StatusCode,
-    group_id: u64,
-    notice: &str,
-    member: Option<&str>,
-    role: Option<&str>,
-    manage: Option<&str>,
-) -> Result {
-    if headers(cx).get("x-zotero-in-place").is_some() || request_confirmed(cx) {
-        let outcome = HeaderValue::try_from(notice)?;
-        return view! {
-            cx =>
-            (status)
-            ((HeaderName::from_static("x-zotero-outcome"), outcome))
-            if !status.is_success() {
-                (notice)
-            }
-        };
-    }
-    let location = action_location(group_id, notice, member, role, manage)?;
-    view! {
-        cx =>
-        (StatusCode::SEE_OTHER)
-        ((header::LOCATION, location))
-    }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MemberUpdate {
+    user_id: UserId,
+    role: MemberRoleUpdate,
 }
 
-#[page]
-async fn members(cx: &Cx) -> Result {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateMembers {
+    members: Vec<MemberUpdate>,
+}
+
+#[derive(Serialize)]
+struct UpdatedMembers {
+    updated: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct MemberResponse {
+    user_id: UserId,
+    username: String,
+    role: String,
+}
+
+pub(super) async fn managed_group(cx: &Cx) -> Result<Group> {
+    let actor_id = authenticated_user(cx).await?;
+    let group_id = *path_param::<GroupId>(cx)?;
+    let group = app_context::<Dataserver>(cx)
+        .group(group_id)
+        .await?
+        .ok_or_else(not_found)?;
+    if !group.role(actor_id).is_some_and(GroupRole::can_manage) {
+        return Err(forbidden().into());
+    }
+    Ok(group)
+}
+
+#[route(GET)]
+async fn members(cx: &Cx) -> Result<Response> {
     let (_, group, _) = current_group(cx).await?;
-    let location = HeaderValue::try_from(format!("/groups/{}", group.id))?;
-    view! {
-        (StatusCode::TEMPORARY_REDIRECT)
-        ((header::LOCATION, location))
+    see_other(href!(super::settings::members_settings, GroupId(group.id)).resolve(cx))
+        .into_response(cx)
+}
+
+#[route(POST)]
+pub(super) async fn create_member(
+    cx: &Cx,
+    Json(input): Json<CreateMember>,
+) -> Result<Json<MemberResponse>> {
+    if !matches!(input.role, GroupRole::Admin | GroupRole::Member) {
+        return Err(bad_request("a new member must be an administrator or member").into());
+    }
+    let identifier = input.identifier.trim();
+    let identifier = identifier.strip_prefix('@').unwrap_or(identifier);
+    if identifier.is_empty() {
+        return Err(bad_request("a username or email is required").into());
+    }
+    let group = managed_group(cx).await?;
+    let target = app_context::<Database>(cx)
+        .user_by_identifier(identifier)
+        .await?
+        .ok_or_else(|| bad_request("no account matched that username or email"))?;
+    if group.role(target.user_id).is_some() {
+        return Err(bad_request("that account is already a group member").into());
+    }
+    app_context::<Dataserver>(cx)
+        .set_group_user(group.id, target.user_id, input.role)
+        .await?;
+    Ok(Json(member_response(
+        target.user_id,
+        target.username,
+        input.role,
+    )))
+}
+
+#[route(PATCH)]
+async fn update_members(cx: &Cx, Json(input): Json<UpdateMembers>) -> Result<Json<UpdatedMembers>> {
+    if input.members.is_empty() {
+        return Err(bad_request("at least one member update is required").into());
+    }
+    let group = managed_group(cx).await?;
+    let mut seen = HashSet::with_capacity(input.members.len());
+    for update in &input.members {
+        if !seen.insert(update.user_id) {
+            return Err(bad_request("a member can only be updated once per request").into());
+        }
+        match group.role(update.user_id) {
+            Some(GroupRole::Admin | GroupRole::Member) => {}
+            Some(GroupRole::Owner) => return Err(forbidden().into()),
+            None => return Err(bad_request("an update targeted a non-member").into()),
+        }
+    }
+
+    let dataserver = app_context::<Dataserver>(cx);
+    for update in &input.members {
+        match update.role {
+            MemberRoleUpdate::Admin => {
+                dataserver
+                    .set_group_user(group.id, update.user_id, GroupRole::Admin)
+                    .await?;
+            }
+            MemberRoleUpdate::Member => {
+                dataserver
+                    .set_group_user(group.id, update.user_id, GroupRole::Member)
+                    .await?;
+            }
+            MemberRoleUpdate::Remove => {
+                dataserver
+                    .remove_group_user(group.id, update.user_id)
+                    .await?;
+            }
+        }
+    }
+
+    Ok(Json(UpdatedMembers {
+        updated: input.members.len(),
+    }))
+}
+
+pub(super) fn member_response(
+    user_id: UserId,
+    username: String,
+    role: GroupRole,
+) -> MemberResponse {
+    MemberResponse {
+        user_id,
+        username,
+        role: role.to_string(),
     }
 }
 
-#[page(POST)]
-async fn update_members(cx: &Cx, Form(input): Form<MemberAction>) -> Result {
-    let (actor_id, group, actor_role) = current_group(cx).await?;
-    let database = app_context::<Database>(cx);
-    let dataserver = app_context::<Dataserver>(cx);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    match input.operation.as_str() {
-        "leave" => {
-            if actor_role == GroupRole::Owner {
-                return Err(forbidden().into());
-            }
-            if let Err(error) = dataserver.remove_group_user(group.id, actor_id).await {
-                eprintln!("failed to leave group: {error:#}");
-                return action_response(
-                    cx,
-                    StatusCode::BAD_GATEWAY,
-                    group.id,
-                    "member-remove-failed",
-                    None,
-                    None,
-                    None,
-                )
-                .await;
-            }
-            let query = url::form_urlencoded::Serializer::new(String::new())
-                .append_pair("notice", "left-group")
-                .append_pair("name", &group.name)
-                .finish();
-            let location = HeaderValue::try_from(format!("/groups?{query}"))?;
-            if request_confirmed(cx) {
-                return view! {
-                    (StatusCode::NO_CONTENT)
-                    ((header::LOCATION, location))
-                };
-            }
-            view! {
-                (StatusCode::SEE_OTHER)
-                ((header::LOCATION, location))
-            }
-        }
-        "demote-self" => {
-            if actor_role != GroupRole::Admin {
-                return Err(forbidden().into());
-            }
-            let actor = database
-                .user_by_id(actor_id)
-                .await?
-                .ok_or_else(|| bad_request("authenticated user does not exist"))?;
-            if let Err(error) = dataserver
-                .set_group_user(group.id, actor_id, GroupRole::Member)
-                .await
-            {
-                eprintln!("failed to demote group administrator: {error:#}");
-                return action_response(
-                    cx,
-                    StatusCode::BAD_GATEWAY,
-                    group.id,
-                    "role-update-failed",
-                    Some(&actor.username),
-                    Some(GroupRole::Member.display_name()),
-                    None,
-                )
-                .await;
-            }
-            let location = action_location(
-                group.id,
-                "role-updated",
-                Some(&actor.username),
-                Some(GroupRole::Member.display_name()),
-                None,
-            )?;
-            if request_confirmed(cx) {
-                return view! {
-                    (StatusCode::NO_CONTENT)
-                    ((header::LOCATION, location))
-                };
-            }
-            view! {
-                (StatusCode::SEE_OTHER)
-                ((header::LOCATION, location))
-            }
-        }
-        "remove" => {
-            let identifier = input
-                .identifier
-                .as_deref()
-                .map(str::trim)
-                .map(|identifier| identifier.strip_prefix('@').unwrap_or(identifier))
-                .filter(|identifier| !identifier.is_empty())
-                .ok_or_else(|| bad_request("member username or email is required"))?;
-            let target = database
-                .user_by_identifier(identifier)
-                .await?
-                .ok_or_else(|| bad_request("user is not a group member"))?;
-            match group.role(target.user_id) {
-                Some(GroupRole::Owner) => return Err(forbidden().into()),
-                Some(_) => {}
-                None => return Err(bad_request("user is not a group member").into()),
-            }
-            if !actor_role.can_manage() && target.user_id != actor_id {
-                return Err(forbidden().into());
-            }
-            if let Err(error) = dataserver.remove_group_user(group.id, target.user_id).await {
-                eprintln!("failed to remove group member: {error:#}");
-                return action_response(
-                    cx,
-                    StatusCode::BAD_GATEWAY,
-                    group.id,
-                    "member-remove-failed",
-                    Some(&target.username),
-                    None,
-                    None,
-                )
-                .await;
-            }
-            action_response(
-                cx,
-                StatusCode::NO_CONTENT,
-                group.id,
-                "member-removed",
-                Some(&target.username),
-                None,
-                None,
-            )
-            .await
-        }
-        _ => Err(bad_request("unknown member operation").into()),
+    #[test]
+    fn member_updates_use_typed_integer_ids_and_closed_roles() {
+        let input: UpdateMembers = serde_json::from_value(serde_json::json!({
+            "members": [
+                {"userId": 42, "role": "admin"},
+                {"userId": 43, "role": "remove"}
+            ]
+        }))
+        .expect("valid member updates must deserialize");
+
+        assert_eq!(input.members[0].user_id, UserId::new(42));
+        assert_eq!(input.members[0].role, MemberRoleUpdate::Admin);
+        assert_eq!(input.members[1].role, MemberRoleUpdate::Remove);
+        assert!(
+            serde_json::from_value::<UpdateMembers>(serde_json::json!({
+                "members": [{"userId": 42.5, "role": "member"}]
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<UpdateMembers>(serde_json::json!({
+                "members": [{"userId": 42, "role": "owner"}]
+            }))
+            .is_err()
+        );
     }
 }

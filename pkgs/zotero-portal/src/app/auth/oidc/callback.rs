@@ -5,7 +5,7 @@ use topcoat::{
     router::{
         HeaderValue, StatusCode,
         error::{bad_request, forbidden},
-        header, page, query_params,
+        header, href, page, query_params,
     },
     session,
     view::view,
@@ -100,7 +100,9 @@ async fn callback_inner(cx: &Cx) -> Result {
             (StatusCode::SEE_OTHER)
             ((
                 header::LOCATION,
-                HeaderValue::from_static("/user/login/done"),
+                HeaderValue::try_from(
+                    href!(crate::app::user::login::done::done).resolve(cx),
+                )?,
             ))
         }
     } else {

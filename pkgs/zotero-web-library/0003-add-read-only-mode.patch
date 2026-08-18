@@ -1,22 +1,20 @@
 diff --git a/src/js/constants/defaults.js b/src/js/constants/defaults.js
-index 94134a9..dd14bd2 100644
+index c77daad..dd14bd2 100644
 --- a/src/js/constants/defaults.js
 +++ b/src/js/constants/defaults.js
-@@ -5,6 +5,7 @@ import { coreCitationStyles } from '../../../data/citation-styles-data.json';
+@@ -5,5 +5,6 @@ import { coreCitationStyles } from '../../../data/citation-styles-data.json';
  
  export const apiKey = '';
- export const portalMode = false;
 +export const readOnly = false;
  export const apiConfig = {
  	apiAuthorityPart: 'api.zotero.org',
  	retry: 2,
 diff --git a/src/js/reducers/config.js b/src/js/reducers/config.js
-index af5284d..79037d3 100644
+index 40e89ea..79037d3 100644
 --- a/src/js/reducers/config.js
 +++ b/src/js/reducers/config.js
-@@ -11,5 +11,6 @@ const defaultState = {
+@@ -11,4 +11,5 @@ const defaultState = {
  	libraries: [],
- 	portalMode: false,
 +	readOnly: false,
  	streamingApiUrl: '',
  	userId: null,

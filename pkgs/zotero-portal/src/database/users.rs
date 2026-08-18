@@ -92,18 +92,10 @@ impl Database {
             .filter(|value| !value.trim().is_empty())
         {
             sqlx::query!(
-                "INSERT INTO users_meta (userID, metaKey, metaValue) \
-                 VALUES (?, 'profile_realname', ?) \
-                 ON DUPLICATE KEY UPDATE metaValue = VALUES(metaValue)",
+                "INSERT IGNORE INTO users_meta (userID, metaKey, metaValue) \
+                 VALUES (?, 'profile_realname', ?)",
                 user_id,
                 real_name
-            )
-            .execute(&mut *transaction)
-            .await?;
-        } else {
-            sqlx::query!(
-                "DELETE FROM users_meta WHERE userID = ? AND metaKey = 'profile_realname'",
-                user_id
             )
             .execute(&mut *transaction)
             .await?;
@@ -124,6 +116,63 @@ impl Database {
         .fetch_optional(&self.db)
         .await?;
         Ok(row)
+    }
+
+    pub async fn user_profile(&self, user_id: UserId) -> anyhow::Result<UserProfile> {
+        let row = sqlx::query!(
+            "SELECT \
+             MAX(CASE WHEN metaKey = 'profile_realname' THEN metaValue END) AS `real_name?`, \
+             MAX(CASE WHEN metaKey = 'profile_location' THEN metaValue END) AS `location?`, \
+             MAX(CASE WHEN metaKey = 'profile_disciplines' THEN metaValue END) AS `disciplines?`, \
+             MAX(CASE WHEN metaKey = 'profile_affiliation' THEN metaValue END) AS `affiliation?`, \
+             MAX(CASE WHEN metaKey = 'profile_about' THEN metaValue END) AS `about?` \
+             FROM users_meta WHERE userID = ?",
+            user_id
+        )
+        .fetch_one(&self.db)
+        .await?;
+        Ok(UserProfile {
+            real_name: row.real_name,
+            location: row.location,
+            disciplines: row.disciplines,
+            affiliation: row.affiliation,
+            about: row.about,
+        })
+    }
+
+    pub async fn update_user_profile(
+        &self,
+        user_id: UserId,
+        profile: &UserProfile,
+    ) -> anyhow::Result<()> {
+        let mut transaction = self.db.begin().await?;
+        for (key, value) in [
+            ("profile_realname", profile.real_name.as_deref()),
+            ("profile_location", profile.location.as_deref()),
+            ("profile_disciplines", profile.disciplines.as_deref()),
+            ("profile_affiliation", profile.affiliation.as_deref()),
+            ("profile_about", profile.about.as_deref()),
+        ] {
+            if let Some(value) = value {
+                sqlx::query(
+                    "INSERT INTO users_meta (userID, metaKey, metaValue) VALUES (?, ?, ?) \
+                     ON DUPLICATE KEY UPDATE metaValue = VALUES(metaValue)",
+                )
+                .bind(user_id)
+                .bind(key)
+                .bind(value)
+                .execute(&mut *transaction)
+                .await?;
+            } else {
+                sqlx::query("DELETE FROM users_meta WHERE userID = ? AND metaKey = ?")
+                    .bind(user_id)
+                    .bind(key)
+                    .execute(&mut *transaction)
+                    .await?;
+            }
+        }
+        transaction.commit().await?;
+        Ok(())
     }
 
     pub async fn users_by_ids(&self, user_ids: &[UserId]) -> anyhow::Result<Vec<UserSummary>> {

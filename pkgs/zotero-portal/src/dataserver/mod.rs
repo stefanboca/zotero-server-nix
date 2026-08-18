@@ -4,17 +4,16 @@ mod login;
 mod storage;
 mod translation;
 
+pub(crate) use groups::group_slug;
 pub use translation::{TranslationEndpoint, TranslationResponse};
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize, Serializer};
-use serde_json::{Map, Value, json};
-use sha2::{Digest as _, Sha256};
-use topcoat::runtime::{BoolSurrogate, Surrogate, Surrogated};
+use serde_json::json;
 
-use crate::{config::Config, hex_string, id::UserId};
+use crate::{config::Config, id::UserId};
 
 pub struct Dataserver {
     config: Arc<Config>,
@@ -29,56 +28,107 @@ pub struct WebLibraryAccess {
     pub streaming_url: url::Url,
 }
 
-#[derive(Clone, Debug)]
-pub struct ConnectedClient {
-    pub handle: String,
-    pub name: String,
-    pub date_added: String,
-    pub last_used: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ApiKey {
-    key: String,
+#[derive(Clone, Debug, Deserialize)]
+pub struct ApiKey {
+    pub key: String,
     #[serde(rename = "userID")]
-    user_id: UserId,
-    name: String,
+    pub user_id: UserId,
+    pub name: String,
     #[serde(default, rename = "webUI")]
-    web_ui: bool,
-    #[serde(rename = "dateAdded")]
-    date_added: String,
+    pub web_ui: bool,
+    #[serde(default, rename = "dateAdded")]
+    pub date_added: String,
     #[serde(default, rename = "lastUsed")]
-    last_used: Option<String>,
+    pub last_used: Option<String>,
+    #[serde(default, rename = "recentIPs")]
+    pub recent_ips: Vec<String>,
     #[serde(default)]
-    access: ApiKeyAccess,
+    pub access: ApiKeyAccess,
 }
 
-#[derive(Default, Deserialize)]
-struct ApiKeyAccess {
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiKeyAccess {
     #[serde(default)]
-    user: ApiKeyLibraryAccess,
+    pub user: ApiKeyLibraryAccess,
     #[serde(default)]
-    groups: Map<String, Value>,
+    pub groups: BTreeMap<ApiKeyGroupTarget, ApiKeyGroupAccess>,
 }
 
-#[derive(Default, Deserialize)]
-struct ApiKeyLibraryAccess {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ApiKeyGroupTarget {
+    All,
+    Group(u64),
+}
+
+impl Serialize for ApiKeyGroupTarget {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::All => serializer.serialize_str("all"),
+            Self::Group(group_id) => serializer.serialize_str(&group_id.to_string()),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ApiKeyGroupTarget {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value == "all" {
+            return Ok(Self::All);
+        }
+        let group_id = value.parse::<u64>().map_err(serde::de::Error::custom)?;
+        if group_id == 0 {
+            return Err(serde::de::Error::custom("group ID must be nonzero"));
+        }
+        Ok(Self::Group(group_id))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiKeyLibraryAccess {
     #[serde(default)]
-    library: bool,
+    pub library: bool,
     #[serde(default)]
-    notes: bool,
+    pub notes: bool,
     #[serde(default)]
-    write: bool,
+    pub files: bool,
+    #[serde(default)]
+    pub write: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiKeyGroupAccess {
+    #[serde(default)]
+    pub library: bool,
+    #[serde(default)]
+    pub write: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct StorageUsage {
+    pub quota_mb: Option<f64>,
+    pub expiration: Option<jiff::Timestamp>,
+    pub total_mb: f64,
+    pub library_mb: f64,
+    pub groups: Vec<StorageGroupUsage>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct StorageUsage {
-    pub total_mb: f64,
-    pub library_mb: f64,
+pub struct StorageGroupUsage {
+    pub group_id: u64,
+    pub usage_mb: f64,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(try_from = "String")]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum GroupRole {
     Owner,
     Admin,
@@ -89,6 +139,7 @@ pub enum GroupRole {
 pub struct Group {
     pub id: u64,
     pub name: String,
+    pub created: jiff::Timestamp,
     pub owner: UserId,
     pub admins: Vec<UserId>,
     pub members: Vec<UserId>,
@@ -101,10 +152,31 @@ pub struct Group {
     pub has_image: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct GroupItemSummary {
+    pub key: String,
+    pub title: String,
+    pub added_by: Option<String>,
+    pub date_modified: jiff::Timestamp,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecentGroupItems {
+    pub items: Vec<GroupItemSummary>,
+    pub total: u64,
+}
+
 #[derive(Deserialize)]
 struct GroupEnvelope {
     id: u64,
+    meta: GroupMeta,
     data: GroupData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GroupMeta {
+    created: jiff::Timestamp,
 }
 
 #[derive(Deserialize)]

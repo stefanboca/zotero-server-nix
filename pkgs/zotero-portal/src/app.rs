@@ -1,14 +1,13 @@
+mod _web_library;
 mod auth;
 mod export;
-mod fallback;
 mod groups;
 mod import;
-mod library;
+mod profile;
 mod search;
 mod settings;
 mod translation;
 mod user;
-mod users;
 mod web;
 
 use jiff::SignedDuration;
@@ -18,19 +17,21 @@ use anyhow::Context as _;
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
-    context::{Cx, CxBuilder, app_context, try_request_context},
+    context::{Cx, app_context, memoize, try_request_context},
     cookie::RouterBuilderCookieExt,
     router::{
-        Body, IntoResponse, Next, Response, RouterBuilder, RouterBuilderDiscoverExt, StatusCode,
+        Body, BodyLimit, Next, RouterBuilder, RouterBuilderDiscoverExt, StatusCode,
         error::{RedirectError, not_found, redirect, redirect_permanent},
-        headers, layer, layout, page, uri,
+        href, layer, layout,
+        request::uri,
+        response::{IntoResponse, Response},
     },
     session::{self, RouterBuilderSessionExt, SessionConfig},
-    view::{View, component, view},
+    view::{PromotedStr, StaticStr, View, component, view},
 };
 
 use crate::{
-    app::library::WebLibrary,
+    app::_web_library::WebLibrary,
     config::{Config, Secrets},
     database::{self, Database},
     dataserver::Dataserver,
@@ -63,6 +64,7 @@ pub async fn serve(config: Arc<Config>, secrets: Secrets) -> anyhow::Result<()> 
         .app_context(database)
         .app_context(dataserver)
         .app_context(oidc)
+        .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
         .build();
 
     match config.server_address.scheme() {
@@ -93,22 +95,21 @@ pub async fn serve(config: Arc<Config>, secrets: Secrets) -> anyhow::Result<()> 
     }
 }
 
-pub fn routes() -> RouterBuilder {
+fn routes() -> RouterBuilder {
     topcoat::router::module_router!()
-        // `module_router!` discovers file-based routes, but runtime procedures
-        // are registered through the outer router discovery extension.
+        // Shards and explicit-path compatibility routes are registered through
+        // the outer discovery extension.
         .discover()
-        .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
+        // Translation endpoints stream arbitrary Zotero payloads. Keep them
+        // uncapped even if they later switch from raw Body to an extractor.
+        .layer(BodyLimit::disable().at("/export"))
+        .layer(BodyLimit::disable().at("/import"))
+        .layer(BodyLimit::disable().at("/search"))
+        .layer(BodyLimit::disable().at("/web"))
 }
 
-// TODO: clean up this request confirmed nonsense
-pub(crate) fn request_confirmed(cx: &Cx) -> bool {
-    headers(cx)
-        .get("x-zotero-confirmed")
-        .is_some_and(|value| value == "true")
-}
-
-pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
+#[memoize]
+async fn memoized_current_user(cx: &Cx) -> Result<Option<UserId>> {
     let Some(browser_session) = session::refresh(cx).await? else {
         return Ok(None);
     };
@@ -123,6 +124,16 @@ pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
         .map_err(Into::into)
 }
 
+pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
+    match memoized_current_user(cx).await {
+        Ok(user_id) => Ok(*user_id),
+        Err(error) => {
+            eprintln!("failed to authenticate request: {error:#}");
+            Err(anyhow::anyhow!("failed to authenticate request").into())
+        }
+    }
+}
+
 pub(crate) async fn authenticated_user(cx: &Cx) -> Result<UserId> {
     if let Some(user_id) = current_user(cx).await? {
         return Ok(user_id);
@@ -131,10 +142,15 @@ pub(crate) async fn authenticated_user(cx: &Cx) -> Result<UserId> {
     let return_path =
         normalized_return_path(uri(cx).path_and_query().map_or("/", |path| path.as_str()))
             .unwrap_or_else(|| "/".to_owned());
-    let query = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("redirect_to", &return_path)
-        .finish();
-    Err(redirect(&format!("/user/login?{query}")).into())
+    Err(redirect(
+        &href!(user::login::login)
+            .query(user::login::LoginQuery {
+                session: None,
+                redirect_to: Some(return_path),
+            })
+            .resolve(cx),
+    )
+    .into())
 }
 
 pub(crate) fn normalized_return_path(value: &str) -> Option<String> {
@@ -165,11 +181,7 @@ pub(crate) fn normalized_return_path(value: &str) -> Option<String> {
 }
 
 #[layer]
-async fn canonicalize_trailing_slash(
-    cx: &mut CxBuilder,
-    body: Body,
-    next: Next<'_>,
-) -> Result<Response> {
+async fn canonicalize_trailing_slash(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
     let request_uri = uri(cx);
     let path = request_uri.path();
     if path != "/" && path.ends_with('/') {
@@ -185,9 +197,6 @@ async fn canonicalize_trailing_slash(
 
 #[layout]
 async fn root_layout(cx: &Cx, slot: Result) -> Result {
-    if headers(cx).get("x-zotero-fragment").is_some() {
-        return slot;
-    }
     let content = match slot {
         Ok(content) => content,
         Err(error) if error.downcast_ref::<RedirectError>().is_some() => return Err(error),
@@ -201,6 +210,27 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
     };
     let web_library_active = try_request_context::<WebLibrary>(cx).is_some();
     let bare_layout = try_request_context::<BareLayout>(cx).is_some();
+    let show_portal_navigation = !bare_layout && !web_library_active;
+    let navigation_user = if show_portal_navigation {
+        match current_user(cx).await? {
+            Some(user_id) => authenticated_user_summary(cx, user_id).await?,
+            None => None,
+        }
+    } else {
+        None
+    };
+    let path = uri(cx).path();
+    let landing = href!(_web_library::landing).resolve(cx);
+    let navigation = [
+        (
+            href!(groups::list_groups).resolve(cx),
+            PromotedStr(&"Groups"),
+        ),
+        (
+            href!(settings::settings).resolve(cx),
+            PromotedStr(&"Settings"),
+        ),
+    ];
     view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -212,10 +242,6 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 <link
                     rel="stylesheet"
                     href=(topcoat::asset::asset!("target/topcoat/tailwind.css"))
-                >
-                <link
-                    rel="stylesheet"
-                    href=(topcoat::asset::asset!("src/app/feedback.css"))
                 >
                 if web_library_active {
                     <link
@@ -229,9 +255,59 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
             <body
                 class="min-h-screen bg-white font-sans text-stone-950 dark:bg-stone-950 dark:text-stone-50"
             >
-                if !bare_layout {
+                if show_portal_navigation {
                     <header class="border-b border-stone-200 dark:border-stone-800">
-                        nav_bar()
+                        <nav
+                            class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6"
+                            aria-label="Primary navigation"
+                        >
+                            <div
+                                class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6"
+                            >
+                                <a
+                                    class="border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400"
+                                    href=(landing.as_str())
+                                    aria-current=((path == landing).then_some("page"))
+                                >
+                                    "Zotero"
+                                </a>
+                                for (route, name) in navigation {
+                                    let active = path == route
+                                        || path.starts_with(&format!("{route}/"));
+                                    <a
+                                        class=(if active {
+                                            "border-b-2 border-red-800 pb-1 text-sm font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
+                                        } else {
+                                            "border-b-2 border-transparent pb-1 text-sm hover:text-red-800 dark:hover:text-red-400"
+                                        })
+                                        href=(route)
+                                        aria-current=(active.then_some("page"))
+                                    >
+                                        (name)
+                                    </a>
+                                }
+                            </div>
+                            <div
+                                class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto"
+                            >
+                                if let Some(user) = &navigation_user {
+                                    <span
+                                        class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400"
+                                    >
+                                        "Signed in as "
+                                        (user.display_name())
+                                    </span>
+                                    <form method="post" action=(href!(user::logout_route))>
+                                        <button
+                                            class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
+                                            type="submit"
+                                        >
+                                            "Log out"
+                                        </button>
+                                    </form>
+                                }
+                            </div>
+                        </nav>
                     </header>
                 }
                 (content)
@@ -241,75 +317,17 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
 }
 
 #[component]
-async fn nav_bar(cx: &Cx) -> Result {
-    let path = uri(cx).path();
-    let navigation_user = navigation_user(cx).await?;
+pub(crate) async fn confirm_button(label: &str, confirmation: &str, class: &str) -> Result {
     view! {
-        <nav
-            class="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-4 px-4 py-4 sm:px-6"
-            aria-label="Primary navigation"
+        <button
+            class=(class)
+            type="submit"
+            data-confirm=(confirmation)
+            onclick="return window.confirm(this.dataset.confirm)"
         >
-            <div class="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-3 sm:gap-x-6">
-                let home_active = path == "/";
-                <a
-                    class=(if home_active {
-                        "border-b-2 border-red-800 pb-1 text-lg font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
-                    } else {
-                        "border-b-2 border-transparent pb-1 text-lg font-semibold text-red-800 dark:text-red-400"
-                    })
-                    href="/"
-                    aria-current=(home_active.then_some("page"))
-                >
-                    "Zotero"
-                </a>
-                for (route, name) in [("/groups", "Groups"), ("/settings", "Settings")] {
-                    let active = path == route
-                        || path.starts_with(&format!("{route}/"));
-                    <a
-                        class=(if active {
-                            "border-b-2 border-red-800 pb-1 text-sm font-semibold text-red-800 dark:border-red-400 dark:text-red-400"
-                        } else {
-                            "border-b-2 border-transparent pb-1 text-sm hover:text-red-800 dark:hover:text-red-400"
-                        })
-                        href=(route)
-                        aria-current=(active.then_some("page"))
-                    >
-                        (name)
-                    </a>
-                }
-            </div>
-            <div
-                class="flex w-full min-w-0 items-center justify-between gap-3 sm:ml-auto sm:w-auto"
-            >
-                if let Some(user) = &navigation_user {
-                    <span
-                        class="min-w-0 truncate text-sm text-stone-600 dark:text-stone-400"
-                    >
-                        "Signed in as "
-                        (user.display_name())
-                    </span>
-                    <form method="post" action="/user/logout">
-                        <button
-                            class="border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100 dark:border-stone-700 dark:hover:bg-stone-900"
-                            type="submit"
-                        >
-                            "Log out"
-                        </button>
-                    </form>
-                }
-            </div>
-        </nav>
+            (label)
+        </button>
     }
-}
-
-async fn navigation_user(cx: &Cx) -> Result<Option<database::UserSummary>> {
-    let Some(user_id) = current_user(cx).await? else {
-        return Ok(None);
-    };
-    app_context::<Database>(cx)
-        .user_by_id(user_id)
-        .await
-        .map_err(Into::into)
 }
 
 async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
@@ -327,10 +345,10 @@ async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
                 (status.as_u16())
             </h1>
             if let Some(title) = status.canonical_reason() {
-                <p class="mt-2 text-2xl font-semibold">(title)</p>
+                <p class="mt-2 text-2xl font-semibold">(StaticStr(title))</p>
             }
             <p class="mt-4 max-w-2xl leading-7 text-stone-600 dark:text-stone-400">
-                (message)
+                (StaticStr(message))
             </p>
         </main>
     }
@@ -338,89 +356,32 @@ async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
 
 pub(crate) async fn signed_in_user(cx: &Cx) -> Result<database::UserSummary> {
     let user_id = authenticated_user(cx).await?;
-    app_context::<Database>(cx)
-        .user_by_id(user_id)
+    authenticated_user_summary(cx, user_id)
         .await?
         .ok_or_else(|| not_found().into())
 }
 
-#[component]
-pub(crate) async fn username_label(username: &str) -> Result {
-    view! { <span class="font-mono font-semibold">(username)</span> }
+#[memoize]
+async fn memoized_authenticated_user_summary(
+    cx: &Cx,
+    user_id: UserId,
+) -> Result<Option<database::UserSummary>> {
+    app_context::<Database>(cx)
+        .user_by_id(user_id)
+        .await
+        .map_err(Into::into)
 }
 
-#[component]
-pub(crate) async fn toast_script() -> Result {
-    view! {
-        <script type="module" src=(topcoat::asset::asset!("src/app/toast.js"))></script>
-    }
-}
-
-#[component]
-pub(crate) async fn confirmation_dialog() -> Result {
-    view! {
-        <dialog
-            class="fixed inset-0 m-auto max-h-[calc(100vh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg overflow-y-auto border border-stone-300 bg-white p-0 text-stone-950 shadow-xl backdrop:bg-stone-950/60 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-50"
-            data-confirm-dialog=""
-        >
-            <div class="p-6">
-                <h2 class="text-xl font-semibold" data-confirm-title="">
-                    "Confirm action"
-                </h2>
-                <p
-                    class="mt-3 leading-7 text-stone-600 dark:text-stone-400"
-                    data-confirm-message=""
-                ></p>
-                <div class="mt-5" data-confirm-input-container="" hidden="hidden">
-                    <label
-                        class="block font-medium"
-                        data-confirm-input-label=""
-                        for="portal-confirmation"
-                    ></label>
-                    <input
-                        class="mt-2 w-full border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950"
-                        id="portal-confirmation"
-                        autocomplete="off"
-                        data-confirm-input=""
-                    >
-                    <p
-                        class="mt-2 text-sm text-stone-600 dark:text-stone-400"
-                        data-confirm-input-help=""
-                    ></p>
-                </div>
-                <div class="mt-6 flex flex-wrap justify-end gap-3">
-                    <button
-                        class="border border-stone-300 px-4 py-2 font-medium hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-stone-700 dark:hover:bg-stone-800"
-                        type="button"
-                        data-confirm-submit=""
-                    >
-                        "Confirm"
-                    </button>
-                    <button
-                        class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700"
-                        type="button"
-                        data-confirm-cancel=""
-                    >
-                        "Cancel"
-                    </button>
-                </div>
-            </div>
-        </dialog>
-        <script type="module" src=(topcoat::asset::asset!("src/app/confirmation.js"))></script>
-    }
-}
-
-#[page]
-async fn index(cx: &Cx) -> Result {
-    authenticated_user(cx).await?;
-    view! {
-        <main class="w-full bg-white text-stone-950">
-            <iframe
-                class="block h-[calc(100dvh-4.75rem)] min-h-[32rem] w-full border-0"
-                src="/library"
-                title="Zotero library"
-            ></iframe>
-        </main>
+async fn authenticated_user_summary(
+    cx: &Cx,
+    user_id: UserId,
+) -> Result<Option<database::UserSummary>> {
+    match memoized_authenticated_user_summary(cx, user_id).await {
+        Ok(user) => Ok(user.clone()),
+        Err(error) => {
+            eprintln!("failed to look up authenticated user: {error:#}");
+            Err(anyhow::anyhow!("failed to authenticate request").into())
+        }
     }
 }
 
@@ -429,8 +390,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn route_tree_builds_without_duplicate_routes_or_assets() {
-        let _router = routes().build();
+    fn routes_build() {
+        let _ = routes().build();
     }
 
     #[test]
@@ -447,12 +408,22 @@ mod tests {
     }
 
     #[test]
-    fn browser_mutations_use_topcoat_form_encoding() {
-        let confirmation = include_str!("app/confirmation.js");
+    fn browser_mutations_use_standard_routes() {
         let group_actions = include_str!("app/groups/group_id/group_actions.js");
-        assert!(confirmation.contains("new URLSearchParams(new FormData(form))"));
-        assert!(!group_actions.contains("fetch("));
-        assert!(!group_actions.contains("FormData"));
+        assert!(group_actions.contains("method: \"POST\""));
+        assert!(group_actions.contains("method: \"PATCH\""));
+        assert!(group_actions.contains("Content-Type\": \"application/json"));
+        assert!(group_actions.contains("[data-member-roles]"));
+        assert!(!group_actions.contains("window.confirm"));
+        assert!(!group_actions.contains("/_topcoat/procedures/"));
         assert!(!group_actions.contains("createContextualFragment"));
+    }
+
+    #[test]
+    fn newly_created_keys_replace_the_editor_with_the_one_time_secret() {
+        let editor = include_str!("app/settings/keys/key_editor.js");
+        assert!(editor.contains("[data-key-editor-fields]"));
+        assert!(editor.contains(".hidden = true"));
+        assert!(editor.contains("created.hidden = false"));
     }
 }

@@ -1,182 +1,218 @@
 mod group_id;
 mod r#new;
 
+use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{HeaderValue, page, query_params},
+    router::{href, page},
     runtime::shard,
-    view::{component, view},
+    view::view,
 };
-
-#[topcoat::router::query_params(error = bad_request)]
-struct GroupsQuery {
-    notice: Option<String>,
-    name: Option<String>,
-    dialog: Option<String>,
-}
 
 use crate::{
-    app::{confirmation_dialog, signed_in_user, toast_script},
-    database::UserSummary,
-    dataserver::{Dataserver, Group, GroupRole},
+    app::signed_in_user,
+    dataserver::{Dataserver, GroupRole, group_slug},
 };
 
+const RESERVED_GROUP_SLUGS: &[&str] = &["delete", "members", "owner", "settings"];
+
+#[derive(Deserialize)]
+#[serde(try_from = "String")]
+pub(super) struct GroupName(String);
+
+impl GroupName {
+    pub(super) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for GroupName {
+    type Error = anyhow::Error;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        let value = value.trim();
+        if value.is_empty() {
+            anyhow::bail!("group name cannot be empty");
+        }
+        if value.chars().count() > 255 {
+            anyhow::bail!("group name cannot exceed 255 characters");
+        }
+        if value.chars().any(char::is_control) {
+            anyhow::bail!("group name cannot contain control characters");
+        }
+        let slug = group_slug(value);
+        if slug.is_empty() || matches!(slug.as_str(), "." | "..") {
+            anyhow::bail!("group name must contain letters or another URL-safe character");
+        }
+        if RESERVED_GROUP_SLUGS.contains(&slug.as_str()) {
+            anyhow::bail!("group name conflicts with a reserved group route");
+        }
+        Ok(Self(value.to_owned()))
+    }
+}
+
 #[page]
-async fn list_groups(cx: &Cx) -> Result {
-    let parameters = query_params::<GroupsQuery>(cx)?;
-    let toast = groups_toast(parameters);
+pub(super) async fn list_groups(cx: &Cx) -> Result {
     signed_in_user(cx).await?;
     view! {
-        groups_index(
-            toast: toast.as_ref(),
-            open_new: parameters.dialog.as_deref() == Some("new")
-        )
+        signal groups_query = String::new();
+
+        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
+            <section class="py-8">
+                <h1 class="text-2xl font-semibold">"Your Groups"</h1>
+                <label class="mt-5 block max-w-xl">
+                    <span class="sr-only">"Search your groups"</span>
+                    <input
+                        class="w-full border border-stone-300 bg-white px-3 py-2 dark:border-stone-700 dark:bg-stone-950"
+                        type="search"
+                        placeholder="Search your groups"
+                        autocomplete="off"
+                        :value=$(groups_query.get())
+                        @input=$(|event: topcoat::runtime::Event| {
+                            groups_query.set(event.target.value)
+                        })
+                    >
+                </label>
+                groups_shard(query: $(groups_query.get()))
+                <div
+                    class="mt-6 flex justify-end border-t border-stone-200 pt-6 dark:border-stone-800"
+                >
+                    <a
+                        class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 dark:bg-red-700"
+                        href=(href!(r#new::new_group))
+                    >
+                        "New Group"
+                    </a>
+                </div>
+            </section>
+        </main>
     }
 }
 
 #[shard]
-async fn groups_shard(cx: &Cx, refresh: bool) -> Result {
-    let _ = refresh;
+async fn groups_shard(cx: &Cx, query: String) -> Result {
     let user = signed_in_user(cx).await?;
     let dataserver = app_context::<Dataserver>(cx);
     let mut groups = dataserver.groups_for_user(user.user_id).await?;
+    let query = query.trim().to_lowercase();
+    if !query.is_empty() {
+        groups.retain(|group| group.name.to_lowercase().contains(&query));
+    }
     groups.sort_by(|left, right| {
         left.name
             .to_lowercase()
             .cmp(&right.name.to_lowercase())
             .then_with(|| left.name.cmp(&right.name))
     });
-    view! { groups_list(user: &user, groups: &groups) }
-}
-
-struct GroupsToast {
-    message: String,
-    is_error: bool,
-}
-
-fn groups_toast(parameters: &GroupsQuery) -> Option<GroupsToast> {
-    let name = parameters.name.as_deref().unwrap_or("the group");
-    let (message, is_error) = match parameters.notice.as_deref()? {
-        "left-group" => (format!("You left “{name}”."), false),
-        "group-created" => (format!("Created “{name}”."), false),
-        "group-create-failed" => (format!("Couldn’t create “{name}”. Please try again."), true),
-        "group-deleted" => (format!("Deleted “{name}”."), false),
-        "group-delete-failed" => (format!("Couldn’t delete “{name}”. Please try again."), true),
-        _ => return None,
-    };
-    Some(GroupsToast { message, is_error })
-}
-
-pub(super) fn groups_notice_location(notice: &str, name: &str) -> Result<HeaderValue> {
-    let query = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("notice", notice)
-        .append_pair("name", name)
-        .finish();
-    HeaderValue::try_from(format!("/groups?{query}")).map_err(Into::into)
-}
-
-#[component]
-async fn groups_index(toast: Option<&GroupsToast>, open_new: bool) -> Result {
-    view! {
-        signal groups_refresh = false;
-
-        <main class="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-12">
-            <div
-                class="pointer-events-none fixed inset-x-4 top-20 z-50 sm:left-auto sm:right-5 sm:w-96"
-                aria-live="polite"
-                aria-atomic="true"
-                data-toast-region=""
-            >
-                if let Some(toast) = toast {
-                    <div
-                        class="portal-toast border px-4 py-3 shadow-lg"
-                        role=(if toast.is_error { "alert" } else { "status" })
-                        data-toast=""
-                        data-toast-kind=(if toast.is_error { "error" } else { "success" })
-                    >
-                        (toast.message.as_str())
-                    </div>
-                }
-            </div>
-            <section class="py-8">
-                <h1 class="text-2xl font-semibold">"Your groups"</h1>
-                <input
-                    type="checkbox"
-                    hidden="hidden"
-                    data-groups-refresh=""
-                    @change=$(|event: topcoat::runtime::Event| {
-                        groups_refresh.set(event.target.checked)
-                    })
-                >
-                groups_shard(refresh: $(groups_refresh.get()))
-                <div
-                    class="mt-6 flex justify-end border-t border-stone-200 pt-6 dark:border-stone-800"
-                >
-                    <form
-                        method="post"
-                        action="/groups/new"
-                        data-confirm="The new private group will allow all members to edit its library and files."
-                        data-confirm-title="Create a Zotero group"
-                        data-confirm-action="Create group"
-                        data-confirm-input-name="name"
-                        data-confirm-input-label="Group name"
-                        data-confirm-input-required="true"
-                        data-confirm-input-maxlength="255"
-                        data-confirm-success="Group created."
-                        data-confirm-error="Couldn’t create the group. Please try again."
-                        data-confirm-auto=(if open_new { "true" } else { "false" })
-                        data-confirm-refresh="[data-groups-refresh]"
-                        data-confirm-stay="true"
-                    >
-                        <button
-                            class="bg-red-800 px-4 py-2 font-semibold text-white hover:bg-red-700 dark:bg-red-700"
-                            type="submit"
-                        >
-                            "New group"
-                        </button>
-                    </form>
-                </div>
-            </section>
-            confirmation_dialog()
-            toast_script()
-        </main>
-    }
-}
-
-#[component]
-async fn groups_list(user: &UserSummary, groups: &[Group]) -> Result {
     view! {
         if groups.is_empty() {
             <p class="mt-4 text-stone-600 dark:text-stone-400">
-                "You do not belong to any groups yet."
+                (if query.is_empty() {
+                    "You do not belong to any groups yet."
+                } else {
+                    "No groups match your search."
+                })
             </p>
         } else {
             <ul class="mt-4 divide-y divide-stone-200 dark:divide-stone-800">
-                for group in groups {
+                for group in &groups {
                     let role = group.role(user.user_id).unwrap_or(GroupRole::Member);
                     let member_count = group.user_ids().len();
                     <li class="py-4">
-                        <a
+                        let group_slug = group.slug();
+                        let group_library = href!(
+                            crate::app::_web_library::group_library_path,
+                            crate::app::_web_library::LibraryGroupId(group.id),
+                            crate::app::_web_library::LibraryGroupSlug(group_slug),
+                            crate::app::_web_library::LibraryPath(["items"]),
+                        );
+                        <div
                             class="flex flex-wrap items-center justify-between gap-3 p-3 hover:bg-stone-100 dark:hover:bg-stone-800"
-                            href=(format!("/groups/{}", group.id))
                         >
-                            <span class="font-medium">(group.name.as_str())</span>
-                            <span class="text-sm text-stone-600 dark:text-stone-400">
-                                (role.user_summary())
-                                " · "
-                                (member_count)
-                                " "
-                                if member_count == 1 {
-                                    "member"
-                                } else {
-                                    "members"
-                                }
-                            </span>
-                        </a>
+                            <div>
+                                <a
+                                    class="font-medium hover:text-red-800 dark:hover:text-red-400"
+                                    href=(group_library)
+                                >
+                                    (group.name.as_str())
+                                </a>
+                                <p class="mt-1 text-sm text-stone-600 dark:text-stone-400">
+                                    (role.user_summary())
+                                    " · "
+                                    (member_count)
+                                    " "
+                                    if member_count == 1 {
+                                        "member"
+                                    } else {
+                                        "members"
+                                    }
+                                    " · Private"
+                                </p>
+                            </div>
+                            if role.can_manage() {
+                                <div class="flex flex-wrap gap-3 text-sm">
+                                    <a
+                                        class="hover:text-red-800 dark:hover:text-red-400"
+                                        href=(href!(
+                                            group_id::group_settings,
+                                            group_id::GroupId(group.id),
+                                        ))
+                                    >
+                                        "Settings"
+                                    </a>
+                                    <a
+                                        class="hover:text-red-800 dark:hover:text-red-400"
+                                        href=(href!(
+                                            group_id::library_settings,
+                                            group_id::GroupId(group.id),
+                                        ))
+                                    >
+                                        "Library"
+                                    </a>
+                                    <a
+                                        class="hover:text-red-800 dark:hover:text-red-400"
+                                        href=(href!(
+                                            group_id::members_settings,
+                                            group_id::GroupId(group.id),
+                                        ))
+                                    >
+                                        "Members"
+                                    </a>
+                                </div>
+                            }
+                        </div>
                     </li>
                 }
             </ul>
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_names_cannot_shadow_group_routes() {
+        for name in [
+            "settings",
+            "Members",
+            "owner",
+            "delete",
+            "sett&ings",
+            ".",
+            "..",
+            "&",
+            "line\nbreak",
+        ] {
+            assert!(GroupName::try_from(name.to_owned()).is_err(), "{name}");
+        }
+        assert_eq!(
+            GroupName::try_from(" Research Group ".to_owned())
+                .expect("ordinary group name")
+                .as_str(),
+            "Research Group"
+        );
     }
 }

@@ -1,7 +1,10 @@
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{Body, headers, uri},
+    router::{
+        Body,
+        request::{headers, uri},
+    },
 };
 
 use crate::{

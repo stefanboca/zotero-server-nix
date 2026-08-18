@@ -1,3 +1,8 @@
+// Topcoat composes pages, layouts, and concurrent components into deeply nested
+// async view futures. The default rustc query-depth limit is too small to lay
+// out the generated route and view types in this application.
+#![recursion_limit = "256"]
+
 mod app;
 mod config;
 mod database;
@@ -7,7 +12,7 @@ mod oidc;
 
 use std::fmt::Write as _;
 
-pub use app::{migrate, routes, serve};
+pub use app::{migrate, serve};
 pub use config::{Config, Secrets};
 
 fn hex_string(bytes: &[u8]) -> String {

@@ -32,6 +32,15 @@ pub struct UserSummary {
     pub real_name: Option<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct UserProfile {
+    pub real_name: Option<String>,
+    pub location: Option<String>,
+    pub disciplines: Option<String>,
+    pub affiliation: Option<String>,
+    pub about: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct BrowserSession {
     pub handle: String,
