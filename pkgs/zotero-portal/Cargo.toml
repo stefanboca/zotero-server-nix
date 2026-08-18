@@ -25,6 +25,9 @@ tokio = {
   features = ["fs", "macros", "net", "rt-multi-thread", "signal"]
 }
 toml = "1.1.4"
+tracing = "0.1.44"
+tracing-journald = "0.3.2"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 topcoat = {
   version = "0.6.0",
   default-features = false,
@@ -37,9 +40,11 @@ topcoat = {
     "serve",
     "session",
     "tailwind",
+    "tower",
     "view"
   ]
 }
+tower-http = { version = "0.6.11", features = ["trace"] }
 url = "2.5.8"
 
 # add the native roots feature to reqwest pulled in by openidconnect

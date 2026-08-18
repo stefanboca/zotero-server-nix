@@ -44,7 +44,11 @@ async fn group_by_id(cx: &Cx, group_id: u64) -> Result<Option<Group>> {
     match memoized_group(cx, group_id).await {
         Ok(group) => Ok(group.clone()),
         Err(error) => {
-            eprintln!("failed to load group {group_id}: {error:#}");
+            tracing::error!(
+                group_id,
+                error = %format_args!("{error:#}"),
+                "failed to load group",
+            );
             Err(anyhow::anyhow!("failed to load group").into())
         }
     }

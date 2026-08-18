@@ -21,15 +21,22 @@ use topcoat::{
     context::{Cx, app_context, memoize, try_request_context},
     cookie::RouterBuilderCookieExt,
     router::{
-        Body, BodyLimit, Next, RouterBuilder, RouterBuilderDiscoverExt, StatusCode,
-        error::{RedirectError, not_found, redirect, redirect_permanent},
-        href, layer, layout,
+        Body, LayerFn, LayerFuture, Next, Path, RouterBuilder, RouterBuilderDiscoverExt,
+        StatusCode,
+        error::{RedirectError, RewriteError, not_found, redirect, redirect_permanent},
+        href, layout,
         request::{headers, uri},
-        response::{IntoResponse, Response},
+        response::IntoResponse,
+        tower::TowerLayer,
     },
     session::{self, RouterBuilderSessionExt, SessionConfig},
     view::{PromotedStr, StaticStr, View, component, view},
 };
+use tower_http::{
+    LatencyUnit,
+    trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnResponse, TraceLayer},
+};
+use tracing::Level;
 
 use crate::{
     app::_web_library::WebLibrary,
@@ -43,7 +50,9 @@ use crate::{
 pub(crate) const FLOW_LIFETIME: SignedDuration = SignedDuration::from_mins(15);
 
 pub async fn migrate(config: Arc<Config>) -> anyhow::Result<()> {
+    tracing::info!("running portal database migrations");
     Database::new(config).await?;
+    tracing::info!("portal database migrations complete");
     Ok(())
 }
 
@@ -78,14 +87,17 @@ pub async fn serve(config: Arc<Config>, secrets: Secrets) -> anyhow::Result<()> 
                 tokio::net::UnixListener::bind(&socket).context("binding auth socket")?;
             std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660))
                 .with_context(|| format!("setting portal socket permissions on {socket}"))?;
+            tracing::info!(socket, "listening on Unix socket");
             topcoat::serve(listener, router)
                 .await
                 .context("serving auth portal")
         }
         "http" | "https" => {
-            let listener = tokio::net::TcpListener::bind(config.server_address.authority())
+            let address = config.server_address.authority();
+            let listener = tokio::net::TcpListener::bind(address)
                 .await
                 .context("binding tcp socket")?;
+            tracing::info!(address, "listening on TCP socket");
             topcoat::serve(listener, router)
                 .await
                 .context("serving auth portal")
@@ -99,12 +111,24 @@ fn routes() -> RouterBuilder {
         // Shards and explicit-path compatibility routes are registered through
         // the outer discovery extension.
         .discover()
-        // Translation endpoints stream arbitrary Zotero payloads. Keep them
-        // uncapped even if they later switch from raw Body to an extractor.
-        .layer(BodyLimit::disable().at("/export"))
-        .layer(BodyLimit::disable().at("/import"))
-        .layer(BodyLimit::disable().at("/search"))
-        .layer(BodyLimit::disable().at("/web"))
+        // A module-root `#[layer]` resolves to the `/` route prefix, which
+        // only wraps matched routes. This layer is deliberately pathless so
+        // it can render router-level 404 and 405 errors with the site layout.
+        .layer(LayerFn::new(None::<&Path>, canonicalize_trailing_slash))
+        .layer(TowerLayer::new(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(
+                    DefaultOnResponse::new()
+                        .level(Level::INFO)
+                        .latency_unit(LatencyUnit::Millis),
+                )
+                .on_failure(
+                    DefaultOnFailure::new()
+                        .level(Level::ERROR)
+                        .latency_unit(LatencyUnit::Millis),
+                ),
+        ))
 }
 
 #[memoize]
@@ -131,7 +155,7 @@ pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
     match memoized_current_user(cx).await {
         Ok(user_id) => Ok(*user_id),
         Err(error) => {
-            eprintln!("failed to authenticate request: {error:#}");
+            tracing::error!(error = %format_args!("{error:#}"), "failed to authenticate request");
             Err(anyhow::anyhow!("failed to authenticate request").into())
         }
     }
@@ -183,45 +207,62 @@ pub(crate) fn normalized_return_path(value: &str) -> Option<String> {
     Some(path)
 }
 
-#[layer]
-async fn canonicalize_trailing_slash(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
-    let request_uri = uri(cx);
-    let path = request_uri.path();
-    if path != "/" && path.ends_with('/') {
-        let mut location = path.trim_end_matches('/').to_owned();
-        if let Some(query) = request_uri.query() {
-            location.push('?');
-            location.push_str(query);
+fn canonicalize_trailing_slash<'a>(cx: &'a Cx, body: Body, next: Next<'a>) -> LayerFuture<'a> {
+    Box::pin(async move {
+        let request_uri = uri(cx);
+        let path = request_uri.path();
+        if path != "/" && path.ends_with('/') {
+            let mut location = path.trim_end_matches('/').to_owned();
+            if let Some(query) = request_uri.query() {
+                location.push('?');
+                location.push_str(query);
+            }
+            return redirect_permanent(&location).into_response(cx);
         }
-        return Err(redirect_permanent(&location).into());
-    }
-    match next.run(cx, body).await {
-        Ok(response) => Ok(response),
-        Err(error) if error.downcast_ref::<RedirectError>().is_some() => Err(error),
-        Err(error) => root_document(cx, Err(error)).await?.into_response(cx),
-    }
+        match next.run(cx, body).await {
+            Ok(response) => Ok(response),
+            Err(error) if error.downcast_ref::<RedirectError>().is_some() => {
+                error.into_response(cx)
+            }
+            Err(error) if error.downcast_ref::<RewriteError>().is_some() => Err(error),
+            // Unmatched routes sit outside Topcoat's path-scoped session
+            // layer, so their error document cannot look up account state.
+            Err(error) => root_document(cx, Err(error), false)
+                .await?
+                .into_response(cx),
+        }
+    })
 }
 
 #[layout]
 async fn root_layout(cx: &Cx, slot: Result) -> Result {
-    root_document(cx, slot).await
+    root_document(cx, slot, true).await
 }
 
-async fn root_document(cx: &Cx, slot: Result) -> Result {
+async fn root_document(cx: &Cx, slot: Result, load_navigation_user: bool) -> Result {
     let content = match slot {
         Ok(content) => content,
-        Err(error) if error.downcast_ref::<RedirectError>().is_some() => return Err(error),
+        Err(error)
+            if error.downcast_ref::<RedirectError>().is_some()
+                || error.downcast_ref::<RewriteError>().is_some() =>
+        {
+            return Err(error);
+        }
         Err(error) => {
+            let error_message = format!("{error:#}");
             let status = error
                 .into_response(cx)
                 .expect("error.into_response() always return Ok")
                 .status();
+            if status.is_server_error() {
+                tracing::error!(error = error_message, %status, "request handler failed");
+            }
             friendly_error_page(cx, status).await?
         }
     };
     let web_library_active = try_request_context::<WebLibrary>(cx).is_some();
     let show_portal_navigation = !web_library_active;
-    let navigation_user = if show_portal_navigation {
+    let navigation_user = if show_portal_navigation && load_navigation_user {
         match current_user(cx).await? {
             Some(user_id) => authenticated_user_summary(cx, user_id).await?,
             None => None,
@@ -456,7 +497,11 @@ async fn authenticated_user_summary(
     match memoized_authenticated_user_summary(cx, user_id).await {
         Ok(user) => Ok(user.clone()),
         Err(error) => {
-            eprintln!("failed to look up authenticated user: {error:#}");
+            tracing::error!(
+                user_id = %user_id,
+                error = %format_args!("{error:#}"),
+                "failed to look up authenticated user",
+            );
             Err(anyhow::anyhow!("failed to authenticate request").into())
         }
     }

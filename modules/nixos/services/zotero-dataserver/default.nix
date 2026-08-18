@@ -10,7 +10,7 @@
   inherit (lib.modules) mkDefault mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
   inherit (lib.strings) concatMapStrings concatStringsSep hasPrefix optionalString removePrefix removeSuffix replaceStrings;
-  inherit (lib.types) attrsOf bool int lines listOf oneOf path port str submodule nullOr;
+  inherit (lib.types) attrsOf bool enum int lines listOf oneOf path port str submodule nullOr;
 
   json = pkgs.formats.json {};
   toml = pkgs.formats.toml {};
@@ -25,6 +25,15 @@
     RestartSec = 5;
   };
   restartOnFailure = restartAlways // {Restart = "on-failure";};
+
+  portalLoggingEnvironment = {
+    RUST_LOG = cfg.portal.logging.filter;
+    ZOTERO_PORTAL_LOG_FORMAT = cfg.portal.logging.format;
+    ZOTERO_PORTAL_LOG_ANSI =
+      if cfg.portal.logging.ansi
+      then "true"
+      else "false";
+  };
 
   minimalOpenSearch = pkgs.opensearch.overrideAttrs (old: {
     pname = "opensearch-minimal";
@@ -440,6 +449,11 @@ in {
         description = "Browser authentication session lifetime in seconds. A null value uses the login portal default.";
       };
       databaseMaxConnections = settingOption int 5 "Maximum MariaDB connections used by the login portal.";
+      logging = {
+        filter = settingOption str "zotero_portal=info,tower_http=info" "Tracing filter for the portal, using the RUST_LOG directive syntax.";
+        format = settingOption (enum ["journald" "compact" "json" "pretty"]) "journald" "Destination and format for portal tracing events.";
+        ansi = settingOption bool false "Whether portal tracing output contains ANSI terminal styling.";
+      };
     };
 
     web-library.package = mkPackageOption pkgs "zotero-web-library" {};
@@ -532,6 +546,10 @@ in {
       {
         assertion = !cfg.portal.enable || cfg.portal.browserSessionLifetimeSeconds == null || cfg.portal.browserSessionLifetimeSeconds > 0;
         message = "services.zotero-dataserver.portal.browserSessionLifetimeSeconds must be positive when set";
+      }
+      {
+        assertion = !cfg.portal.enable || cfg.portal.databaseMaxConnections > 0;
+        message = "services.zotero-dataserver.portal.databaseMaxConnections must be positive";
       }
     ];
 
@@ -790,6 +808,7 @@ in {
         description = "Migrate the Zotero website compatibility database";
         wants = ["mysql.service"];
         after = ["mysql.service"];
+        environment = portalLoggingEnvironment;
         serviceConfig =
           restartOnFailure
           // {
@@ -806,6 +825,7 @@ in {
         wantedBy = ["multi-user.target"];
         wants = [credentialUnit "zotero-portal-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
         after = [credentialUnit "zotero-portal-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
+        environment = portalLoggingEnvironment;
         serviceConfig =
           restartAlways
           // {

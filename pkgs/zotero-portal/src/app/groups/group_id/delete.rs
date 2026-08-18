@@ -16,7 +16,7 @@ use super::current_group;
 
 #[route(POST)]
 pub(super) async fn delete_group(cx: &Cx) -> Result<Response> {
-    let (_, group, role) = current_group(cx).await?;
+    let (actor_id, group, role) = current_group(cx).await?;
     if role != GroupRole::Owner {
         return Err(forbidden().into());
     }
@@ -24,5 +24,6 @@ pub(super) async fn delete_group(cx: &Cx) -> Result<Response> {
     app_context::<Database>(cx)
         .delete_group_invitations(group.id)
         .await?;
+    tracing::info!(user_id = %actor_id, group_id = group.id, "group deleted");
     see_other(href!(crate::app::groups::list_groups).resolve(cx)).into_response(cx)
 }

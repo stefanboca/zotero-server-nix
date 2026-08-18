@@ -26,7 +26,7 @@ struct TransferOwner {
 
 #[route(POST)]
 pub(super) async fn transfer_owner(cx: &Cx, Form(input): Form<TransferOwner>) -> Result<Response> {
-    let (_, group, actor_role) = current_group(cx).await?;
+    let (actor_id, group, actor_role) = current_group(cx).await?;
     if actor_role != GroupRole::Owner {
         return Err(forbidden().into());
     }
@@ -45,6 +45,12 @@ pub(super) async fn transfer_owner(cx: &Cx, Form(input): Form<TransferOwner>) ->
     app_context::<Dataserver>(cx)
         .set_group_user(group.id, target.user_id, GroupRole::Owner)
         .await?;
+    tracing::info!(
+        group_id = group.id,
+        previous_owner_id = %actor_id,
+        new_owner_id = %target.user_id,
+        "group ownership transferred",
+    );
     see_other(href!(super::settings::members_settings, GroupId(group.id)).resolve(cx))
         .into_response(cx)
 }

@@ -105,6 +105,12 @@ pub(super) async fn create_member(
     app_context::<Dataserver>(cx)
         .set_group_user(group.id, target.user_id, input.role)
         .await?;
+    tracing::info!(
+        group_id = group.id,
+        user_id = %target.user_id,
+        role = %input.role,
+        "group member added",
+    );
     Ok(Json(member_response(
         target.user_id,
         target.username,
@@ -150,6 +156,12 @@ async fn update_members(cx: &Cx, Json(input): Json<UpdateMembers>) -> Result<Jso
             }
         }
     }
+
+    tracing::info!(
+        group_id = group.id,
+        updated = input.members.len(),
+        "group member roles updated",
+    );
 
     Ok(Json(UpdatedMembers {
         updated: input.members.len(),

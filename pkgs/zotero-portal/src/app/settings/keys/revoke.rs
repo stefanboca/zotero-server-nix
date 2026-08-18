@@ -33,6 +33,7 @@ pub(in crate::app::settings) async fn revoke_key(
     {
         return Err(not_found().into());
     }
+    tracing::info!(user_id = %user.user_id, "API key revoked");
     see_other(
         href!(crate::app::settings::security::security)
             .fragment("applications")

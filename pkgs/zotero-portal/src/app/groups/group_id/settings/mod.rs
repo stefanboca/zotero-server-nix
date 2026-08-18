@@ -261,6 +261,11 @@ async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<Respo
     group.name = name.to_owned();
     group.description = description.to_owned();
     app_context::<Dataserver>(cx).update_group(&group).await?;
+    tracing::info!(
+        user_id = %context.actor_id,
+        group_id = group.id,
+        "group settings updated",
+    );
     see_other(
         href!(settings, GroupId(group.id))
             .query(SettingsQuery { saved: Some(true) })

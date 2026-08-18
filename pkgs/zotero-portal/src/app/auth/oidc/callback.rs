@@ -31,7 +31,7 @@ struct CallbackQuery {
 async fn callback(cx: &Cx) -> Result {
     let result = callback_inner(cx).await;
     if let Err(error) = &result {
-        eprintln!("OIDC callback failed: {error:#}");
+        tracing::error!(error = %format_args!("{error:#}"), "OIDC callback failed");
     }
     result
 }
@@ -98,6 +98,11 @@ async fn callback_inner(cx: &Cx) -> Result {
             user_agent,
         )
         .await?;
+    tracing::info!(
+        user_id = %user_id,
+        desktop_login = flow.session_token.is_some(),
+        "OIDC login completed",
+    );
 
     if flow.session_token.is_some() {
         view! {

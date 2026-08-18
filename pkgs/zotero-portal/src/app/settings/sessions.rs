@@ -39,6 +39,11 @@ pub(super) async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) ->
     {
         return Err(not_found().into());
     }
+    tracing::info!(
+        user_id = %user.user_id,
+        current = input.handle == current_handle,
+        "browser session revoked",
+    );
     if input.handle == current_handle {
         session::stop(cx).await?;
         return see_other(href!(crate::app::user::login::login).resolve(cx)).into_response(cx);

@@ -99,6 +99,12 @@ pub(in crate::app::settings) async fn save_key(
         }
         _ => return Err(bad_request("an API key is required only when editing a key").into()),
     };
+    tracing::info!(
+        user_id = %user.user_id,
+        created,
+        key_name = %key.name,
+        "API key saved",
+    );
 
     Ok(Json(SavedKey {
         key: key.key,

@@ -27,7 +27,11 @@ async fn storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {
     match memoized_storage_usage(cx, user_id).await {
         Ok(usage) => Ok(usage.clone()),
         Err(error) => {
-            eprintln!("failed to load storage usage: {error:#}");
+            tracing::error!(
+                user_id = %user_id,
+                error = %format_args!("{error:#}"),
+                "failed to load storage usage",
+            );
             Err(anyhow::anyhow!("failed to load storage usage").into())
         }
     }

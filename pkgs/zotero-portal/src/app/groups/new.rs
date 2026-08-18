@@ -83,5 +83,6 @@ async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result<Respons
     let group_id = app_context::<Dataserver>(cx)
         .create_private_group(user_id, input.name.as_str())
         .await?;
+    tracing::info!(user_id = %user_id, group_id, "group created");
     see_other(href!(library_settings, GroupId(group_id)).resolve(cx)).into_response(cx)
 }

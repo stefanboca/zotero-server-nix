@@ -85,7 +85,11 @@ async fn editor_key(
     match memoized_access_key(cx, user_id, key_value.bytes()).await {
         Ok(access_key) => Ok(Some(access_key.clone().ok_or_else(not_found)?)),
         Err(error) => {
-            eprintln!("failed to load API key: {error:#}");
+            tracing::error!(
+                user_id = %user_id,
+                error = %format_args!("{error:#}"),
+                "failed to load API key",
+            );
             Err(anyhow::anyhow!("failed to load API key").into())
         }
     }

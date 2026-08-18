@@ -36,6 +36,11 @@ in {
           issuer = oidcIssuer;
           clientId = "zotero-test";
           clientSecretFile = oidcClientSecret;
+          logging = {
+            filter = "zotero_portal=debug,tower_http=info";
+            format = "journald";
+            ansi = false;
+          };
         };
 
         citeproc-js-server.settings.port = 18085;
@@ -223,6 +228,33 @@ in {
           machine.succeed("cat /etc/zotero-dataserver/portal.toml")
       )
       assert "browser_session_lifetime_seconds" not in portal_config
+      assert portal_config == {
+          "server_address": "unix:///run/zotero-portal/zotero-portal.sock",
+          "database": {
+              "url": "mysql://zotero-portal@localhost/zotero_www?socket=/run/mysqld/mysqld.sock",
+              "max_connections": 5,
+          },
+          "oidc": {
+              "issuer": "${oidcIssuer}",
+              "client_id": "zotero-test",
+              "redirect_url": public_url + "/auth/oidc/callback",
+              "require_verified_email": True,
+          },
+          "dataserver_url": api_url + "/",
+          "stream_server_url": public_url.replace("https://", "wss://") + "/stream/",
+          "translation_server_url": "http://127.0.0.1:11969",
+      }, portal_config
+      portal_environment = machine.succeed(
+          "systemctl show -P Environment zotero-portal.service"
+      )
+      assert "RUST_LOG=zotero_portal=debug,tower_http=info" in portal_environment
+      assert "ZOTERO_PORTAL_LOG_FORMAT=journald" in portal_environment
+      assert "ZOTERO_PORTAL_LOG_ANSI=false" in portal_environment
+      migrate_environment = machine.succeed(
+          "systemctl show -P Environment zotero-portal-migrate.service"
+      )
+      assert "RUST_LOG=zotero_portal=debug,tower_http=info" in migrate_environment
+      assert "ZOTERO_PORTAL_LOG_FORMAT=journald" in migrate_environment
 
       databases = machine.succeed(
           "mariadb --batch --skip-column-names "
@@ -259,6 +291,7 @@ in {
           "_sqlx_migrations",
           "GDN_User",
           "browser_sessions",
+          "group_invitations",
           "oidc_identities",
           "sessions",
           "storage_institution_email",
@@ -344,7 +377,7 @@ in {
       assert "Sign in to Zotero" in login_page, login_page
       assert "Continue with OpenID Connect" in login_page, login_page
       assert "Use your OpenID Connect account to continue" not in login_page, login_page
-      assert 'aria-label="Primary navigation"' not in login_page, login_page
+      assert 'aria-label="Primary navigation"' in login_page, login_page
       assert (
           f'action="/user/login?session={login_page_session["sessionToken"]}"'
           in login_page
@@ -502,6 +535,7 @@ in {
           "expiresAt",
           "createdAt",
           "lastSeenAt",
+          "userAgent",
       ], browser_session_columns
       stylesheet = re.search(
           r'href="(/_topcoat/assets/[^"]+)"', repeated_result
@@ -518,7 +552,7 @@ in {
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + "/library")
+          + shlex.quote(public_url + "/")
       )
       library_config_match = re.search(
           r'id="zotero-web-library-config">([^<]+)</script>',
@@ -526,6 +560,8 @@ in {
       )
       assert library_config_match is not None, library_page
       library_config = json.loads(library_config_match.group(1))
+      assert library_config["userSlug"] == "alice", library_config
+      assert "portalMode" not in library_config, library_config
       web_ui_key = library_config["apiKey"]
       web_ui_key_row = machine.succeed(
           "mariadb --batch --skip-column-names zotero_master --execute="
@@ -535,34 +571,59 @@ in {
           )
       ).strip().split("\t")
       assert web_ui_key_row == [durable_hash.lower(), "1"], web_ui_key_row
+      library_menu_match = re.search(
+          r'id="zotero-web-library-menu-config">([^<]+)</script>',
+          library_page,
+      )
+      assert library_menu_match is not None, library_page
+      library_menu = json.loads(library_menu_match.group(1))
+      account_menu = library_menu["desktop"][-1]
+      assert account_menu["label"] == "alice", account_menu
+      assert {"separator": True} in account_menu["entries"], account_menu
 
-      account_page = machine.succeed(
+      personal_library = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + "/")
+          + shlex.quote(public_url + "/alice/library")
       )
-      assert "Signed in as Alice Developer" in account_page, account_page
-      assert 'src="/library"' in account_page, account_page
-      assert 'title="Zotero library"' in account_page, account_page
-      assert 'href="/groups"' in account_page, account_page
-      assert 'action="/user/logout"' in account_page, account_page
-      assert "Your groups" not in account_page, account_page
+      assert 'id="zotero-web-library"' in personal_library, personal_library
+      assert '"userSlug":"alice"' in personal_library, personal_library
 
-      personal_library_status = machine.succeed(
-          "curl --silent --show-error --output /dev/null --write-out '%{http_code}' --cookie "
+      legacy_library_status = machine.succeed(
+          "curl --silent --show-error --output /tmp/legacy-library.html "
+          "--write-out='%{http_code}' --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + f"/users/{oidc_user_id}/items")
+          + shlex.quote(public_url + "/library")
       ).strip()
-      assert personal_library_status == "404", personal_library_status
-      other_library_status = machine.succeed(
-          "curl --silent --show-error --output /dev/null --write-out '%{http_code}' --cookie "
+      assert legacy_library_status == "404", legacy_library_status
+      legacy_library = machine.succeed("cat /tmp/legacy-library.html")
+      assert "The page may have moved" in legacy_library, legacy_library
+
+      missing_status = machine.succeed(
+          "curl --silent --show-error --output /tmp/missing.html "
+          "--write-out='%{http_code}' --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + "/users/1/items")
+          + shlex.quote(public_url + "/foo/bar")
       ).strip()
-      assert other_library_status == "404", other_library_status
+      assert missing_status == "404", missing_status
+      missing_page = machine.succeed("cat /tmp/missing.html")
+      assert "<!DOCTYPE html>" in missing_page, missing_page
+      assert "The page may have moved" in missing_page, missing_page
+      assert "/_topcoat/assets/" in missing_page, missing_page
+
+      profile_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/alice")
+      )
+      assert "Alice Developer" in profile_page, profile_page
+      assert re.search(r"<span[^>]*>alice</span>", profile_page), profile_page
+      assert 'href="/groups"' in profile_page, profile_page
+      assert 'action="/user/logout"' in profile_page, profile_page
 
       trailing_group_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null --cookie "
@@ -572,15 +633,14 @@ in {
       )
       assert trailing_group_headers.startswith("HTTP/2 308"), trailing_group_headers
       assert "location: /groups/new" in trailing_group_headers.lower(), trailing_group_headers
-      group_page = machine.succeed(
-          "curl --silent --show-error --fail-with-body --location --cookie "
-          + shlex.quote(cookie_file)
-          + " --cookie-jar "
+      new_group_page = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + "/groups/new/")
+          + shlex.quote(public_url + "/groups/new")
       )
-      assert "Create a Zotero group" in group_page, group_page
+      assert "Create a Group" in new_group_page, new_group_page
+
       group_name = "OIDC integration group"
       group_result = machine.succeed(
           "curl --silent --show-error --fail-with-body --location --cookie "
@@ -592,33 +652,28 @@ in {
           + " "
           + shlex.quote(public_url + "/groups/new")
       )
-      assert f"Created “{group_name}”" in group_result, group_result
-      assert machine.succeed(
-          "mariadb --batch --skip-column-names zotero_master --execute="
-          + shlex.quote(
-              "SELECT COUNT(*) FROM groups "
-              "JOIN groupUsers USING (groupID) "
-              f"WHERE name = '{group_name}' "
-              f"AND userID = {oidc_user_id} AND role = 'owner'"
-          )
-      ).strip() == "1"
+      assert "Library Editing" in group_result, group_result
       group_id = int(machine.succeed(
           "mariadb --batch --skip-column-names zotero_master --execute="
           + shlex.quote(
               f"SELECT groupID FROM groups WHERE name = '{group_name}'"
           )
       ).strip())
+      group_slug = "oidc_integration_group"
+      group_path = f"/groups/{group_id}/{group_slug}"
       groups_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
           + shlex.quote(public_url + "/groups")
       )
-      assert "Your groups" in groups_page, groups_page
+      assert "Zotero Groups" in groups_page, groups_page
+      assert "Your Groups" not in groups_page, groups_page
       assert group_name in groups_page, groups_page
-      assert f'href="/groups/{group_id}"' in groups_page, groups_page
-      assert "You are the owner" in groups_page, groups_page
-      assert "1 member" in groups_page, groups_page
+      assert f'href="{group_path}"' in groups_page, groups_page
+      assert f'href="/groups/{group_id}/settings"' in groups_page, groups_page
+      assert f'href="/groups/{group_id}/settings/members"' in groups_page, groups_page
+      assert f'href="/groups/{group_id}/settings/library"' in groups_page, groups_page
 
       machine.succeed(
           "mariadb zotero_www --execute="
@@ -632,7 +687,7 @@ in {
               "(@candidate, 'profile_realname', 'New Group Owner'); "
               "INSERT INTO GDN_User VALUES (@candidate, 0); "
               "INSERT INTO oidc_identities (issuer, subject, userID) VALUES "
-              "('${oidcIssuer}', 'new-owner', @candidate)"
+              "('http://127.0.0.1:19090', 'new-owner', @candidate)"
           )
       )
       candidate_user_id = int(machine.succeed(
@@ -641,117 +696,51 @@ in {
               "SELECT userID FROM users WHERE username = 'new-owner'"
           )
       ).strip())
-      group_management = machine.succeed(
-          "curl --silent --show-error --fail-with-body --cookie "
-          + shlex.quote(cookie_file)
-          + " "
-          + shlex.quote(f"{public_url}/groups/{group_id}")
-      )
-      assert 'name="identifier"' in group_management, group_management
-      assert 'type="number"' not in group_management, group_management
-      assert 'data-member-search=""' in group_management, group_management
-      assert 'name="user_id"' not in group_management, group_management
-      assert "Zotero user ID" not in group_management, group_management
-      search_region = group_management.split(
-          'data-member-search-results=""', 1
-      )[1]
-      search_shard_match = re.search(
-          r'/_topcoat/shards/([0-9a-f-]+)', search_region
-      )
-      assert search_shard_match is not None, search_region
-      search_page = machine.succeed(
-          "curl --silent --show-error --fail-with-body --cookie "
-          + shlex.quote(cookie_file)
-          + " --request POST --header 'Content-Type: application/json' --data "
-          + shlex.quote('["new-owner"]')
-          + " "
-          + shlex.quote(
-              public_url
-              + "/_topcoat/shards/"
-              + search_shard_match.group(1)
-          )
-      )
-      assert "New Group Owner" in search_page, search_page
-      assert "new-owner" in search_page, search_page
-      assert "@new-owner" not in search_page, search_page
-      assert 'name="user_id"' not in search_page, search_page
-      assert "Zotero user ID" not in search_page, search_page
 
-      add_member_region = group_management.split('data-member-picker=""', 1)[1]
-      add_member_procedure_match = re.search(
-          r'&quot;t&quot;:&quot;Procedure&quot;,&quot;id&quot;:&quot;([0-9a-f-]+)&quot;',
-          add_member_region,
-      )
-      assert add_member_procedure_match is not None, add_member_region
-      add_member_result = machine.succeed(
+      created_member = json.loads(machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " --request POST --header 'Content-Type: application/json' --data "
-          + shlex.quote(f'["{group_id}", "new-owner", "member"]')
+          + shlex.quote(json.dumps({
+              "identifier": "new-owner",
+              "role": "member",
+          }))
           + " "
-          + shlex.quote(
-              public_url
-              + "/_topcoat/procedures/"
-              + add_member_procedure_match.group(1)
-          )
-      )
-      assert add_member_result == (
-          '{"t":"Result","ok":"new-owner"}'
-      ), add_member_result
-      assert machine.succeed(
-          "mariadb --batch --skip-column-names zotero_master --execute="
-          + shlex.quote(
-              "SELECT role FROM groupUsers "
-              f"WHERE groupID = {group_id} AND userID = {candidate_user_id}"
-          )
-      ).strip() == "member"
-
-      already_member_result = machine.succeed(
-          "curl --silent --show-error --fail-with-body --cookie "
-          + shlex.quote(cookie_file)
-          + " --request POST --header 'Content-Type: application/json' --data "
-          + shlex.quote(f'["{group_id}", "new-owner", "member"]')
-          + " "
-          + shlex.quote(
-              public_url
-              + "/_topcoat/procedures/"
-              + add_member_procedure_match.group(1)
-          )
-      )
-      assert already_member_result == (
-          '{"t":"Result","err":"already-member"}'
-      ), already_member_result
+          + shlex.quote(f"{public_url}/groups/{group_id}/members")
+      ))
+      assert created_member == {
+          "userId": candidate_user_id,
+          "username": "new-owner",
+          "role": "member",
+      }, created_member
 
       members_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(f"{public_url}/groups/{group_id}")
+          + shlex.quote(f"{public_url}/groups/{group_id}/settings/members")
       )
-      assert 'data-members-region=""' in members_page, members_page
-      assert "New Group Owner" in members_page, members_page
-      assert "<!DOCTYPE html>" in members_page, members_page
+      assert "Current Members" in members_page, members_page
+      assert "new-owner" in members_page, members_page
+      assert "Member Since" in members_page, members_page
+      assert "Update Roles" in members_page, members_page
+      assert 'value="admin"' in members_page, members_page
+      assert 'value="remove"' in members_page, members_page
 
-      assert 'data-topcoat-on:click=' in members_page, members_page
-      assert 'data-role-form=""' not in members_page, members_page
-      procedure_match = re.search(
-          r'&quot;t&quot;:&quot;Procedure&quot;,&quot;id&quot;:&quot;([0-9a-f-]+)&quot;',
-          members_page,
-      )
-      assert procedure_match is not None, members_page
-      procedure_result = machine.succeed(
+      role_update = json.loads(machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
-          + " --request POST --header 'Content-Type: application/json' --data "
-          + shlex.quote(
-              f'["{group_id}", "{candidate_user_id}", "admin"]'
-          )
+          + " --request PATCH --header 'Content-Type: application/json' --data "
+          + shlex.quote(json.dumps({
+              "members": [{
+                  "userId": candidate_user_id,
+                  "role": "admin",
+              }],
+          }))
           + " "
-          + shlex.quote(
-              public_url + "/_topcoat/procedures/" + procedure_match.group(1)
-          )
-      )
-      assert procedure_result == '{"t":"Result","ok":{"t":"str","v":"admin"}}', procedure_result
+          + shlex.quote(f"{public_url}/groups/{group_id}/members")
+      ))
+      assert role_update == {"updated": 1}, role_update
       assert machine.succeed(
           "mariadb --batch --skip-column-names zotero_master --execute="
           + shlex.quote(
@@ -761,64 +750,46 @@ in {
       ).strip() == "admin"
 
       renamed_group_name = "Renamed OIDC integration group"
-      rename_headers = machine.succeed(
-          "curl --silent --show-error --dump-header - --output /dev/null "
-          "--cookie "
+      renamed_group_slug = "renamed_oidc_integration_group"
+      renamed_result = machine.succeed(
+          "curl --silent --show-error --fail-with-body --location --cookie "
           + shlex.quote(cookie_file)
-          + " --header 'X-Zotero-Confirmed: true' --data-urlencode "
+          + " --data-urlencode "
           + shlex.quote("name=" + renamed_group_name)
+          + " --data-urlencode "
+          + shlex.quote("description=Integration description")
           + " "
-          + shlex.quote(f"{public_url}/groups/{group_id}/rename")
+          + shlex.quote(f"{public_url}/groups/{group_id}/settings")
       )
-      assert rename_headers.startswith("HTTP/2 204"), rename_headers
-      assert f"location: /groups/{group_id}?" in rename_headers.lower(), rename_headers
+      assert "Group Settings Saved" in renamed_result, renamed_result
+      assert "Integration description" in renamed_result, renamed_result
       assert machine.succeed(
           "mariadb --batch --skip-column-names zotero_master --execute="
           + shlex.quote(f"SELECT name FROM groups WHERE groupID = {group_id}")
       ).strip() == renamed_group_name
-      group_name = renamed_group_name
 
-      group_management = machine.succeed(
-          "curl --silent --show-error --fail-with-body --cookie "
+      library_settings = machine.succeed(
+          "curl --silent --show-error --fail-with-body --location --cookie "
           + shlex.quote(cookie_file)
-          + " "
-          + shlex.quote(f"{public_url}/groups/{group_id}")
+          + " --data library_editing=admins --data file_editing=none "
+          + shlex.quote(f"{public_url}/groups/{group_id}/settings/library")
       )
-      assert "New Group Owner" in group_management, group_management
-      assert 'name="user_id"' not in group_management, group_management
-      assert "Zotero user ID" not in group_management, group_management
-      assert f'action="/groups/{group_id}/owner"' in group_management, group_management
-      assert 'name="username" value="new-owner"' in group_management, group_management
-      assert "Transfer ownership" in group_management, group_management
-      assert "You will become an administrator" in group_management, group_management
-
-      rejected_transfer_status = machine.succeed(
-          "curl --silent --show-error --output /tmp/rejected-transfer.html "
-          "--write-out='%{http_code}' --cookie "
-          + shlex.quote(cookie_file)
-          + " --data "
-          + shlex.quote("username=new-owner")
-          + " --data confirmation=wrong "
-          + shlex.quote(f"{public_url}/groups/{group_id}/owner")
-      ).strip()
-      assert rejected_transfer_status == "400", rejected_transfer_status
-      rejected_transfer = machine.succeed("cat /tmp/rejected-transfer.html")
-      assert "The request could not be completed" in rejected_transfer, rejected_transfer
+      assert "Settings saved" in library_settings, library_settings
+      assert "Only group admins" in library_settings, library_settings
+      assert "No group file storage" in library_settings, library_settings
 
       transfer_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null "
           "--cookie "
           + shlex.quote(cookie_file)
-          + " --header 'X-Zotero-Confirmed: true'"
-          + " --data "
-          + shlex.quote("username=new-owner")
-          + " --data-urlencode "
-          + shlex.quote("confirmation=" + group_name)
-          + " "
+          + " --data username=new-owner "
           + shlex.quote(f"{public_url}/groups/{group_id}/owner")
       )
-      assert transfer_headers.startswith("HTTP/2 204"), transfer_headers
-      assert f"location: /groups/{group_id}?" in transfer_headers.lower(), transfer_headers
+      assert transfer_headers.startswith("HTTP/2 303"), transfer_headers
+      assert (
+          f"location: /groups/{group_id}/settings/members"
+          in transfer_headers.lower()
+      ), transfer_headers
       ownership = machine.succeed(
           "mariadb --batch --skip-column-names zotero_master --execute="
           + shlex.quote(
@@ -829,45 +800,54 @@ in {
       assert f"{oidc_user_id}\tadmin" in ownership, ownership
       assert f"{candidate_user_id}\towner" in ownership, ownership
 
-      former_owner_page = machine.succeed(
+      self_demote = json.loads(machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " --request PATCH --header 'Content-Type: application/json' --data "
+          + shlex.quote(json.dumps({
+              "members": [{
+                  "userId": oidc_user_id,
+                  "role": "member",
+              }],
+          }))
+          + " "
+          + shlex.quote(f"{public_url}/groups/{group_id}/members")
+      ))
+      assert self_demote == {"updated": 1}, self_demote
+
+      forbidden_status = machine.succeed(
+          "curl --silent --show-error --output /tmp/group-forbidden.html "
+          "--write-out='%{http_code}' --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(f"{public_url}/groups/{group_id}/settings")
+      ).strip()
+      assert forbidden_status == "403", forbidden_status
+      forbidden_page = machine.succeed("cat /tmp/group-forbidden.html")
+      assert "<!DOCTYPE html>" in forbidden_page, forbidden_page
+      assert "Your account is not allowed" in forbidden_page, forbidden_page
+
+      overview_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(f"{public_url}/groups/{group_id}")
+          + shlex.quote(
+              public_url
+              + f"/groups/{group_id}/{renamed_group_slug}"
+          )
       )
-      assert "You are an administrator" in former_owner_page, former_owner_page
-      assert "Leave group" in former_owner_page, former_owner_page
-      assert "Delete group" not in former_owner_page, former_owner_page
-      assert 'value="demote-self"' in former_owner_page, former_owner_page
-      assert "Become a member of this group?" in former_owner_page, former_owner_page
-      members_region = former_owner_page.split('data-members-region=""', 1)[1].split("</section>", 1)[0]
-      assert members_region.find("Alice Developer") < members_region.find("New Group Owner"), members_region
-
-      demote_headers = machine.succeed(
+      assert "Group Library" in overview_page, overview_page
+      assert "Members" in overview_page, overview_page
+      assert "Leave Group" in overview_page, overview_page
+      assert "Group Settings" not in overview_page, overview_page
+      leave_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null "
           "--cookie "
           + shlex.quote(cookie_file)
-          + " --header 'X-Zotero-Confirmed: true' "
-          "--data operation=demote-self "
-          + shlex.quote(f"{public_url}/groups/{group_id}/members")
+          + " --request POST "
+          + shlex.quote(f"{public_url}/groups/{group_id}/members/leave")
       )
-      assert demote_headers.startswith("HTTP/2 204"), demote_headers
-      assert f"location: /groups/{group_id}?" in demote_headers.lower(), demote_headers
-      assert machine.succeed(
-          "mariadb --batch --skip-column-names zotero_master --execute="
-          + shlex.quote(
-              "SELECT role FROM groupUsers "
-              f"WHERE groupID = {group_id} AND userID = {oidc_user_id}"
-          )
-      ).strip() == "member"
-      demoted_page = machine.succeed(
-          "curl --silent --show-error --fail-with-body --cookie "
-          + shlex.quote(cookie_file)
-          + " "
-          + shlex.quote(f"{public_url}/groups/{group_id}")
-      )
-      assert "You are a member" in demoted_page, demoted_page
-      assert "Add a member" not in demoted_page, demoted_page
+      assert leave_headers.startswith("HTTP/2 303"), leave_headers
 
       settings_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
@@ -875,97 +855,122 @@ in {
           + " "
           + shlex.quote(public_url + "/settings")
       )
-      assert "Your identity is managed by the OpenID Connect provider" in settings_page, settings_page
-      assert "Unlimited" in settings_page, settings_page
-      assert "User ID" not in settings_page, settings_page
-      assert 'name="user_id"' not in settings_page, settings_page
-      storage_page = machine.succeed(
+      assert "Account" in settings_page, settings_page
+      assert "Your username and email are managed" in settings_page, settings_page
+      security_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + "/settings")
+          + shlex.quote(public_url + "/settings/security")
       )
-      assert "Unlimited" in storage_page, storage_page
-      assert "Used</dt><dd" in storage_page, storage_page
-      assert "Browser sessions" in storage_page, storage_page
-      assert "Connected apps" in storage_page, storage_page
-      assert 'name="operation" value="all"' in storage_page, storage_page
-      assert "Sign out all sessions" in storage_page, storage_page
-      assert "Disconnect all apps" in storage_page, storage_page
-      assert durable_hash.lower() not in storage_page, storage_page
+      assert "Browser Sessions" in security_page, security_page
+      assert "Applications" in security_page, security_page
+      assert "Sign out all sessions" not in security_page, security_page
+      assert "Disconnect all apps" not in security_page, security_page
+
+      key_payload = {
+          "key": None,
+          "name": "VM integration key",
+          "access": {
+              "user": {
+                  "library": True,
+                  "notes": False,
+                  "files": True,
+                  "write": False,
+              },
+              "groups": {
+                  "all": {
+                      "library": True,
+                      "write": False,
+                  },
+              },
+          },
+      }
+      saved_key = json.loads(machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " --request POST --header 'Content-Type: application/json' --data "
+          + shlex.quote(json.dumps(key_payload))
+          + " "
+          + shlex.quote(public_url + "/settings/savekey")
+      ))
+      assert saved_key["created"] is True, saved_key
+      assert saved_key["name"] == "VM integration key", saved_key
+      assert len(saved_key["key"]) == 24, saved_key
+      security_with_key = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/settings/security")
+      )
+      assert "VM integration key" in security_with_key, security_with_key
+      assert "Create new private key" in security_with_key, security_with_key
+      revoke_key_headers = machine.succeed(
+          "curl --silent --show-error --dump-header - --output /dev/null "
+          "--cookie "
+          + shlex.quote(cookie_file)
+          + " --data "
+          + shlex.quote("key=" + saved_key["key"])
+          + " "
+          + shlex.quote(public_url + "/settings/keys/revoke")
+      )
+      assert revoke_key_headers.startswith("HTTP/2 303"), revoke_key_headers
 
       other_session_handle = "ab" * 32
       machine.succeed(
           "mariadb zotero_www --execute="
           + shlex.quote(
               "INSERT INTO browser_sessions "
-              "(tokenHash, userID, expiresAt, createdAt, lastSeenAt) VALUES "
+              "(tokenHash, userID, expiresAt, userAgent) VALUES "
               f"(UNHEX('{other_session_handle}'), {oidc_user_id}, "
-              "FROM_UNIXTIME(UNIX_TIMESTAMP() + 3600), "
-              "FROM_UNIXTIME(UNIX_TIMESTAMP() - 600), "
-              "FROM_UNIXTIME(UNIX_TIMESTAMP() - 60))"
-          )
-      )
-      remote_web_ui_key = "x" * 24
-      machine.succeed(
-          "mariadb zotero_master --execute="
-          + shlex.quote(
-              "INSERT INTO `keys` (keyID, `key`, userID, name, webUI) "
-              "SELECT COALESCE(MAX(keyID), 0) + 1, "
-              f"'{remote_web_ui_key}', {oidc_user_id}, "
-              f"'{other_session_handle}', 1 FROM `keys`"
+              "DATE_ADD(NOW(), INTERVAL 30 DAY), "
+              "'Mozilla/5.0 (X11; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0')"
           )
       )
       sessions_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + "/settings")
+          + shlex.quote(public_url + "/settings/security")
       )
-      assert sessions_page.count("Browser session") >= 3, sessions_page
+      assert sessions_page.count('data-browser-session-item=""') >= 2, sessions_page
+      assert "Firefox on Linux" in sessions_page, sessions_page
       assert "Current" in sessions_page, sessions_page
-      revoke_other_headers = machine.succeed(
+      assert "Remove Session" in sessions_page, sessions_page
+      revoke_session_headers = machine.succeed(
           "curl --silent --show-error --dump-header - --output /dev/null "
           "--cookie "
           + shlex.quote(cookie_file)
-          + " --header 'X-Zotero-Confirmed: true' "
-          "--data operation=one --data "
+          + " --data "
           + shlex.quote("handle=" + other_session_handle)
           + " "
           + shlex.quote(public_url + "/settings/sessions")
       )
-      assert revoke_other_headers.startswith("HTTP/2 204"), revoke_other_headers
-      assert "location:" not in revoke_other_headers.lower(), revoke_other_headers
+      assert revoke_session_headers.startswith("HTTP/2 303"), revoke_session_headers
       assert machine.succeed(
           "mariadb --batch --skip-column-names zotero_www --execute="
           + shlex.quote(
-              "SELECT COUNT(*) FROM browser_sessions WHERE tokenHash = "
-              f"UNHEX('{other_session_handle}')"
+              "SELECT COUNT(*) FROM browser_sessions "
+              f"WHERE tokenHash = UNHEX('{other_session_handle}')"
           )
       ).strip() == "0"
-      assert machine.succeed(
-          "mariadb --batch --skip-column-names zotero_master --execute="
-          + shlex.quote(
-              "SELECT COUNT(*) FROM `keys` "
-              f"WHERE `key` = '{remote_web_ui_key}'"
-          )
-      ).strip() == "0"
-      current_session_page = machine.succeed(
+
+      storage_page = machine.succeed(
           "curl --silent --show-error --fail-with-body --cookie "
-          + shlex.quote(cookie_file)
-          + " "
-          + shlex.quote(public_url + "/settings")
-      )
-      assert "Settings" in current_session_page, current_session_page
-      storage_redirect = machine.succeed(
-          "curl --silent --show-error --dump-header - --output /dev/null --cookie "
           + shlex.quote(cookie_file)
           + " "
           + shlex.quote(public_url + "/settings/storage")
       )
-      assert storage_redirect.startswith("HTTP/2 308"), storage_redirect
-      assert "location: /settings#storage" in storage_redirect.lower(), storage_redirect
+      assert "Current Plan" in storage_page, storage_page
+      assert "Current Usage" in storage_page, storage_page
+      assert "Purge Storage in My Library" in storage_page, storage_page
 
+      portal_log = machine.succeed(
+          "journalctl -u zotero-portal.service --no-pager -o cat"
+      )
+      assert "finished processing request" in portal_log, portal_log
+      assert "OIDC login completed" in portal_log, portal_log
+      assert "group created" in portal_log, portal_log
       oidc_attachment_template = json.loads(
           machine.succeed(
               "curl --silent --show-error --fail-with-body "
@@ -1016,7 +1021,7 @@ in {
           "curl --silent --show-error --fail-with-body --cookie "
           + shlex.quote(cookie_file)
           + " "
-          + shlex.quote(public_url + "/settings")
+          + shlex.quote(public_url + "/settings/storage")
       )
       assert "2.00 TiB" in large_storage_page, large_storage_page
       unlimited_parameters = urllib.parse.urlencode(
@@ -1482,11 +1487,11 @@ in {
       ).strip()
       assert response == "307", response
 
-      old_api_response = machine.succeed(
+      legacy_keys_response = machine.succeed(
           "curl --silent --show-error --output /dev/null "
           "--write-out='%{http_code}' " + shlex.quote(public_url + "/keys")
       ).strip()
-      assert old_api_response == "404", old_api_response
+      assert legacy_keys_response == "307", legacy_keys_response
 
       attachment_proxy_response = machine.succeed(
           "curl --silent --show-error --output /dev/null "
