@@ -143,7 +143,6 @@ impl Database {
         let rows = sqlx::query!(
             "SELECT LOWER(HEX(tokenHash)) AS `handle!`, \
              userAgent AS `user_agent?`, \
-             DATE_FORMAT(createdAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `created_at!`, \
              DATE_FORMAT(lastSeenAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `last_seen_at!`, \
              DATE_FORMAT(expiresAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `expires_at!` \
              FROM browser_sessions WHERE userID = ? ORDER BY lastSeenAt DESC",
@@ -156,7 +155,6 @@ impl Database {
                 Ok(BrowserSession {
                     handle: row.handle,
                     user_agent: row.user_agent,
-                    created_at: row.created_at.parse()?,
                     last_seen_at: row.last_seen_at.parse()?,
                     expires_at: row.expires_at.parse()?,
                 })

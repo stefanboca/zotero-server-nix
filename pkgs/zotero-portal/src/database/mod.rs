@@ -37,7 +37,6 @@ pub struct UserSummary {
 pub struct BrowserSession {
     pub handle: String,
     pub user_agent: Option<String>,
-    pub created_at: Timestamp,
     pub last_seen_at: Timestamp,
     pub expires_at: Timestamp,
 }

@@ -195,11 +195,19 @@ async fn canonicalize_trailing_slash(cx: &Cx, body: Body, next: Next<'_>) -> Res
         }
         return Err(redirect_permanent(&location).into());
     }
-    next.run(cx, body).await
+    match next.run(cx, body).await {
+        Ok(response) => Ok(response),
+        Err(error) if error.downcast_ref::<RedirectError>().is_some() => Err(error),
+        Err(error) => root_document(cx, Err(error)).await?.into_response(cx),
+    }
 }
 
 #[layout]
 async fn root_layout(cx: &Cx, slot: Result) -> Result {
+    root_document(cx, slot).await
+}
+
+async fn root_document(cx: &Cx, slot: Result) -> Result {
     let content = match slot {
         Ok(content) => content,
         Err(error) if error.downcast_ref::<RedirectError>().is_some() => return Err(error),
@@ -226,6 +234,7 @@ async fn root_layout(cx: &Cx, slot: Result) -> Result {
     let groups = href!(groups::list_groups).resolve(cx);
     let groups_active = path == groups || path.starts_with(&format!("{groups}/"));
     view! {
+        cx =>
         <!DOCTYPE html>
         <html lang="en">
             <head>

@@ -36,8 +36,6 @@ pub struct ApiKey {
     pub name: String,
     #[serde(default, rename = "webUI")]
     pub web_ui: bool,
-    #[serde(default, rename = "dateAdded")]
-    pub date_added: String,
     #[serde(default, rename = "lastUsed")]
     pub last_used: Option<String>,
     #[serde(default, rename = "recentIPs")]

@@ -14,6 +14,7 @@
   }: let
     inherit (nixpkgs) lib;
     inherit (lib.attrsets) genAttrs mapAttrs' nameValuePair;
+    inherit (lib.meta) getExe;
 
     systems = ["x86_64-linux" "aarch64-linux"];
     forAllSystems = genAttrs systems;
@@ -53,7 +54,8 @@
       pkgs = nixpkgsFor.${system};
     in {
       default = pkgs.mkShellNoCC {
-        packages = with pkgs; [sqlx-cli pkgs.topcoat-cli];
+        packages = with pkgs; [sqlx-cli tailwindcss_4 topcoat-cli];
+        env.TAILWIND_CLI = getExe pkgs.tailwindcss_4;
       };
     });
 
