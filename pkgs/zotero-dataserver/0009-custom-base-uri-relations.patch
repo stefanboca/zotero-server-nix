@@ -1,0 +1,44 @@
+diff --git a/model/Collections.inc.php b/model/Collections.inc.php
+index 9e6dd76..aa78108 100644
+--- a/model/Collections.inc.php
++++ b/model/Collections.inc.php
+@@ -430 +430 @@ class Zotero_Collections extends Zotero_DataObjects {
+-							if (!preg_match('/^http:\/\/zotero.org\/(users|groups)\/[0-9]+\/(publications\/)?collections\/[A-Z0-9]{8}$/', $uri)) {
++							if (!Zotero_Relations::isValidObjectURI($uri, 'collections')) {
+diff --git a/model/Items.inc.php b/model/Items.inc.php
+index 997fbcc..e13af63 100644
+--- a/model/Items.inc.php
++++ b/model/Items.inc.php
+@@ -2206 +2206 @@ class Zotero_Items extends Zotero_DataObjects {
+-							if (!preg_match('/^http:\/\/zotero.org\/(users|groups)\/[0-9]+\/(publications\/)?items\/[A-Z0-9]{8}$/', $uri)) {
++							if (!Zotero_Relations::isValidObjectURI($uri, 'items')) {
+diff --git a/model/Relations.inc.php b/model/Relations.inc.php
+index d772a1c..2a97d7b 100644
+--- a/model/Relations.inc.php
++++ b/model/Relations.inc.php
+@@ -57,0 +58,25 @@ class Zotero_Relations extends Zotero_ClassicDataObjects {
++	/**
++	 * Validate a Zotero item or collection URI against both the configured
++	 * canonical base URI and the legacy upstream base URI. The latter remains
++	 * valid so that existing relations survive a move to a self-hosted server.
++	 */
++	public static function isValidObjectURI($uri, $objectType) {
++		if (!is_string($uri) || !in_array($objectType, ['items', 'collections'])) {
++			return false;
++		}
++
++		$bases = array_unique([
++			'http://zotero.org/',
++			rtrim(Z_CONFIG::$BASE_URI, '/') . '/'
++		]);
++		foreach ($bases as $base) {
++			$pattern = '~^' . preg_quote($base, '~')
++				. '(users|groups)/[0-9]+/(publications/)?'
++				. $objectType . '/[A-Z0-9]{8}$~D';
++			if (preg_match($pattern, $uri)) {
++				return true;
++			}
++		}
++		return false;
++	}
++
