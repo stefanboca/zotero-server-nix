@@ -1,7 +1,6 @@
 {
   lib,
   rustPlatform,
-  stdenv,
   tailwindcss_4,
   topcoat-cli,
 }: let
@@ -24,19 +23,33 @@ in
     };
 
     cargoLock.lockFile = ./Cargo.lock;
-    nativeBuildInputs = [tailwindcss_4 topcoat-cli];
-    env.SQLX_OFFLINE = true;
-    env.TAILWIND_CLI = getExe tailwindcss_4;
 
-    # Scan the artifact built by buildRustPackage instead of making Topcoat run
-    # a second Cargo build.
-    postBuild = ''
-      topcoat asset bundle --artifact "target/${stdenv.targetPlatform.rust.cargoShortTarget}/$cargoBuildType/zotero-portal"
+    nativeBuildInputs = [tailwindcss_4 topcoat-cli];
+
+    env = {
+      SQLX_OFFLINE = true;
+      TAILWIND_CLI = getExe tailwindcss_4;
+    };
+
+    # Let Topcoat own the Cargo build so it can bundle the exact artifact it
+    # produced without launching a second build.
+    buildPhase = ''
+      runHook preBuild
+      topcoat asset bundle --release --bin zotero-portal
+      runHook postBuild
     '';
 
-    postInstall = ''
-      mkdir -p $out/bin/assets
-      cp -r target/${stdenv.targetPlatform.rust.cargoShortTarget}/$cargoBuildType/assets/. $out/bin/assets/
+    checkPhase = ''
+      runHook preCheck
+      cargo test -j "$NIX_BUILD_CORES" --offline --profile release
+      runHook postCheck
+    '';
+
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 target/release/zotero-portal $out/bin/zotero-portal
+      cp -r target/release/assets $out/bin/assets
+      runHook postInstall
     '';
 
     meta = {

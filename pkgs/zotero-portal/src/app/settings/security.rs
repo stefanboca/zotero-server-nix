@@ -75,17 +75,13 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result {
                                     if is_current {
                                         "Now"
                                     } else {
-                                        <time
-                                            datetime=(last_active.to_string())
-                                        >
+                                        <time datetime=(last_active.to_string())>
                                             (format_relative_time(now, last_active))
                                         </time>
                                     }
                                 </td>
                                 <td>
-                                    <time
-                                        datetime=(expires.to_string())
-                                    >
+                                    <time datetime=(expires.to_string())>
                                         (expires_text.as_str())
                                     </time>
                                 </td>
@@ -208,8 +204,9 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result {
                         </thead>
                         <tbody>
                             for key in access_keys {
-                                let last_connected =
-                                    parse_client_timestamp(key.last_used.as_deref())?;
+                                let last_connected = parse_client_timestamp(
+                                    key.last_used.as_deref(),
+                                )?;
                                 let recent_ips = if key.recent_ips.is_empty() {
                                     "--".to_owned()
                                 } else {
@@ -221,9 +218,7 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result {
                                     </td>
                                     <td>
                                         if let Some(last_connected) = last_connected {
-                                            <time
-                                                datetime=(last_connected.to_string())
-                                            >
+                                            <time datetime=(last_connected.to_string())>
                                                 (format_relative_time(now, last_connected))
                                             </time>
                                         } else {
