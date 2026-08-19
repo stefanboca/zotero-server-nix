@@ -75,7 +75,6 @@ pub(super) async fn library(cx: &Cx) -> Result {
 #[serde(rename_all = "camelCase")]
 struct WebLibraryConfig {
     is_embedded: bool,
-    read_only: bool,
     api_key: String,
     api_config: WebLibraryApiConfig,
     user_id: UserId,
@@ -126,7 +125,6 @@ impl WebLibraryConfig {
 
         Ok(Self {
             is_embedded: false,
-            read_only: access.read_only,
             api_key: access.api_key,
             api_config: WebLibraryApiConfig {
                 api_scheme: access.api_url.scheme().to_owned(),
@@ -217,7 +215,6 @@ mod tests {
             WebLibraryAccess {
                 api_key: "secret".to_owned(),
                 api_url: Url::parse("https://zotero.example.test/api/").unwrap(),
-                read_only: false,
                 streaming_url: Url::parse("wss://zotero.example.test/stream/").unwrap(),
             },
             "/settings/storage".to_owned(),
@@ -229,6 +226,5 @@ mod tests {
         assert!(config.contains(r#""apiPath":"api/""#));
         assert!(!config.contains("portalMode"));
         assert!(!config.contains("basePath"));
-        assert!(config.contains(r#""readOnly":false"#));
     }
 }

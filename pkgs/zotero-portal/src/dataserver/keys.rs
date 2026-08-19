@@ -9,7 +9,6 @@ impl Dataserver {
         Ok(WebLibraryAccess {
             api_key: self.web_library_api_key(user_id, session_handle).await?,
             api_url: self.config.dataserver_url.clone(),
-            read_only: false,
             streaming_url: self.config.stream_server_url.clone(),
         })
     }

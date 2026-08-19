@@ -24,7 +24,6 @@ pub struct Dataserver {
 pub struct WebLibraryAccess {
     pub api_key: String,
     pub api_url: url::Url,
-    pub read_only: bool,
     pub streaming_url: url::Url,
 }
 

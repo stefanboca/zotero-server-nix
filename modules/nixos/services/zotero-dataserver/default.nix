@@ -691,7 +691,7 @@ in {
 
               ${optionalString cfg.portal.enable ''
               handle {
-              reverse_proxy unix//run/zotero-portal/zotero-portal.sock
+                reverse_proxy unix//run/zotero-portal/zotero-portal.sock
               }
             ''}
             }

@@ -1,55 +1,5 @@
 @font-face {
   font-family: "AvenirNextLTPro";
-  font-weight: 600;
-  font-style: italic;
-  font-display: swap;
-  src:
-    url("/static/web-library/fonts/36AC02_0_0.woff2") format("woff2"),
-    url("/static/web-library/fonts/36AC02_0_0.woff") format("woff");
-}
-
-@font-face {
-  font-family: "AvenirNextLTPro";
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-  src:
-    url("/static/web-library/fonts/36AC02_1_0.woff2") format("woff2"),
-    url("/static/web-library/fonts/36AC02_1_0.woff") format("woff");
-}
-
-@font-face {
-  font-family: "AvenirNextLTPro";
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-  src:
-    url("/static/web-library/fonts/36AC02_2_0.woff2") format("woff2"),
-    url("/static/web-library/fonts/36AC02_2_0.woff") format("woff");
-}
-
-@font-face {
-  font-family: "AvenirNextLTPro";
-  font-weight: 300;
-  font-style: italic;
-  font-display: swap;
-  src:
-    url("/static/web-library/fonts/36AC02_3_0.woff2") format("woff2"),
-    url("/static/web-library/fonts/36AC02_3_0.woff") format("woff");
-}
-
-@font-face {
-  font-family: "AvenirNextLTPro";
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-  src:
-    url("/static/web-library/fonts/36AC02_4_0.woff2") format("woff2"),
-    url("/static/web-library/fonts/36AC02_4_0.woff") format("woff");
-}
-
-@font-face {
-  font-family: "AvenirNextLTPro";
   font-weight: 400;
   font-style: normal;
   font-display: swap;
