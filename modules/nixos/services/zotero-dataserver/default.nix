@@ -289,7 +289,7 @@
         "db" => $db,
         "user" => "zotero-dataserver",
         "pass" => "",
-        "charset" => "",
+        "charset" => "utf8mb4",
         "state" => "up",
       ];
     }
