@@ -10,7 +10,7 @@
   inherit (lib.modules) mkDefault mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
   inherit (lib.strings) concatMapStrings concatStringsSep hasPrefix optionalString removePrefix removeSuffix replaceStrings;
-  inherit (lib.types) attrsOf bool enum int lines listOf oneOf path port str submodule nullOr;
+  inherit (lib.types) attrsOf bool int lines listOf oneOf path port str submodule nullOr;
 
   json = pkgs.formats.json {};
   toml = pkgs.formats.toml {};
@@ -28,11 +28,6 @@
 
   portalLoggingEnvironment = {
     RUST_LOG = cfg.portal.logging.filter;
-    ZOTERO_PORTAL_LOG_FORMAT = cfg.portal.logging.format;
-    ZOTERO_PORTAL_LOG_ANSI =
-      if cfg.portal.logging.ansi
-      then "true"
-      else "false";
   };
 
   minimalOpenSearch = pkgs.opensearch.overrideAttrs (old: {
@@ -451,8 +446,6 @@ in {
       databaseMaxConnections = settingOption int 5 "Maximum MariaDB connections used by the login portal.";
       logging = {
         filter = settingOption str "zotero_portal=info,tower_http=info" "Tracing filter for the portal, using the RUST_LOG directive syntax.";
-        format = settingOption (enum ["journald" "compact" "json" "pretty"]) "journald" "Destination and format for portal tracing events.";
-        ansi = settingOption bool false "Whether portal tracing output contains ANSI terminal styling.";
       };
     };
 

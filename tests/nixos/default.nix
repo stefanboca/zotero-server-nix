@@ -38,8 +38,6 @@ in {
           clientSecretFile = oidcClientSecret;
           logging = {
             filter = "zotero_portal=debug,tower_http=info";
-            format = "journald";
-            ansi = false;
           };
         };
 
@@ -248,13 +246,10 @@ in {
           "systemctl show -P Environment zotero-portal.service"
       )
       assert "RUST_LOG=zotero_portal=debug,tower_http=info" in portal_environment
-      assert "ZOTERO_PORTAL_LOG_FORMAT=journald" in portal_environment
-      assert "ZOTERO_PORTAL_LOG_ANSI=false" in portal_environment
       migrate_environment = machine.succeed(
           "systemctl show -P Environment zotero-portal-migrate.service"
       )
       assert "RUST_LOG=zotero_portal=debug,tower_http=info" in migrate_environment
-      assert "ZOTERO_PORTAL_LOG_FORMAT=journald" in migrate_environment
 
       databases = machine.succeed(
           "mariadb --batch --skip-column-names "

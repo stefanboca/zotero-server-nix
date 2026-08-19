@@ -393,7 +393,7 @@ pub(crate) async fn confirm_button(label: &str, confirmation: &str, class: &str)
             class=(class)
             type="submit"
             data-confirm=(confirmation)
-            onclick="return window.confirm(this.dataset.confirm)"
+            @click="return window.confirm(this.dataset.confirm)"
         >
             (label)
         </button>

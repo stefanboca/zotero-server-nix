@@ -31,39 +31,18 @@ async fn main() -> anyhow::Result<()> {
 fn init_tracing() -> anyhow::Result<()> {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("zotero_portal=info,tower_http=info"));
-    let ansi = match env::var("ZOTERO_PORTAL_LOG_ANSI") {
-        Ok(value) if matches!(value.as_str(), "1" | "true") => true,
-        Ok(value) if matches!(value.as_str(), "0" | "false") => false,
-        Ok(value) => bail!("invalid ZOTERO_PORTAL_LOG_ANSI value: {value}"),
-        Err(env::VarError::NotPresent) => false,
-        Err(error) => return Err(error.into()),
-    };
-    let format = env::var("ZOTERO_PORTAL_LOG_FORMAT").unwrap_or_else(|_| "compact".to_owned());
-    match format.as_str() {
-        "journald" => tracing_subscriber::registry()
+    if env::var_os("JOURNAL_STREAM").is_some() {
+        tracing_subscriber::registry()
             .with(filter)
             .with(tracing_journald::layer()?)
             .try_init()
-            .map_err(|error| anyhow!("initializing tracing subscriber: {error}"))?,
-        "json" => tracing_subscriber::fmt()
+            .map_err(|error| anyhow!("initializing journald tracing: {error}"))?;
+    } else {
+        tracing_subscriber::fmt()
             .with_env_filter(filter)
-            .with_ansi(ansi)
-            .json()
-            .try_init()
-            .map_err(|error| anyhow!("initializing tracing subscriber: {error}"))?,
-        "pretty" => tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_ansi(ansi)
-            .pretty()
-            .try_init()
-            .map_err(|error| anyhow!("initializing tracing subscriber: {error}"))?,
-        "compact" => tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_ansi(ansi)
             .compact()
             .try_init()
-            .map_err(|error| anyhow!("initializing tracing subscriber: {error}"))?,
-        value => bail!("invalid ZOTERO_PORTAL_LOG_FORMAT value: {value}"),
+            .map_err(|error| anyhow!("initializing terminal tracing: {error}"))?;
     }
     Ok(())
 }
