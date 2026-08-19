@@ -1,5 +1,6 @@
 mod items;
 pub(super) mod library;
+mod library_path;
 
 pub(in crate::app) use items::personal_library_root;
 

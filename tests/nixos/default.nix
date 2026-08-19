@@ -585,6 +585,26 @@ in {
       assert 'id="zotero-web-library"' in personal_library, personal_library
       assert '"userSlug":"alice"' in personal_library, personal_library
 
+      collection_deep_link = machine.succeed(
+          "curl --silent --show-error --fail-with-body --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(
+              public_url + "/alice/collections/KLC7QV4L/collection"
+          )
+      )
+      assert 'id="zotero-web-library"' in collection_deep_link, collection_deep_link
+      assert '"userSlug":"alice"' in collection_deep_link, collection_deep_link
+
+      invalid_personal_library_status = machine.succeed(
+          "curl --silent --show-error --output /tmp/invalid-personal-library.html "
+          "--write-out='%{http_code}' --cookie "
+          + shlex.quote(cookie_file)
+          + " "
+          + shlex.quote(public_url + "/alice/not-a-web-library-route")
+      ).strip()
+      assert invalid_personal_library_status == "404", invalid_personal_library_status
+
       legacy_library_status = machine.succeed(
           "curl --silent --show-error --output /tmp/legacy-library.html "
           "--write-out='%{http_code}' --cookie "
@@ -1195,6 +1215,44 @@ in {
           "mariadb --batch --skip-column-names zotero_shard "
           "--execute='SELECT libraryType FROM shardLibraries WHERE libraryID = 1'"
       ).strip() == "user"
+
+      def post_sync_objects(object_type, objects):
+          response = json.loads(
+              machine.succeed(
+                  "curl --silent --show-error --fail-with-body "
+                  "--request POST --header 'Content-Type: application/json' "
+                  "--header 'Zotero-API-Version: 3' --header "
+                  + shlex.quote(f"Zotero-API-Key: {key['key']}")
+                  + " --data "
+                  + shlex.quote(json.dumps(objects))
+                  + " "
+                  + shlex.quote(f"{api_url}/users/1/{object_type}")
+              )
+          )
+          assert not response["failed"], response
+          assert response["successful"], response
+          return response
+
+      custom_collection_uri = public_url + "/groups/3/collections/IC9VBS74"
+      post_sync_objects(
+          "collections",
+          [{
+              "name": "Custom-base relation",
+              "parentCollection": False,
+              "relations": {"owl:sameAs": [custom_collection_uri]},
+          }],
+      )
+
+      item_template = json.loads(
+          machine.succeed(
+              "curl --silent --show-error --fail-with-body "
+              + shlex.quote(api_url + "/items/new?itemType=book")
+          )
+      )
+      custom_item_uri = public_url + "/users/1/items/ABCDEFGH"
+      item_template["title"] = "Custom-base relation"
+      item_template["relations"] = {"owl:sameAs": [custom_item_uri]}
+      post_sync_objects("items", [item_template])
 
       attachment_proxy = json.loads(
           machine.succeed(
