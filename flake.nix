@@ -38,9 +38,7 @@
     packages = forAllSystems (system: import ./pkgs nixpkgsFor.${system});
     overlays.default = _: import ./pkgs;
 
-    nixosModules = {
-      default = import ./modules/nixos;
-    };
+    nixosModules.default = import ./modules/nixos;
 
     apps = forAllSystems (system: {
       default = {

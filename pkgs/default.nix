@@ -1,18 +1,15 @@
-pkgs: let
-  topcoat-cli = pkgs.callPackage ./topcoat-cli {};
-  zotero-web-library = pkgs.callPackage ./zotero-web-library {};
-in {
+pkgs: {
   # keep-sorted start
-  inherit topcoat-cli zotero-web-library;
   oidc-provider-mock = pkgs.callPackage ./oidc-provider-mock {};
   versitygw = pkgs.callPackage ./versitygw {};
   zotero = pkgs.callPackage ./zotero {inherit (pkgs) zotero;};
   zotero-attachment-proxy = pkgs.callPackage ./zotero-attachment-proxy {};
   zotero-citeproc-js-server = pkgs.callPackage ./zotero-citeproc-js-server {};
   zotero-dataserver = pkgs.callPackage ./zotero-dataserver {};
-  zotero-portal = pkgs.callPackage ./zotero-portal {inherit topcoat-cli;};
+  zotero-portal = pkgs.callPackage ./zotero-portal {};
   zotero-stream-server = pkgs.callPackage ./zotero-stream-server {};
   zotero-tinymce-clean-server = pkgs.callPackage ./zotero-tinymce-clean-server {};
   zotero-translation-server = pkgs.callPackage ./zotero-translation-server {};
+  zotero-web-library = pkgs.callPackage ./zotero-web-library {};
   # keep-sorted end
 }
