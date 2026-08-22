@@ -1,4 +1,9 @@
-pkgs: {
+pkgs: let
+  versitygw = pkgs.versitygw.overrideAttrs (oldAttrs: {
+    patches = (oldAttrs.patches or []) ++ [./versitygw/0001-disable-multipart-pre-parser.patch];
+  });
+in {
+  inherit versitygw;
   # keep-sorted start
   oidc-provider-mock = pkgs.callPackage ./oidc-provider-mock {};
   zotero = pkgs.callPackage ./zotero {inherit (pkgs) zotero;};

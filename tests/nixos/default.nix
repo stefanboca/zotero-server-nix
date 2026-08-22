@@ -1,7 +1,21 @@
 {
-  module,
+  self,
   pkgs,
 }: let
+  inherit
+    (self.packages.${pkgs.stdenv.hostPlatform.system})
+    oidc-provider-mock
+    versitygw
+    zotero-attachment-proxy
+    zotero-citeproc-js-server
+    zotero-dataserver
+    zotero-portal
+    zotero-stream-server
+    zotero-tinymce-clean-server
+    zotero-translation-server
+    zotero-web-library
+    ;
+
   testCertificates = import "${pkgs.path}/nixos/tests/common/acme/server/snakeoil-certs.nix";
   testDomain = testCertificates.domain;
   testPython = pkgs.python3.withPackages (pythonPackages: [
@@ -15,8 +29,9 @@ in {
 
     nodes.machine = {
       imports = [
-        module
+        self.nixosModules.default
         (import ../../dev/oidc-provider-mock.nix {
+          inherit oidc-provider-mock;
           port = 19090;
         })
       ];
@@ -27,12 +42,11 @@ in {
 
       services.zotero-dataserver = {
         enable = true;
+        package = zotero-dataserver;
         virtualHost = testDomain;
 
-        attachment-proxy = {
-          settings.port = 13000;
-        };
         portal = {
+          package = zotero-portal;
           issuer = oidcIssuer;
           clientId = "zotero-test";
           clientSecretFile = oidcClientSecret;
@@ -40,11 +54,28 @@ in {
             filter = "zotero_portal=debug,tower_http=info";
           };
         };
+        web-library.package = zotero-web-library;
 
-        citeproc-js-server.settings.port = 18085;
-        stream-server.settings.httpPort = 18080;
-        tinymce-clean-server.settings.port = 16343;
-        translation-server.settings.port = 11969;
+        attachment-proxy = {
+          package = zotero-attachment-proxy;
+          settings.port = 13000;
+        };
+        citeproc-js-server = {
+          package = zotero-citeproc-js-server;
+          settings.port = 18085;
+        };
+        stream-server = {
+          package = zotero-stream-server;
+          settings.httpPort = 18080;
+        };
+        tinymce-clean-server = {
+          package = zotero-tinymce-clean-server;
+          settings.port = 16343;
+        };
+        translation-server = {
+          package = zotero-translation-server;
+          settings.port = 11969;
+        };
       };
 
       services = {
@@ -1638,7 +1669,7 @@ in {
     name = "versitygw";
 
     nodes.machine = {
-      imports = [module];
+      imports = [self.nixosModules.default];
 
       systemd.tmpfiles.rules = [
         "d /srv/versitygw-test 0750 versitygw versitygw -"
@@ -1646,6 +1677,7 @@ in {
 
       services.versitygw = {
         enable = true;
+        package = versitygw;
         dataDir = "/srv/versitygw-test";
         metadataSidecarDir = "/var/lib/versitygw-sidecar";
         disableOTmpfile = true;
