@@ -1,7 +1,6 @@
 pkgs: {
   # keep-sorted start
   oidc-provider-mock = pkgs.callPackage ./oidc-provider-mock {};
-  versitygw = pkgs.callPackage ./versitygw {};
   zotero = pkgs.callPackage ./zotero {inherit (pkgs) zotero;};
   zotero-attachment-proxy = pkgs.callPackage ./zotero-attachment-proxy {};
   zotero-citeproc-js-server = pkgs.callPackage ./zotero-citeproc-js-server {};
