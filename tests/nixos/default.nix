@@ -90,7 +90,10 @@ in {
         mysql.settings.mysqld.port = 13336;
         opensearch.settings."http.port" = 19200;
         redis.servers.zotero-dataserver.port = 16389;
-        versitygw.port = 11000;
+        versitygw = {
+          package = versitygw;
+          port = 11000;
+        };
       };
 
       systemd.services = {

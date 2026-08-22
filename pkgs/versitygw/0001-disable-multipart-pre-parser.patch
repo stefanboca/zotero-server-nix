@@ -30,7 +30,17 @@ index 1dd14b5..986a1e2 100644
  
  // MultipartParser parses S3 browser-based POST multipart/form-data in a streaming way.
  // It buffers regular form fields, but it does not buffer the file part.
-@@ -136,7 +139,7 @@ func (mp *MultipartParser) Parse() (*MpParseResult, error) {
+@@ -77,6 +80,8 @@ type MpParseResult struct {
+ 	// FileRdr streams the file payload without buffering the entire part in memory.
+ 	FileRdr MpFileReader
+-	// ContentLength is the expected byte length of the file payload only.
++	// ContentLength is an upper bound for the file payload. Any optional epilogue
++	// after the closing boundary is included because its size is unknown until
++	// FileRdr has been drained; FileRdr.Length() then reports the exact size.
+ 	ContentLength int64
+ }
+ 
+@@ -136,7 +141,7 @@ func (mp *MultipartParser) Parse() (*MpParseResult, error) {
  
  			fr := &finalFileReader{
  				r:       mp.br,
@@ -52,3 +62,31 @@ index 1dd14b5..986a1e2 100644
  type finalFileReader struct {
  	r *bufio.Reader
  	// trailer is the exact byte sequence that terminates the file part.
+diff --git a/s3api/utils/multipart_reader_test.go b/s3api/utils/multipart_reader_test.go
+index 4780d8d..cc9c067 100644
+--- a/s3api/utils/multipart_reader_test.go
++++ b/s3api/utils/multipart_reader_test.go
+@@ -140,8 +140,9 @@ func TestMultipartParserParseSuccess(t *testing.T) {
+ 	if got.Fields["x-amz-meta-color"] != "blue,green" {
+ 		t.Fatalf("unexpected merged metadata field: %q", got.Fields["x-amz-meta-color"])
+ 	}
+-	if got.ContentLength != int64(len("file-body-123")) {
+-		t.Fatalf("unexpected file content-length: got %d want %d", got.ContentLength, len("file-body-123"))
++	wantContentLengthUpperBound := int64(len("file-body-123\r\n"))
++	if got.ContentLength != wantContentLengthUpperBound {
++		t.Fatalf("unexpected file content-length upper bound: got %d want %d", got.ContentLength, wantContentLengthUpperBound)
+ 	}
+ 
+ 	fileData, err := io.ReadAll(got.FileRdr)
+@@ -207,8 +208,9 @@ func TestMultipartParserRecognizesFilenameOnlyFilePart(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatalf("parse: %v", err)
+ 	}
+-	if got.ContentLength != 3 {
+-		t.Fatalf("unexpected file content-length: got %d want 3", got.ContentLength)
++	wantContentLengthUpperBound := int64(len("xyz\r\n"))
++	if got.ContentLength != wantContentLengthUpperBound {
++		t.Fatalf("unexpected file content-length upper bound: got %d want %d", got.ContentLength, wantContentLengthUpperBound)
+ 	}
+ 
+ 	fileData, err := io.ReadAll(got.FileRdr)
