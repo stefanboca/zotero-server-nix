@@ -176,18 +176,55 @@ in {
       zotero_target_wants = machine.succeed(
           "systemctl show -P Wants zotero.target"
       ).split()
+      assert set(zotero_target_wants) == {
+          "zotero-dataserver-credentials.service",
+          "zotero-dataserver-schema.service",
+          "zotero-fulltext-index.service",
+          "zotero-portal-migrate.service",
+          "zotero-portal.service",
+          "zotero-attachment-proxy.service",
+          "zotero-citeproc-js-server.service",
+          "zotero-stream-server.service",
+          "zotero-tinymce-clean-server.service",
+          "zotero-translation-server.service",
+      }, zotero_target_wants
+
+      portal_wants = machine.succeed(
+          "systemctl show -P Wants zotero-portal.service"
+      ).split()
       for unit in [
           "mysql.service",
-          "opensearch.service",
-          "versitygw.service",
-          "zotero-fulltext-index.service",
-          "zotero-portal.service",
-          "phpfpm-zotero-dataserver.service",
-          "zotero-stream-server.service",
           "zotero-translation-server.service",
           "caddy.service",
+          "phpfpm-zotero-dataserver.service",
       ]:
-          assert unit in zotero_target_wants, (unit, zotero_target_wants)
+          assert unit in portal_wants, (unit, portal_wants)
+
+      phpfpm_wants = machine.succeed(
+          "systemctl show -P Wants phpfpm-zotero-dataserver.service"
+      ).split()
+      for unit in [
+          "zotero-dataserver-credentials.service",
+          "mysql.service",
+          "redis-zotero-dataserver.service",
+          "memcached.service",
+          "versitygw.service",
+          "zotero-attachment-proxy.service",
+          "zotero-citeproc-js-server.service",
+          "zotero-stream-server.service",
+          "zotero-tinymce-clean-server.service",
+          "zotero-translation-server.service",
+      ]:
+          assert unit in phpfpm_wants, (unit, phpfpm_wants)
+
+      phpfpm_requires = machine.succeed(
+          "systemctl show -P Requires phpfpm-zotero-dataserver.service"
+      ).split()
+      for unit in [
+          "opensearch.service",
+          "zotero-fulltext-index.service",
+      ]:
+          assert unit in phpfpm_requires, (unit, phpfpm_requires)
 
       for unit in [
           "zotero-dataserver-credentials.service",

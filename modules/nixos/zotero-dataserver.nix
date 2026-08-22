@@ -754,23 +754,16 @@ in {
       wants =
         [
           credentialUnit
-          "memcached.service"
-          "redis-zotero-dataserver.service"
-          "mysql.service"
-          "opensearch.service"
           "zotero-dataserver-schema.service"
           "zotero-fulltext-index.service"
-          "phpfpm-zotero-dataserver.service"
           "zotero-attachment-proxy.service"
           "zotero-citeproc-js-server.service"
           "zotero-stream-server.service"
           "zotero-tinymce-clean-server.service"
           "zotero-translation-server.service"
-          "caddy.service"
         ]
         ++ optional cfg.portal.enable "zotero-portal-migrate.service"
-        ++ optional cfg.portal.enable "zotero-portal.service"
-        ++ optional cfg.storage.manageBackend "versitygw.service";
+        ++ optional cfg.portal.enable "zotero-portal.service";
     };
 
     systemd.services = {
@@ -816,8 +809,24 @@ in {
       zotero-portal = mkIf cfg.portal.enable {
         description = "Zotero local web portal";
         wantedBy = ["multi-user.target"];
-        wants = [credentialUnit "zotero-portal-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
-        after = [credentialUnit "zotero-portal-migrate.service" "network-online.target" "caddy.service" "phpfpm-zotero-dataserver.service"];
+        wants = [
+          credentialUnit
+          "zotero-portal-migrate.service"
+          "zotero-translation-server.service"
+          "mysql.service"
+          "network-online.target"
+          "caddy.service"
+          "phpfpm-zotero-dataserver.service"
+        ];
+        after = [
+          credentialUnit
+          "zotero-portal-migrate.service"
+          "zotero-translation-server.service"
+          "mysql.service"
+          "network-online.target"
+          "caddy.service"
+          "phpfpm-zotero-dataserver.service"
+        ];
         environment = portalLoggingEnvironment;
         serviceConfig =
           restartAlways
@@ -837,16 +846,37 @@ in {
       };
 
       phpfpm-zotero-dataserver = {
-        wants = [
-          "zotero-dataserver-schema.service"
-          "zotero-attachment-proxy.service"
-          "zotero-citeproc-js-server.service"
-          "zotero-stream-server.service"
-          "zotero-tinymce-clean-server.service"
-          "zotero-translation-server.service"
-        ];
-        requires = ["zotero-fulltext-index.service"];
-        after = ["zotero-dataserver-schema.service" "zotero-fulltext-index.service"];
+        wants =
+          [
+            credentialUnit
+            "zotero-dataserver-schema.service"
+            "zotero-attachment-proxy.service"
+            "zotero-citeproc-js-server.service"
+            "zotero-stream-server.service"
+            "zotero-tinymce-clean-server.service"
+            "zotero-translation-server.service"
+            "mysql.service"
+            "redis-zotero-dataserver.service"
+            "memcached.service"
+          ]
+          ++ optional cfg.storage.manageBackend "versitygw.service";
+        requires = ["zotero-fulltext-index.service" "opensearch.service"];
+        after =
+          [
+            credentialUnit
+            "zotero-dataserver-schema.service"
+            "zotero-fulltext-index.service"
+            "zotero-attachment-proxy.service"
+            "zotero-citeproc-js-server.service"
+            "zotero-stream-server.service"
+            "zotero-tinymce-clean-server.service"
+            "zotero-translation-server.service"
+            "mysql.service"
+            "redis-zotero-dataserver.service"
+            "memcached.service"
+            "opensearch.service"
+          ]
+          ++ optional cfg.storage.manageBackend "versitygw.service";
         serviceConfig = {
           User = "zotero-dataserver";
           Group = "zotero-dataserver";
