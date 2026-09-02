@@ -27,6 +27,8 @@
     nixosModules.default = import ./modules/nixos;
 
     apps = forAllSystems (system: let
+      pkgs = nixpkgsFor.${system};
+      sqlxPrepare = import ./dev/sqlx-prepare.nix {inherit lib pkgs;};
       vm = lib.nixosSystem {
         inherit system;
         modules = [(import ./dev/vm.nix self)];
@@ -37,13 +39,18 @@
         program = getExe vm.config.system.build.vm;
         meta.description = "Run a development Zotero backend with a mock OIDC provider in a VM";
       };
+      sqlx-prepare = {
+        type = "app";
+        program = getExe sqlxPrepare;
+        meta.description = "Prepare SQLx metadata with a temporary MariaDB database";
+      };
     });
 
     devShells = forAllSystems (system: let
       pkgs = nixpkgsFor.${system};
     in {
       default = pkgs.mkShellNoCC {
-        packages = with pkgs; [sqlx-cli tailwindcss_4 topcoat-cli];
+        packages = with pkgs; [sqlx-cli sqruff tailwindcss_4 topcoat-cli];
         env.TAILWIND_CLI = getExe pkgs.tailwindcss_4;
       };
     });

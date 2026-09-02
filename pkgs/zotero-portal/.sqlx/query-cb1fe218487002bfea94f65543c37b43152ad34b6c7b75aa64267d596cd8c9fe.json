@@ -1,0 +1,82 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT\n    U.userID AS `user_id: UserId`,\n    U.username,\n    U.email,\n    UM.metaValue AS `real_name?`\nFROM JSON_TABLE(\n    ?, '$[*]' COLUMNS (userID INT UNSIGNED PATH '$')\n) AS IDs\n    INNER JOIN users AS U ON IDs.userID = U.userID\n    LEFT JOIN users_meta AS UM\n        ON U.userID = UM.userID AND UM.metaKey = 'profile_realname'\nORDER BY U.username\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id: UserId",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 10
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "userID"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "real_name?",
+        "type_info": {
+          "type": "Blob",
+          "flags": "BLOB | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 262140
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users_meta",
+            "name": "metaValue"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "cb1fe218487002bfea94f65543c37b43152ad34b6c7b75aa64267d596cd8c9fe"
+}

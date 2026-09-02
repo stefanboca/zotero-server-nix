@@ -1,0 +1,31 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT userID AS `user_id: UserId`\nFROM users\nWHERE userID = ?\nFOR UPDATE\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id: UserId",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 10
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "userID"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e99a71fa1574ecf2b4371e99b2f4a933affa5fc48461a825244616390b072e24"
+}

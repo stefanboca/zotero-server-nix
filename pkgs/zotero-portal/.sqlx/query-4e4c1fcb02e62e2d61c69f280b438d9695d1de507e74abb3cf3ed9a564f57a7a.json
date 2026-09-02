@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT IGNORE INTO users_meta (userID, metaKey, metaValue)\nVALUES (?, 'profile_realname', ?)\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4e4c1fcb02e62e2d61c69f280b438d9695d1de507e74abb3cf3ed9a564f57a7a"
+}

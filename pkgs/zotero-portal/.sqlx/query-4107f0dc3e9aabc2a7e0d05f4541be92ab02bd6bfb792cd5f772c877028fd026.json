@@ -1,0 +1,82 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT\n    U.userID AS `user_id: UserId`,\n    U.username,\n    U.email,\n    UM.metaValue AS `real_name?`\nFROM users AS U\n    LEFT JOIN users_meta AS UM\n        ON U.userID = UM.userID AND UM.metaKey = 'profile_realname'\nWHERE U.userID = ?\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id: UserId",
+        "type_info": {
+          "type": "Long",
+          "flags": "NOT_NULL | PRIMARY_KEY | UNSIGNED | AUTO_INCREMENT",
+          "collation": 63,
+          "max_size": 10
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "userID"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "username"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "email",
+        "type_info": {
+          "type": "VarString",
+          "flags": "NOT_NULL | UNIQUE_KEY | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 1020
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "real_name?",
+        "type_info": {
+          "type": "Blob",
+          "flags": "BLOB | NO_DEFAULT_VALUE",
+          "collation": 45,
+          "max_size": 262140
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users_meta",
+            "name": "metaValue"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "4107f0dc3e9aabc2a7e0d05f4541be92ab02bd6bfb792cd5f772c877028fd026"
+}

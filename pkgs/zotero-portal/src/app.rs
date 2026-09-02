@@ -15,6 +15,7 @@ use jiff::SignedDuration;
 use std::{os::unix::fs::PermissionsExt as _, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
+use base64::{Engine as _, prelude::BASE64_STANDARD};
 use topcoat::{
     Result,
     asset::{AssetBundle, RouterBuilderAssetExt},
@@ -40,7 +41,7 @@ use tracing::Level;
 
 use crate::{
     app::_web_library::WebLibrary,
-    config::{Config, Secrets},
+    config::Config,
     database::{self, Database},
     dataserver::Dataserver,
     id::UserId,
@@ -49,16 +50,14 @@ use crate::{
 
 pub(crate) const FLOW_LIFETIME: SignedDuration = SignedDuration::from_mins(15);
 
-pub async fn migrate(config: Arc<Config>) -> anyhow::Result<()> {
-    tracing::info!("running portal database migrations");
-    Database::new(config).await?;
-    tracing::info!("portal database migrations complete");
-    Ok(())
-}
-
-pub async fn serve(config: Arc<Config>, secrets: Secrets) -> anyhow::Result<()> {
-    let cookie_key = secrets.cookie_key();
-    let database = Database::new(config.clone()).await?;
+pub async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
+    let secrets = config.secrets()?;
+    let cookie_key = BASE64_STANDARD
+        .decode(secrets.portal_cookie_key.trim())
+        .context("decoding PORTAL_COOKIE_KEY")?;
+    let cookie_key = topcoat::cookie::Key::try_from(cookie_key.as_slice())
+        .context("PORTAL_COOKIE_KEY must decode to at least 64 bytes")?;
+    let database = Database::new(config.clone(), secrets.database_url.trim()).await?;
     let dataserver = Dataserver::new(config.clone(), secrets.dataserver_super_password)?;
     let oidc = Oidc::new(config.clone(), secrets.oidc_client_secret).await?;
     let router = routes()

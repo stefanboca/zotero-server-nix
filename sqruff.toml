@@ -1,0 +1,10 @@
+[sqruff.core]
+dialect = "mysql"
+exclude_rules = ["CP02", "LT01", "LT02", "RF01", "RF05"]
+rules = "all"
+
+[sqruff.indentation]
+indent_unit = "space"
+tab_space_size = 4
+indented_joins = true
+indented_ctes = true

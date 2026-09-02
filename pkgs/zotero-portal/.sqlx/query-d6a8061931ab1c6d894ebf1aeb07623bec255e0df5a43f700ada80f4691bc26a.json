@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO oidc_identities (issuer, subject, userID)\nVALUES (?, ?, NULL)\nON DUPLICATE KEY UPDATE subject = VALUES(subject)\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d6a8061931ab1c6d894ebf1aeb07623bec255e0df5a43f700ada80f4691bc26a"
+}

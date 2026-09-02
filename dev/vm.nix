@@ -74,10 +74,9 @@ in {
     '';
   };
 
-  systemd.services.zotero-dataserver-credentials.preStart = ''
-    install -d -m 0700 "$STATE_DIRECTORY/credentials"
-    printf '%s\n' development > "$STATE_DIRECTORY/credentials/dataserver-super-password"
-    chmod 0600 "$STATE_DIRECTORY/credentials/dataserver-super-password"
+  systemd.services.zotero-dataserver-provision.preStart = ''
+    printf '%s\n' development > "$STATE_DIRECTORY/DATASERVER_SUPER_PASSWORD"
+    chmod 0600 "$STATE_DIRECTORY/DATASERVER_SUPER_PASSWORD"
   '';
 
   virtualisation.vmVariant.virtualisation = {

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM browser_sessions\nWHERE tokenHash = ?\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "92e0c203f5cbc9e2ae245761c5fa8c7a2f0ca2035a0a238c348126ff236e6971"
+}

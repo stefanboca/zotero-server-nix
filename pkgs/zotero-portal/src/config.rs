@@ -1,21 +1,22 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{env, fs, path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use serde::Deserialize;
 use url::Url;
+
+secretspec_derive::declare_secrets!("secretspec.toml");
 
 const DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(skip, default = "production_profile")]
+    profile: Profile,
     #[serde(default = "default_browser_session_lifetime_seconds")]
     pub browser_session_lifetime_seconds: u64,
     pub server_address: Url,
+    #[serde(default)]
     pub database: DatabaseConfig,
     pub oidc: OidcConfig,
     pub dataserver_url: Url,
@@ -23,14 +24,13 @@ pub struct Config {
     pub translation_server_url: Url,
 }
 
-pub struct Secrets {
-    pub(crate) oidc_client_secret: String,
-    pub(crate) dataserver_super_password: String,
-    cookie_key: String,
-}
-
 impl Config {
-    pub fn from_file(path: &Path) -> anyhow::Result<Arc<Self>> {
+    pub fn new(path: Option<&Path>) -> anyhow::Result<Arc<Self>> {
+        if cfg!(debug_assertions) && env::var_os("TOPCOAT_DEV_URL").is_some() {
+            return Ok(Self::development());
+        }
+
+        let path = path.context("--config is required outside development mode")?;
         let contents = fs::read_to_string(path)
             .with_context(|| format!("reading configuration {}", path.display()))?;
         toml::from_str(&contents)
@@ -38,15 +38,12 @@ impl Config {
             .context("decoding TOML configuration")
     }
 
-    pub fn dev() -> Arc<Self> {
+    fn development() -> Arc<Self> {
         Arc::new(Self {
+            profile: Profile::Development,
             browser_session_lifetime_seconds: DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS,
             server_address: Url::parse("http://127.0.0.1:3000").unwrap(),
-            database: DatabaseConfig {
-                url: Url::parse("mysql://development:development@localhost:3306/zotero_www")
-                    .unwrap(),
-                max_connections: 5,
-            },
+            database: DatabaseConfig { max_connections: 5 },
             oidc: OidcConfig {
                 issuer: "http://localhost:9091".into(),
                 client_id: "zotero".into(),
@@ -58,35 +55,30 @@ impl Config {
             translation_server_url: Url::parse("http://localhost:1969").unwrap(),
         })
     }
-}
 
-impl Secrets {
-    pub fn from_systemd() -> anyhow::Result<Self> {
-        Ok(Self {
-            oidc_client_secret: read_credential("oidc-client-secret")?,
-            dataserver_super_password: read_credential("dataserver-super-password")?,
-            cookie_key: read_credential("portal-cookie-key")?,
-        })
-    }
-
-    pub fn dev() -> Self {
-        Self {
-            oidc_client_secret: "development".into(),
-            dataserver_super_password: "development".into(),
-            cookie_key: "development-development-development".into(),
-        }
-    }
-
-    pub(crate) fn cookie_key(&self) -> topcoat::cookie::Key {
-        topcoat::cookie::Key::derive_from(self.cookie_key.as_bytes())
+    pub fn secrets(&self) -> anyhow::Result<SecretSpec> {
+        Ok(SecretSpec::builder()
+            .with_profile(self.profile)
+            .with_reason("start zotero-portal")
+            .load()
+            .context("resolving Zotero service secrets")?
+            .secrets)
     }
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DatabaseConfig {
-    pub url: Url,
+    #[serde(default = "default_database_max_connections")]
     pub max_connections: u32,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: default_database_max_connections(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -95,6 +87,7 @@ pub struct OidcConfig {
     pub issuer: String,
     pub client_id: String,
     pub redirect_url: Url,
+    #[serde(default = "default_require_verified_email")]
     pub require_verified_email: bool,
 }
 
@@ -102,10 +95,14 @@ fn default_browser_session_lifetime_seconds() -> u64 {
     DEFAULT_BROWSER_SESSION_LIFETIME_SECONDS
 }
 
-fn read_credential(name: &str) -> anyhow::Result<String> {
-    let directory =
-        std::env::var("CREDENTIALS_DIRECTORY").context("CREDENTIALS_DIRECTORY is required")?;
-    let value = fs::read_to_string(PathBuf::from(directory).join(name))
-        .with_context(|| format!("reading credential {name}"))?;
-    Ok(value.trim().to_owned())
+fn production_profile() -> Profile {
+    Profile::Production
+}
+
+fn default_database_max_connections() -> u32 {
+    5
+}
+
+fn default_require_verified_email() -> bool {
+    true
 }

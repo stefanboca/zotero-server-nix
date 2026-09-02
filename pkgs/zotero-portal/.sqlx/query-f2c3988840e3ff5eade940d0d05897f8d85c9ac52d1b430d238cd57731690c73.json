@@ -1,0 +1,65 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT\n    OI.userID AS `user_id?: UserId`,\n    U.role AS `role?`,\n    GU.Banned AS `banned?`\nFROM oidc_identities AS OI\n    LEFT JOIN users AS U ON OI.userID = U.userID\n    LEFT JOIN GDN_User AS GU ON OI.userID = GU.UserID\nWHERE OI.issuer = ? AND OI.subject = ?\nFOR UPDATE\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id?: UserId",
+        "type_info": {
+          "type": "Long",
+          "flags": "UNIQUE_KEY | UNSIGNED",
+          "collation": 63,
+          "max_size": 10
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.oidc_identities",
+            "name": "userID"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "role?",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 128
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.users",
+            "name": "role"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "banned?",
+        "type_info": {
+          "type": "Tiny",
+          "flags": "UNSIGNED",
+          "collation": 63,
+          "max_size": 3
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.GDN_User",
+            "name": "Banned"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "f2c3988840e3ff5eade940d0d05897f8d85c9ac52d1b430d238cd57731690c73"
+}

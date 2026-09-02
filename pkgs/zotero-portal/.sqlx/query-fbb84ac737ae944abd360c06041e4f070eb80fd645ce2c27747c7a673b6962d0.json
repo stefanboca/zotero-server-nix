@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO GDN_User (UserID, Banned)\nVALUES (?, 0)\nON DUPLICATE KEY UPDATE UserID = VALUES(UserID)\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "fbb84ac737ae944abd360c06041e4f070eb80fd645ce2c27747c7a673b6962d0"
+}

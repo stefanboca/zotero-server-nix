@@ -23,9 +23,10 @@ The module starts these services:
 - tinymce-clean-server
 - Caddy
 
-The module creates the required databases, S3 buckets, and internal secrets.
-It stores each generated secret in a separate file in the systemd state
-directory. You do not need to set internal service secrets.
+The module creates the required databases and S3 buckets. The provision service
+uses SecretSpec. It generates internal secrets in the systemd state directory.
+It also applies the portal migrations. You do not have to set internal service
+secrets.
 
 The module replaces Zotero's AWS full-text indexing pipeline with synchronous
 indexing into a local OpenSearch service. Existing full-text objects in
@@ -54,12 +55,11 @@ Run the backend dependencies and a mock OIDC provider with QEMU:
 nix run
 ```
 
-The VM persists its state in `nixos.qcow2` in the current directory. It does
-not build, migrate, install, or run `zotero-portal`; run the portal on the host
-on port `3000`. Caddy in the VM reaches it through QEMU's host gateway and
-proxies it as part of the unified development origin. The development VM sets
-`portal.enable = false`, while the module default remains `true` for normal
-deployments.
+The VM keeps its state in `nixos.qcow2` in the current directory. The VM does
+not run `zotero-portal`. Run the portal on the host on port `3000`. Caddy uses
+the QEMU host gateway to connect to the portal. Thus, all services use one
+development origin. The development VM sets `portal.enable = false`. The
+module sets this option to `true` by default.
 
 | Service | Host endpoint |
 | --- | --- |
@@ -72,12 +72,12 @@ deployments.
 | MariaDB | `127.0.0.1:3306` |
 | Mock OIDC issuer | `http://localhost:9091` |
 
-Configure the host portal to listen on `127.0.0.1:3000`, with
+Configure the host portal to listen on `127.0.0.1:3000`. Use
 `http://localhost:8080` as its public origin. Caddy serves the packaged web
-library assets itself and proxies all remaining portal requests to
-`http://10.0.2.2:3000`. The mock provider accepts the resulting callback URI,
-`http://localhost:8080/auth/oidc/callback`. Run the portal's database migration
-from the host; the VM intentionally does not run it.
+library assets. Caddy sends all other portal requests to
+`http://10.0.2.2:3000`. The mock provider accepts this callback URI:
+`http://localhost:8080/auth/oidc/callback`. Run the portal database migrations
+from the host. The VM does not run these migrations.
 
 The Dataserver superuser is `zotero-portal` with password `development`. The
 host portal uses this account when calling the Dataserver API.
@@ -96,29 +96,41 @@ databases. For example:
 mariadb --host=127.0.0.1 --port=3306 --user=development --password=development zotero_www
 ```
 
-The portal uses SQLx checked query macros. `pkgs/zotero-portal/.env` points
-normal Cargo builds and SQLx CLI commands at the VM's `zotero_www` database.
-After starting a fresh VM or changing a migration, apply the migrations before
-building the portal; the SQLx CLI does not need to compile the application:
+The portal uses checked SQLx query files. These files are in
+`pkgs/zotero-portal/queries/<group>/<query>.sql`.
+
+The `pkgs/zotero-portal/.env` file connects SQLx to the development VM. After
+you start a new VM, apply the migrations:
 
 ```console
+cd pkgs/zotero-portal
 cargo sqlx migrate run
 ```
 
-Nix builds set `SQLX_OFFLINE` and use the committed metadata in
-`pkgs/zotero-portal/.sqlx`; `.env` is excluded from their source. After changing
-a query, refresh the metadata while the VM is running:
+Nix builds use the SQLx metadata in `pkgs/zotero-portal/.sqlx`. A changed query
+needs new metadata. Run this command from the repository root:
 
 ```console
-cargo sqlx prepare -- --all-targets
+nix run .#sqlx-prepare
 ```
+
+This app does these steps:
+
+1. It starts a temporary MariaDB server.
+2. It creates an empty `zotero_www` database.
+3. It applies the repository migrations.
+4. It runs `cargo sqlx prepare`.
+5. It stops MariaDB and removes all temporary database files.
+
+The app does not depend on the `zotero-portal` Nix package. Thus, old SQLx
+metadata cannot prevent the app from starting the database.
 
 The Dataserver, OIDC issuer, and OIDC callback intentionally use plain HTTP.
 No development certificate or custom trust configuration is required.
 
 Shut down the guest with `sudo poweroff` and wait for QEMU to exit. Do not use
-QEMU's `Ctrl-a x` shortcut for routine shutdown: it terminates the VM immediately
-and can corrupt Dataserver's MyISAM ID-allocation tables.
+the QEMU `Ctrl-a x` shortcut for a routine shutdown. This shortcut stops the VM
+immediately. It can corrupt the Dataserver MyISAM ID-allocation tables.
 
 The VM console automatically logs in as `nixos`. Its password is also `nixos`,
 and it can run `sudo` without a password. These development credentials are
@@ -177,18 +189,27 @@ systemctl start zotero.target
 
 ## OIDC login
 
-Configure the always-enabled local portal:
+Configure the local portal:
 
 ```nix
 services.zotero-dataserver.portal = {
-  issuer = "https://auth.example.com";
-  clientId = "zotero";
   clientSecretFile = config.sops.secrets.zotero-oidc-client-secret.path;
+  config.oidc = {
+    issuer = "https://auth.example.com";
+    client_id = "zotero";
+  };
 };
 ```
 
 The callback URI is `https://zotero.example.com/auth/oidc/callback`. It must use
 HTTPS because the portal uses a secure `__Host-session` cookie.
+
+The module supplies the local MariaDB URL in the SecretSpec `DATABASE_URL`
+systemd credential. For an external database, set `portal.database.urlFile`.
+This option must point to a runtime secret file that contains the connection
+URL. The `zotero-dataserver-provision` unit reads this credential. It generates
+the other SecretSpec secrets and applies the migrations. The portal starts
+after the provision unit is complete.
 
 The portal uses OIDC discovery, Authorization Code flow, PKCE S256, state, and
 nonce checks. It creates a Zotero user after the first successful login. It
@@ -199,9 +220,8 @@ After a successful login, the portal retains a durable browser authentication
 session for 30 days by default. A returning authenticated browser skips OIDC;
 it goes directly to the requested portal page, or directly completes a pending
 Zotero desktop login. Set
-`portal.browserSessionLifetimeSeconds` to override the lifetime. The NixOS option
-is `null` by default, so the generated configuration leaves the service's
-30-day application default in effect.
+`portal.config.browser_session_lifetime_seconds` to override the lifetime. It
+is omitted by default so the service's 30-day application default applies.
 
 The database stores only a hash of the browser session token, its Zotero user
 binding, and its expiry. The transient OIDC state, nonce, PKCE verifier, and
@@ -280,8 +300,8 @@ identity_providers:
 
 Authelia must supply `email`, `email_verified`, `preferred_username`, and
 `name`. The portal rejects an unverified email by default. Set
-`portal.requireVerifiedEmail = false` only if the provider cannot supply the
-verification claim.
+`portal.config.oidc.require_verified_email = false` only if the provider cannot
+supply the verification claim.
 
 See the [Authelia client
 reference](https://www.authelia.com/configuration/identity-providers/openid-connect/clients/)
@@ -303,12 +323,11 @@ Use this flake's overlay to build a client that uses the private server:
 }
 ```
 
-`baseUri` is required. By default, the package uses it for canonical object and
-website URLs, adds `/api/` for the API URL, and changes `https` to `wss` while
-adding `/stream/` for the stream URL. You can override `apiBaseUri`,
-`wwwBaseUrl`, `domainName`, or `streamingUrl` if the deployment uses different
-URLs. Dataserver is exposed only below `/api/`; other paths go to the web
-portal when authentication is enabled.
+`baseUri` is required. By default, the package uses it for object URLs and
+website URLs. The package adds `/api/` for the API URL. For the stream URL, it
+changes `https` to `wss` and adds `/stream/`. You can override `apiBaseUri`,
+`wwwBaseUrl`, `domainName`, or `streamingUrl`. Dataserver is available only
+below `/api/`. Other paths go to the web portal when authentication is enabled.
 
 The configured package also makes Zotero load the configured application
 archive instead of the upstream archive reached through Nix store symlinks.

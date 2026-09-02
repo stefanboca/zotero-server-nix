@@ -9,11 +9,13 @@ mod database;
 mod dataserver;
 mod id;
 mod oidc;
+mod provision;
 
 use std::fmt::Write as _;
 
-pub use app::{migrate, serve};
-pub use config::{Config, Secrets};
+pub use app::serve;
+pub use config::Config;
+pub use provision::provision;
 
 fn hex_string(bytes: &[u8]) -> String {
     let mut encoded = String::with_capacity(bytes.len() * 2);

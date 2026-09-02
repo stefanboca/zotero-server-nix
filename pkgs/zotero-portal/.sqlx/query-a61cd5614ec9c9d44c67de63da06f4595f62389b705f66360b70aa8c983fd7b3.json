@@ -1,0 +1,67 @@
+{
+  "db_name": "MySQL",
+  "query": "SELECT\n    userAgent AS `user_agent?`,\n    LOWER(HEX(tokenHash)) AS `handle!`,\n    DATE_FORMAT(lastSeenAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `last_seen_at!`,\n    DATE_FORMAT(expiresAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `expires_at!`\nFROM browser_sessions\nWHERE userID = ?\nORDER BY lastSeenAt DESC\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_agent?",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 2048
+        },
+        "origin": {
+          "Table": {
+            "table": "zotero_www.browser_sessions",
+            "name": "userAgent"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "handle!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 256
+        },
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "last_seen_at!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 128
+        },
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "expires_at!",
+        "type_info": {
+          "type": "VarString",
+          "flags": "",
+          "collation": 45,
+          "max_size": 128
+        },
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "a61cd5614ec9c9d44c67de63da06f4595f62389b705f66360b70aa8c983fd7b3"
+}

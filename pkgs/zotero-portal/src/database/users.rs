@@ -9,20 +9,16 @@ impl UserSummary {
 impl Database {
     pub async fn provision_user(&self, profile: &OidcProfile) -> anyhow::Result<Option<UserId>> {
         let mut transaction = self.db.begin().await?;
-        sqlx::query!(
-            "INSERT INTO oidc_identities (issuer, subject, userID) VALUES (?, ?, NULL) ON DUPLICATE KEY UPDATE subject = VALUES(subject)",
+        sqlx::query_file!(
+            "queries/user/upsert_oidc_identity.sql",
             profile.issuer,
             profile.subject
         )
         .execute(&mut *transaction)
         .await?;
 
-        let row = sqlx::query!(
-            "SELECT OI.userID AS `user_id?: UserId`, U.role AS `role?`, GU.Banned AS `banned?` \
-             FROM oidc_identities OI \
-             LEFT JOIN users U ON U.userID = OI.userID \
-             LEFT JOIN GDN_User GU ON GU.UserID = OI.userID \
-             WHERE OI.issuer = ? AND OI.subject = ? FOR UPDATE",
+        let row = sqlx::query_file!(
+            "queries/user/lock_oidc_identity.sql",
             profile.issuer,
             profile.subject
         )
@@ -37,13 +33,9 @@ impl Database {
             if role == "deleted" || banned != 0 {
                 return Ok(None);
             }
-            sqlx::query!(
-                "UPDATE users SET email = ? WHERE userID = ?",
-                profile.email,
-                user_id
-            )
-            .execute(&mut *transaction)
-            .await?;
+            sqlx::query_file!("queries/user/update_email.sql", profile.email, user_id)
+                .execute(&mut *transaction)
+                .await?;
             user_id
         } else {
             let requested_username = profile
@@ -58,8 +50,8 @@ impl Database {
                 &profile.email,
             )
             .await?;
-            sqlx::query!(
-                "UPDATE oidc_identities SET userID = ? WHERE issuer = ? AND subject = ?",
+            sqlx::query_file!(
+                "queries/user/connect_oidc_identity.sql",
                 user_id,
                 profile.issuer,
                 profile.subject
@@ -69,21 +61,18 @@ impl Database {
             user_id
         };
 
-        sqlx::query!("DELETE FROM users_email WHERE userID = ?", user_id)
+        sqlx::query_file!("queries/user/delete_emails.sql", user_id)
             .execute(&mut *transaction)
             .await?;
-        sqlx::query!(
-            "INSERT INTO users_email (userID, email, validated) VALUES (?, ?, ?)",
+        sqlx::query_file!(
+            "queries/user/insert_email.sql",
             user_id,
             profile.email,
             profile.email_verified
         )
         .execute(&mut *transaction)
         .await?;
-        sqlx::query!(
-            "INSERT INTO GDN_User (UserID, Banned) VALUES (?, 0) ON DUPLICATE KEY UPDATE UserID = VALUES(UserID)",
-            user_id
-        )
+        sqlx::query_file!("queries/user/ensure_gdn_user.sql", user_id)
             .execute(&mut *transaction)
             .await?;
         if let Some(real_name) = profile
@@ -91,30 +80,18 @@ impl Database {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
-            sqlx::query!(
-                "INSERT IGNORE INTO users_meta (userID, metaKey, metaValue) \
-                 VALUES (?, 'profile_realname', ?)",
-                user_id,
-                real_name
-            )
-            .execute(&mut *transaction)
-            .await?;
+            sqlx::query_file!("queries/user/insert_real_name.sql", user_id, real_name)
+                .execute(&mut *transaction)
+                .await?;
         }
         transaction.commit().await?;
         Ok(Some(user_id))
     }
 
     pub async fn user_by_id(&self, user_id: UserId) -> anyhow::Result<Option<UserSummary>> {
-        let row = sqlx::query_as!(
-            UserSummary,
-            "SELECT U.userID AS `user_id: UserId`, U.username, U.email, UM.metaValue AS `real_name?` \
-             FROM users U \
-             LEFT JOIN users_meta UM ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' \
-             WHERE U.userID = ?",
-            user_id
-        )
-        .fetch_optional(&self.db)
-        .await?;
+        let row = sqlx::query_file_as!(UserSummary, "queries/user/by_id.sql", user_id)
+            .fetch_optional(&self.db)
+            .await?;
         Ok(row)
     }
 
@@ -124,17 +101,9 @@ impl Database {
         }
 
         let user_ids = serde_json::to_string(user_ids)?;
-        let rows = sqlx::query_as!(
-            UserSummary,
-            "SELECT U.userID AS `user_id: UserId`, U.username, U.email, UM.metaValue AS `real_name?` \
-             FROM JSON_TABLE(?, '$[*]' COLUMNS (userID INT UNSIGNED PATH '$')) IDs \
-             JOIN users U ON U.userID = IDs.userID \
-             LEFT JOIN users_meta UM ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' \
-             ORDER BY U.username",
-            user_ids
-        )
-        .fetch_all(&self.db)
-        .await?;
+        let rows = sqlx::query_file_as!(UserSummary, "queries/user/by_ids.sql", user_ids)
+            .fetch_all(&self.db)
+            .await?;
         Ok(rows)
     }
 
@@ -142,15 +111,9 @@ impl Database {
         &self,
         identifier: &str,
     ) -> anyhow::Result<Option<UserSummary>> {
-        let row = sqlx::query_as!(
+        let row = sqlx::query_file_as!(
             UserSummary,
-            "SELECT U.userID AS `user_id: UserId`, U.username, U.email, UM.metaValue AS `real_name?` \
-             FROM users U \
-             LEFT JOIN users_meta UM ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' \
-             LEFT JOIN GDN_User GU ON GU.UserID = U.userID \
-             WHERE (U.username = ? OR U.email = ?) \
-             AND U.role <> 'deleted' AND COALESCE(GU.Banned, 0) = 0 \
-             AND EXISTS (SELECT 1 FROM oidc_identities OI WHERE OI.userID = U.userID)",
+            "queries/user/by_identifier.sql",
             identifier,
             identifier
         )
@@ -183,13 +146,9 @@ async fn insert_user(
             base.chars().take(prefix_length).collect::<String>(),
             suffix
         );
-        match sqlx::query!(
-            "INSERT INTO users (username, password, email) VALUES (?, '!oidc-only!', ?)",
-            username,
-            email
-        )
-        .execute(&mut **transaction)
-        .await
+        match sqlx::query_file!("queries/user/insert.sql", username, email)
+            .execute(&mut **transaction)
+            .await
         {
             Ok(result) => {
                 return UserId::try_from(result.last_insert_id())

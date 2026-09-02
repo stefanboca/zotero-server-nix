@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM browser_sessions\nWHERE expiresAt <= CURRENT_TIMESTAMP(6)\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "3bdea54cf2b7b238aa6a0dbda0939545dd936203b157a1916d89a5d1d2aa3c81"
+}

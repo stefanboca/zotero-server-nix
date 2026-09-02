@@ -16,9 +16,8 @@ impl Database {
         inviter_id: UserId,
         invitee_id: UserId,
     ) -> anyhow::Result<bool> {
-        let result = sqlx::query!(
-            "INSERT IGNORE INTO group_invitations \
-             (groupID, inviterUserID, inviteeUserID) VALUES (?, ?, ?)",
+        let result = sqlx::query_file!(
+            "queries/invitation/insert.sql",
             group_id,
             inviter_id,
             invitee_id,
@@ -33,17 +32,9 @@ impl Database {
         group_id: u64,
         invitee_id: UserId,
     ) -> anyhow::Result<Option<GroupInvitation>> {
-        let row = sqlx::query_as!(
+        let row = sqlx::query_file_as!(
             GroupInvitationRow,
-            "SELECT GI.groupID AS `group_id!: u64`, \
-             GI.inviteeUserID AS `invitee_user_id: UserId`, \
-             U.username, U.email, UM.metaValue AS `real_name?`, \
-             DATE_FORMAT(GI.invitedAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `invited_at!` \
-             FROM group_invitations GI \
-             JOIN users U ON U.userID = GI.inviteeUserID \
-             LEFT JOIN users_meta UM \
-               ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' \
-             WHERE GI.groupID = ? AND GI.inviteeUserID = ?",
+            "queries/invitation/by_group_and_user.sql",
             group_id,
             invitee_id,
         )
@@ -53,17 +44,9 @@ impl Database {
     }
 
     pub async fn group_invitations(&self, group_id: u64) -> anyhow::Result<Vec<GroupInvitation>> {
-        let rows = sqlx::query_as!(
+        let rows = sqlx::query_file_as!(
             GroupInvitationRow,
-            "SELECT GI.groupID AS `group_id!: u64`, \
-             GI.inviteeUserID AS `invitee_user_id: UserId`, \
-             U.username, U.email, UM.metaValue AS `real_name?`, \
-             DATE_FORMAT(GI.invitedAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `invited_at!` \
-             FROM group_invitations GI \
-             JOIN users U ON U.userID = GI.inviteeUserID \
-             LEFT JOIN users_meta UM \
-               ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' \
-             WHERE GI.groupID = ? ORDER BY GI.invitedAt, GI.inviteeUserID",
+            "queries/invitation/by_group.sql",
             group_id,
         )
         .fetch_all(&self.db)
@@ -75,17 +58,9 @@ impl Database {
         &self,
         invitee_id: UserId,
     ) -> anyhow::Result<Vec<GroupInvitation>> {
-        let rows = sqlx::query_as!(
+        let rows = sqlx::query_file_as!(
             GroupInvitationRow,
-            "SELECT GI.groupID AS `group_id!: u64`, \
-             GI.inviteeUserID AS `invitee_user_id: UserId`, \
-             U.username, U.email, UM.metaValue AS `real_name?`, \
-             DATE_FORMAT(GI.invitedAt, '%Y-%m-%dT%H:%i:%s.%fZ') AS `invited_at!` \
-             FROM group_invitations GI \
-             JOIN users U ON U.userID = GI.inviteeUserID \
-             LEFT JOIN users_meta UM \
-               ON UM.userID = U.userID AND UM.metaKey = 'profile_realname' \
-             WHERE GI.inviteeUserID = ? ORDER BY GI.invitedAt, GI.groupID",
+            "queries/invitation/by_user.sql",
             invitee_id,
         )
         .fetch_all(&self.db)
@@ -98,18 +73,14 @@ impl Database {
         group_id: u64,
         invitee_id: UserId,
     ) -> anyhow::Result<bool> {
-        let result = sqlx::query!(
-            "DELETE FROM group_invitations WHERE groupID = ? AND inviteeUserID = ?",
-            group_id,
-            invitee_id,
-        )
-        .execute(&self.db)
-        .await?;
+        let result = sqlx::query_file!("queries/invitation/delete.sql", group_id, invitee_id,)
+            .execute(&self.db)
+            .await?;
         Ok(result.rows_affected() == 1)
     }
 
     pub async fn delete_group_invitations(&self, group_id: u64) -> anyhow::Result<()> {
-        sqlx::query!("DELETE FROM group_invitations WHERE groupID = ?", group_id,)
+        sqlx::query_file!("queries/invitation/delete_for_group.sql", group_id,)
             .execute(&self.db)
             .await?;
         Ok(())

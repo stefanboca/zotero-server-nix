@@ -19,6 +19,8 @@ in
         (fileFilter (file: hasPrefix "Cargo" file.name) ./.)
         ./.sqlx
         ./migrations
+        ./queries
+        ./secretspec.toml
       ];
     };
 
@@ -49,6 +51,7 @@ in
       runHook preInstall
       install -Dm755 target/release/zotero-portal $out/bin/zotero-portal
       cp -r target/release/assets $out/bin/assets
+      install -Dm644 secretspec.toml $out/share/zotero-portal/secretspec.toml
       runHook postInstall
     '';
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM users_email\nWHERE userID = ?\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "4eaba2b34501aa083d4b3c66e4e3e0fae56b79fd81a5434fb359f5ab7677abcb"
+}

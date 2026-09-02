@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE oidc_identities SET userID = ? WHERE issuer = ? AND subject = ?\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "4caa85987d9295001522709e91ca8e41a406d2927449028fa8406aa79307db9f"
+}

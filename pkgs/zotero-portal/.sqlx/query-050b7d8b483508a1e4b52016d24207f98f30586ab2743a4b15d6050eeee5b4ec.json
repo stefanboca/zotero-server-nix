@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "DELETE FROM group_invitations\nWHERE groupID = ?\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "050b7d8b483508a1e4b52016d24207f98f30586ab2743a4b15d6050eeee5b4ec"
+}

@@ -21,7 +21,7 @@
   testPython = pkgs.python3.withPackages (pythonPackages: [
     pythonPackages.websocket-client
   ]);
-  oidcClientSecret = pkgs.writeText "oidc-client-secret" "development";
+  oidcClientSecret = pkgs.writeText "OIDC_CLIENT_SECRET" "development";
   oidcIssuer = "http://127.0.0.1:19090";
 in {
   nixos-dataserver = pkgs.testers.runNixOSTest {
@@ -47,9 +47,11 @@ in {
 
         portal = {
           package = zotero-portal;
-          issuer = oidcIssuer;
-          clientId = "zotero-test";
           clientSecretFile = oidcClientSecret;
+          config.oidc = {
+            issuer = oidcIssuer;
+            client_id = "zotero-test";
+          };
           logging = {
             filter = "zotero_portal=debug,tower_http=info";
           };
@@ -129,14 +131,13 @@ in {
 
       for unit in [
           "zotero.target",
-          "zotero-dataserver-credentials.service",
+          "zotero-dataserver-provision.service",
           "memcached.service",
           "redis-zotero-dataserver.service",
           "mysql.service",
           "opensearch.service",
           "versitygw.service",
           "oidc-provider-mock.service",
-          "zotero-portal-migrate.service",
           "zotero-fulltext-index.service",
           "zotero-portal.service",
           "phpfpm-zotero-dataserver.service",
@@ -211,10 +212,9 @@ in {
           "systemctl show -P Wants zotero.target"
       ).split()
       assert set(zotero_target_wants) == {
-          "zotero-dataserver-credentials.service",
+          "zotero-dataserver-provision.service",
           "zotero-dataserver-schema.service",
           "zotero-fulltext-index.service",
-          "zotero-portal-migrate.service",
           "zotero-portal.service",
           "zotero-attachment-proxy.service",
           "zotero-citeproc-js-server.service",
@@ -238,7 +238,7 @@ in {
           "systemctl show -P Wants phpfpm-zotero-dataserver.service"
       ).split()
       for unit in [
-          "zotero-dataserver-credentials.service",
+          "zotero-dataserver-provision.service",
           "mysql.service",
           "redis-zotero-dataserver.service",
           "memcached.service",
@@ -261,8 +261,7 @@ in {
           assert unit in phpfpm_requires, (unit, phpfpm_requires)
 
       for unit in [
-          "zotero-dataserver-credentials.service",
-          "zotero-portal-migrate.service",
+          "zotero-dataserver-provision.service",
           "zotero-dataserver-schema.service",
           "zotero-fulltext-index.service",
       ]:
@@ -296,18 +295,12 @@ in {
       portal_config = tomllib.loads(
           machine.succeed("cat /etc/zotero-dataserver/portal.toml")
       )
-      assert "browser_session_lifetime_seconds" not in portal_config
       assert portal_config == {
           "server_address": "unix:///run/zotero-portal/zotero-portal.sock",
-          "database": {
-              "url": "mysql://zotero-portal@localhost/zotero_www?socket=/run/mysqld/mysqld.sock",
-              "max_connections": 5,
-          },
           "oidc": {
               "issuer": "${oidcIssuer}",
               "client_id": "zotero-test",
               "redirect_url": public_url + "/auth/oidc/callback",
-              "require_verified_email": True,
           },
           "dataserver_url": api_url + "/",
           "stream_server_url": public_url.replace("https://", "wss://") + "/stream/",
@@ -317,10 +310,10 @@ in {
           "systemctl show -P Environment zotero-portal.service"
       )
       assert "RUST_LOG=zotero_portal=debug,tower_http=info" in portal_environment
-      migrate_environment = machine.succeed(
-          "systemctl show -P Environment zotero-portal-migrate.service"
+      provision_environment = machine.succeed(
+          "systemctl show -P Environment zotero-dataserver-provision.service"
       )
-      assert "RUST_LOG=zotero_portal=debug,tower_http=info" in migrate_environment
+      assert "RUST_LOG=zotero_portal=debug,tower_http=info" in provision_environment
 
       databases = machine.succeed(
           "mariadb --batch --skip-column-names "
@@ -1327,22 +1320,22 @@ in {
 
       attachment_proxy = json.loads(
           machine.succeed(
-              "cat /etc/zotero-dataserver/attachment-proxy.json"
+              "cat /etc/zotero-dataserver/attachment-proxy/attachment-proxy.json"
           )
       )
       assert attachment_proxy["port"] == 13000, attachment_proxy
       assert attachment_proxy["s3"]["endpoint"] == "http://127.0.0.1:11000"
 
       citeproc_server = json.loads(
-          machine.succeed("cat /etc/zotero-dataserver/citeproc-js-server.json")
+          machine.succeed("cat /etc/zotero-dataserver/citeproc-js-server/citeproc-js-server.json")
       )
-      assert citeproc_server["host"] == "127.0.0.1", citeproc_server
+      assert citeproc_server == {"port": 18085}, citeproc_server
 
       stream_server = json.loads(
-          machine.succeed("cat /etc/zotero-dataserver/stream-server.json")
+          machine.succeed("cat /etc/zotero-dataserver/stream-server/stream-server.json")
       )
-      assert stream_server["listenAddress"] == "127.0.0.1", stream_server
-      assert stream_server["statusInterval"] == 0, stream_server
+      assert "listenAddress" not in stream_server, stream_server
+      assert "statusInterval" not in stream_server, stream_server
       assert stream_server["redis"] == {
           "url": "redis://127.0.0.1:16389",
           "prefix": "zotero:",
@@ -1387,15 +1380,16 @@ in {
 
       credential_state = machine.succeed(
           "systemctl show -P StateDirectory "
-          "zotero-dataserver-credentials.service"
+          "zotero-dataserver-provision.service"
       ).strip()
-      credential_directory = f"/var/lib/{credential_state}/credentials"
+      credential_directory = f"/var/lib/{credential_state}"
       for name, length in {
-          "auth-salt": 64,
-          "attachment-proxy-secret": 64,
-          "dataserver-super-password": 64,
-          "s3-access-key-id": 32,
-          "s3-secret-access-key": 64,
+          "AUTH_SALT": 64,
+          "ATTACHMENT_PROXY_SECRET": 64,
+          "DATASERVER_SUPER_PASSWORD": 64,
+          "PORTAL_COOKIE_KEY": 88,
+          "S3_ACCESS_KEY_ID": 32,
+          "S3_SECRET_ACCESS_KEY": 64,
       }.items():
           value = machine.succeed(f"cat {credential_directory}/{name}").strip()
           assert len(value) == length, (name, len(value))
@@ -1413,8 +1407,8 @@ in {
           return machine.succeed(
               "curl --silent --show-error --fail-with-body "
               "--aws-sigv4 'aws:amz:us-east-1:s3' "
-              f"--user \"$(cat {credential_directory}/s3-access-key-id):"
-              f"$(cat {credential_directory}/s3-secret-access-key)\" "
+              f"--user \"$(cat {credential_directory}/S3_ACCESS_KEY_ID):"
+              f"$(cat {credential_directory}/S3_SECRET_ACCESS_KEY)\" "
               f"--request {method} {options} "
               f"http://127.0.0.1:11000/{path}"
           )
@@ -1423,7 +1417,7 @@ in {
       assert s3("GET", "zotero/testhash") == "attachment data"
 
       proxy_secret = machine.succeed(
-          f"cat {credential_directory}/attachment-proxy-secret"
+          f"cat {credential_directory}/ATTACHMENT_PROXY_SECRET"
       ).strip()
       payload = base64.b64encode(
           json.dumps(
@@ -1659,12 +1653,6 @@ in {
       )
       assert imported[0]["title"] == "Test Article", imported
 
-      stream_log = machine.succeed(
-          "journalctl -u zotero-stream-server.service --no-pager -o cat"
-      )
-      assert re.search(
-          r"\[\d+ connections, \d+ subscriptions\]", stream_log
-      ) is None, stream_log
     '';
   };
 

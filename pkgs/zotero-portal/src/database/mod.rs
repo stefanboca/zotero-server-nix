@@ -4,13 +4,13 @@ mod users;
 
 pub use sessions::session_handle;
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, str::FromStr as _, sync::Arc};
 
 use anyhow::Context as _;
 use jiff::Timestamp;
 use sha2::{Digest as _, Sha256};
 use sqlx::{
-    ConnectOptions as _, MySql, MySqlPool, Transaction,
+    MySql, MySqlPool, Transaction,
     mysql::{MySqlConnectOptions, MySqlPoolOptions},
 };
 
@@ -51,10 +51,10 @@ pub struct GroupInvitation {
 pub struct LoginCompletionLock<'a>(Transaction<'a, MySql>);
 
 impl Database {
-    pub async fn new(config: Arc<Config>) -> anyhow::Result<Self> {
+    pub async fn new(config: Arc<Config>, database_url: &str) -> anyhow::Result<Self> {
         let db = MySqlPoolOptions::new()
             .max_connections(config.database.max_connections)
-            .connect_with(MySqlConnectOptions::from_url(&config.database.url)?)
+            .connect_with(MySqlConnectOptions::from_str(database_url)?)
             .await
             .context("connecting to MariaDB")?;
         sqlx::migrate!()

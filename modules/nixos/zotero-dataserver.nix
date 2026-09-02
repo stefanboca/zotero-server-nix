@@ -4,21 +4,33 @@
   pkgs,
   ...
 }: let
+  inherit (builtins) toJSON;
   inherit (lib.attrsets) mapAttrsToList optionalAttrs;
   inherit (lib.meta) getExe;
   inherit (lib.lists) optional unique;
   inherit (lib.modules) mkDefault mkIf;
   inherit (lib.options) mkEnableOption mkOption mkPackageOption;
-  inherit (lib.strings) concatMapStrings concatStringsSep hasPrefix optionalString removePrefix removeSuffix replaceStrings;
+  inherit (lib.strings) concatStringsSep hasPrefix optionalString removePrefix removeSuffix replaceStrings;
   inherit (lib.types) attrsOf bool int lines listOf oneOf path port str submodule nullOr;
 
   json = pkgs.formats.json {};
   toml = pkgs.formats.toml {};
+  nodeConfigDirectory = name: defaultDirectory: settings:
+    pkgs.runCommand "${name}-config" {} ''
+      mkdir "$out"
+      cp --recursive --symbolic-link ${defaultDirectory}/. "$out"
+      ln --symbolic ${json.generate "${name}.json" settings} "$out/${name}.json"
+    '';
 
   redisPort = toString config.services.redis.servers.zotero-dataserver.port;
 
-  credentialUnit = "zotero-dataserver-credentials.service";
-  generatedCredentialDir = "%S/zotero-dataserver/credentials";
+  provisionUnit = "zotero-dataserver-provision.service";
+  generatedCredentialDir = "%S/zotero-dataserver";
+  portalDatabaseUrl = "mysql://zotero-portal@localhost/zotero_www?socket=${toString config.services.mysql.settings.mysqld.socket}";
+  portalDatabaseUrlFile =
+    if cfg.portal.database.urlFile != null
+    then toString cfg.portal.database.urlFile
+    else pkgs.writeText "zotero-portal-database-url" portalDatabaseUrl;
 
   restartAlways = {
     Restart = "always";
@@ -41,52 +53,19 @@
   });
 
   credentialFiles = {
-    authSalt = "${generatedCredentialDir}/auth-salt";
-    attachmentProxySecret = "${generatedCredentialDir}/attachment-proxy-secret";
-    dataserverSuperPassword = "${generatedCredentialDir}/dataserver-super-password";
-    portalCookieKey = "${generatedCredentialDir}/portal-cookie-key";
+    authSalt = "${generatedCredentialDir}/AUTH_SALT";
+    attachmentProxySecret = "${generatedCredentialDir}/ATTACHMENT_PROXY_SECRET";
+    dataserverSuperPassword = "${generatedCredentialDir}/DATASERVER_SUPER_PASSWORD";
+    portalCookieKey = "${generatedCredentialDir}/PORTAL_COOKIE_KEY";
     s3AccessKeyId =
       if cfg.storage.accessKeyIdFile != null
       then cfg.storage.accessKeyIdFile
-      else "${generatedCredentialDir}/s3-access-key-id";
+      else "${generatedCredentialDir}/S3_ACCESS_KEY_ID";
     s3SecretAccessKey =
       if cfg.storage.secretAccessKeyFile != null
       then cfg.storage.secretAccessKeyFile
-      else "${generatedCredentialDir}/s3-secret-access-key";
+      else "${generatedCredentialDir}/S3_SECRET_ACCESS_KEY";
   };
-
-  generatedCredentials = [
-    {
-      generate = true;
-      name = "auth-salt";
-      bytes = 32;
-    }
-    {
-      generate = true;
-      name = "attachment-proxy-secret";
-      bytes = 32;
-    }
-    {
-      generate = true;
-      name = "dataserver-super-password";
-      bytes = 32;
-    }
-    {
-      generate = true;
-      name = "portal-cookie-key";
-      bytes = 32;
-    }
-    {
-      generate = cfg.storage.accessKeyIdFile == null;
-      name = "s3-access-key-id";
-      bytes = 16;
-    }
-    {
-      generate = cfg.storage.secretAccessKeyFile == null;
-      name = "s3-secret-access-key";
-      bytes = 32;
-    }
-  ];
 
   phpBool = value:
     if value
@@ -116,33 +95,9 @@
     else "https://${cfg.virtualHost}";
   publicBaseUri = normalizeUri virtualHostUri;
   publicApiBaseUri = "${removeSuffix "/" publicBaseUri}${cfg.apiPath}";
-  citeprocSettings =
-    cfg.citeproc-js-server.settings
-    // {
-      host = "127.0.0.1";
-      localesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl-locales";
-      cslPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl";
-      renamedStylesPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/renamed-styles.json";
-      cslDependentPath = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/csl/dependent";
-    };
   fulltextIndexName = "item_fulltext_index";
   fulltextIndexUrl = "http://127.0.0.1:${toString cfg.fulltext-search.settings.port}/${fulltextIndexName}";
-  fulltextIndex = json.generate "zotero-fulltext-index.json" {
-    settings = {
-      number_of_shards = 1;
-      number_of_replicas = 0;
-      refresh_interval = "1s";
-    };
-    mappings = {
-      dynamic = false;
-      _source.enabled = false;
-      _routing.required = true;
-      properties = {
-        libraryID.type = "integer";
-        content.type = "text";
-      };
-    };
-  };
+  fulltextIndex = json.generate "zotero-fulltext-index.json" cfg.fulltext-search.index;
 
   defaultConfig = ''
     <?
@@ -209,7 +164,7 @@
         "127.0.0.1:${toString cfg.citeproc-js-server.settings.port}"
       ];
 
-      public static $SEARCH_HOSTS = ${builtins.toJSON cfg.php.settings.searchHosts};
+      public static $SEARCH_HOSTS = ${toJSON cfg.php.settings.searchHosts};
 
       public static $GLOBAL_ITEMS_URL = ${phpString cfg.php.settings.globalItemsUrl};
 
@@ -225,7 +180,7 @@
         'premium' => ['free' => 150, 'personal' => 3000, 'institutional' => 300],
       ];
       public static $TTS_DAILY_LIMIT_MINUTES = 480; // 8 hours -- safety valve for runaway tabs
-      public static $TTS_DEV_USERS = ${builtins.toJSON cfg.php.settings.ttsDevUsers};
+      public static $TTS_DEV_USERS = ${toJSON cfg.php.settings.ttsDevUsers};
 
       public static $STATSD_ENABLED = ${phpBool cfg.php.settings.statsd.enable};
       public static $STATSD_PREFIX = ${phpString cfg.php.settings.statsd.prefix};
@@ -255,11 +210,11 @@
     }
 
     $credentialDirectory = getenv('CREDENTIALS_DIRECTORY');
-    Z_CONFIG::$AUTH_SALT = trim(file_get_contents($credentialDirectory . '/auth-salt'));
-    Z_CONFIG::$ATTACHMENT_PROXY_SECRET = trim(file_get_contents($credentialDirectory . '/attachment-proxy-secret'));
-    Z_CONFIG::$AWS_ACCESS_KEY = trim(file_get_contents($credentialDirectory . '/s3-access-key-id'));
-    Z_CONFIG::$AWS_SECRET_KEY = trim(file_get_contents($credentialDirectory . '/s3-secret-access-key'));
-    Z_CONFIG::$API_SUPER_PASSWORD = trim(file_get_contents($credentialDirectory . '/dataserver-super-password'));
+    Z_CONFIG::$AUTH_SALT = trim(file_get_contents($credentialDirectory . '/AUTH_SALT'));
+    Z_CONFIG::$ATTACHMENT_PROXY_SECRET = trim(file_get_contents($credentialDirectory . '/ATTACHMENT_PROXY_SECRET'));
+    Z_CONFIG::$AWS_ACCESS_KEY = trim(file_get_contents($credentialDirectory . '/S3_ACCESS_KEY_ID'));
+    Z_CONFIG::$AWS_SECRET_KEY = trim(file_get_contents($credentialDirectory . '/S3_SECRET_ACCESS_KEY'));
+    Z_CONFIG::$API_SUPER_PASSWORD = trim(file_get_contents($credentialDirectory . '/DATASERVER_SUPER_PASSWORD'));
     $apiPath = parse_url(Z_CONFIG::$API_BASE_URI, PHP_URL_PATH);
     if ($apiPath && $apiPath !== '/') {
       $apiPrefix = rtrim($apiPath, '/');
@@ -415,6 +370,29 @@ in {
           description = "OpenSearch HTTP port used for full-text search.";
         };
       };
+      index = mkOption {
+        type = submodule {
+          freeformType = json.type;
+          options = {
+            settings = {
+              number_of_shards = settingOption int 1 "Number of OpenSearch shards.";
+              number_of_replicas = settingOption int 0 "Number of OpenSearch replicas.";
+              refresh_interval = settingOption str "1s" "OpenSearch refresh interval.";
+            };
+            mappings = {
+              dynamic = settingOption bool false "Whether the full-text index accepts dynamic fields.";
+              _source.enabled = settingOption bool false "Whether to store the source document.";
+              _routing.required = settingOption bool true "Whether index routing is required.";
+              properties = {
+                libraryID.type = settingOption str "integer" "OpenSearch type for library IDs.";
+                content.type = settingOption str "text" "OpenSearch type for indexed content.";
+              };
+            };
+          };
+        };
+        default = {};
+        description = "OpenSearch index definition.";
+      };
     };
 
     portal = {
@@ -424,26 +402,39 @@ in {
         description = "Whether to run the Zotero web portal and its database migrations.";
       };
       package = mkPackageOption pkgs "zotero-portal" {};
-      issuer = mkOption {
-        type = str;
-        description = "OIDC issuer URL. The provider must expose OpenID Connect discovery metadata.";
-      };
-      clientId = mkOption {
-        type = str;
-        description = "OIDC client ID registered for the Zotero login portal.";
-      };
       clientSecretFile = mkOption {
         type = path;
         description = "File containing the OIDC client secret.";
       };
-      requireVerifiedEmail = settingOption bool true "Reject identities whose OIDC email_verified claim is not true.";
-      browserSessionLifetimeSeconds = mkOption {
-        type = nullOr int;
+      database.urlFile = mkOption {
+        type = nullOr path;
         default = null;
-        example = 2592000;
-        description = "Browser authentication session lifetime in seconds. A null value uses the login portal default.";
+        description = "File containing the MariaDB connection URL. The local database is used when unset.";
       };
-      databaseMaxConnections = settingOption int 5 "Maximum MariaDB connections used by the login portal.";
+      config = mkOption {
+        type = submodule {
+          freeformType = toml.type;
+          options = {
+            server_address = settingOption str "unix:///run/zotero-portal/zotero-portal.sock" "Portal listen URL.";
+            oidc = {
+              issuer = mkOption {
+                type = str;
+                description = "OIDC issuer URL. The provider must expose OpenID Connect discovery metadata.";
+              };
+              client_id = mkOption {
+                type = str;
+                description = "OIDC client ID registered for the Zotero login portal.";
+              };
+              redirect_url = settingOption str "${removeSuffix "/" publicBaseUri}/auth/oidc/callback" "OIDC callback URL.";
+            };
+            dataserver_url = settingOption str publicApiBaseUri "Zotero dataserver API URL.";
+            stream_server_url = settingOption str cfg.stream-server.publicUri "Streaming WebSocket URL.";
+            translation_server_url = settingOption str "http://127.0.0.1:${toString cfg.translation-server.settings.port}" "Translation server URL.";
+          };
+        };
+        default = {};
+        description = "Portal TOML configuration, passed directly to the portal.";
+      };
       logging = {
         filter = settingOption str "zotero_portal=info,tower_http=info" "Tracing filter for the portal, using the RUST_LOG directive syntax.";
       };
@@ -505,8 +496,6 @@ in {
       };
       settings = microserviceSettings "Streaming server" {
         httpPort = settingOption port 8089 "Local streaming-server listen port.";
-        listenAddress = settingOption str "127.0.0.1" "Streaming-server listen address.";
-        statusInterval = settingOption int 0 "Seconds between connection-status log messages; 0 disables them.";
       };
     };
     tinymce-clean-server = {
@@ -519,14 +508,28 @@ in {
     translation-server = {
       package = mkPackageOption pkgs "zotero-translation-server" {};
       settings = microserviceSettings "Translation server" {
-        host = settingOption str "127.0.0.1" "Translation-server listen address.";
         port = settingOption port 1969 "Local translation-server listen port.";
-        crossrefEmail = settingOption str "" "Optional contact email sent to Crossref REST to use its polite pool.";
       };
     };
   };
 
   config = mkIf cfg.enable {
+    services.zotero-dataserver = {
+      attachment-proxy.settings.s3 = {
+        bucket = mkDefault cfg.storage.bucket;
+        endpoint = mkDefault cfg.storage.endpoint;
+        forcePathStyle = mkDefault cfg.storage.forcePathStyle;
+        region = mkDefault cfg.storage.region;
+      };
+      stream-server.settings = {
+        apiURL = mkDefault publicApiBaseUri;
+        redis = {
+          url = mkDefault "redis://127.0.0.1:${toString config.services.redis.servers.zotero-dataserver.port}";
+          prefix = mkDefault cfg.php.settings.redisPrefix;
+        };
+      };
+    };
+
     assertions = [
       {
         assertion = (cfg.storage.accessKeyIdFile == null) == (cfg.storage.secretAccessKeyFile == null);
@@ -535,14 +538,6 @@ in {
       {
         assertion = cfg.storage.manageBackend || cfg.storage.accessKeyIdFile != null;
         message = "an external S3 backend requires storage access-key files";
-      }
-      {
-        assertion = !cfg.portal.enable || cfg.portal.browserSessionLifetimeSeconds == null || cfg.portal.browserSessionLifetimeSeconds > 0;
-        message = "services.zotero-dataserver.portal.browserSessionLifetimeSeconds must be positive when set";
-      }
-      {
-        assertion = !cfg.portal.enable || cfg.portal.databaseMaxConnections > 0;
-        message = "services.zotero-dataserver.portal.databaseMaxConnections must be positive";
       }
     ];
 
@@ -695,57 +690,13 @@ in {
 
     environment.etc =
       optionalAttrs cfg.portal.enable {
-        "zotero-dataserver/portal.toml".source = toml.generate "zotero-portal.toml" (
-          {
-            server_address = "unix:///run/zotero-portal/zotero-portal.sock";
-            database = {
-              url = "mysql://zotero-portal@localhost/zotero_www?socket=${toString config.services.mysql.settings.mysqld.socket}";
-              max_connections = cfg.portal.databaseMaxConnections;
-            };
-            oidc = {
-              issuer = cfg.portal.issuer;
-              client_id = cfg.portal.clientId;
-              redirect_url = "${removeSuffix "/" publicBaseUri}/auth/oidc/callback";
-              require_verified_email = cfg.portal.requireVerifiedEmail;
-            };
-            dataserver_url = publicApiBaseUri;
-            stream_server_url = cfg.stream-server.publicUri;
-            translation_server_url = "http://127.0.0.1:${toString cfg.translation-server.settings.port}";
-          }
-          // optionalAttrs (cfg.portal.browserSessionLifetimeSeconds != null) {
-            browser_session_lifetime_seconds = cfg.portal.browserSessionLifetimeSeconds;
-          }
-        );
+        "zotero-dataserver/portal.toml".source = toml.generate "zotero-portal.toml" cfg.portal.config;
       }
       // {
-        "zotero-dataserver/attachment-proxy.json".source = json.generate "attachment-proxy.json" (cfg.attachment-proxy.settings
-          // {
-            host = "127.0.0.1";
-            tmpDir = "";
-            trustedProxies = ["127.0.0.1"];
-            s3 = {
-              bucket = cfg.storage.bucket;
-              endpoint = cfg.storage.endpoint;
-              forcePathStyle = cfg.storage.forcePathStyle;
-              region = cfg.storage.region;
-            };
-          });
-        "zotero-dataserver/citeproc-js-server.json".source = json.generate "citeproc-js-server-config.json" citeprocSettings;
-        "zotero-dataserver/stream-server.json".source = json.generate "stream-server-config.json" (cfg.stream-server.settings
-          // {
-            trustedProxies = ["127.0.0.1"];
-            apiURL = publicApiBaseUri;
-            redis = {
-              url = "redis://127.0.0.1:${toString config.services.redis.servers.zotero-dataserver.port}";
-              prefix = cfg.php.settings.redisPrefix;
-            };
-          });
-        "zotero-dataserver/translation-server.json".source = json.generate "translation-server-config.json" ((removeAttrs cfg.translation-server.settings ["crossrefEmail"])
-          // {
-            translators = {
-              "CrossrefREST.email" = cfg.translation-server.settings.crossrefEmail;
-            };
-          });
+        "zotero-dataserver/attachment-proxy".source = nodeConfigDirectory "attachment-proxy" "${cfg.attachment-proxy.package}/lib/node_modules/attachment-proxy/config" cfg.attachment-proxy.settings;
+        "zotero-dataserver/citeproc-js-server".source = nodeConfigDirectory "citeproc-js-server" "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/config" cfg.citeproc-js-server.settings;
+        "zotero-dataserver/stream-server".source = nodeConfigDirectory "stream-server" "${cfg.stream-server.package}/lib/node_modules/zotero-stream-server/config" cfg.stream-server.settings;
+        "zotero-dataserver/translation-server".source = nodeConfigDirectory "translation-server" "${cfg.translation-server.package}/lib/node_modules/translation-server/config" cfg.translation-server.settings;
       };
 
     systemd.targets.zotero = {
@@ -753,7 +704,7 @@ in {
       wantedBy = ["multi-user.target"];
       wants =
         [
-          credentialUnit
+          provisionUnit
           "zotero-dataserver-schema.service"
           "zotero-fulltext-index.service"
           "zotero-attachment-proxy.service"
@@ -762,13 +713,15 @@ in {
           "zotero-tinymce-clean-server.service"
           "zotero-translation-server.service"
         ]
-        ++ optional cfg.portal.enable "zotero-portal-migrate.service"
         ++ optional cfg.portal.enable "zotero-portal.service";
     };
 
     systemd.services = {
-      zotero-dataserver-credentials = {
-        description = "Generate persistent Zotero Dataserver credentials";
+      zotero-dataserver-provision = {
+        description = "Provision Zotero Dataserver credentials and database";
+        wants = optional cfg.portal.enable "mysql.service";
+        after = optional cfg.portal.enable "mysql.service";
+        environment = portalLoggingEnvironment // {XDG_STATE_HOME = "%S/zotero-dataserver";};
         serviceConfig =
           restartOnFailure
           // {
@@ -777,41 +730,25 @@ in {
             StateDirectory = "zotero-dataserver";
             StateDirectoryMode = "0700";
             UMask = "0077";
-          };
-        script = ''
-          install -d -m 0700 "$STATE_DIRECTORY/credentials"
-          ${concatMapStrings (credential:
-            optionalString credential.generate ''
-              if ! test -s "$STATE_DIRECTORY/credentials/${credential.name}"; then
-                ${getExe pkgs.openssl} rand -hex ${toString credential.bytes} > "$STATE_DIRECTORY/credentials/${credential.name}"
-              fi
-            '')
-          generatedCredentials}
-        '';
-      };
-
-      zotero-portal-migrate = mkIf cfg.portal.enable {
-        description = "Migrate the Zotero website compatibility database";
-        wants = ["mysql.service"];
-        after = ["mysql.service"];
-        environment = portalLoggingEnvironment;
-        serviceConfig =
-          restartOnFailure
-          // {
-            Type = "oneshot";
-            RemainAfterExit = true;
+            WorkingDirectory = "${cfg.portal.package}/share/zotero-portal";
+            LoadCredential = optional cfg.portal.enable "DATABASE_URL:${portalDatabaseUrlFile}";
+          }
+          // optionalAttrs cfg.portal.enable {
             User = "zotero-portal";
             Group = "zotero-portal";
-            ExecStart = "${getExe cfg.portal.package} --config /etc/zotero-dataserver/portal.toml --migrate-only";
           };
+        script = ''
+          ${getExe cfg.portal.package} \
+            ${optionalString cfg.portal.enable "--config /etc/zotero-dataserver/portal.toml"} \
+            provision --state-directory "$STATE_DIRECTORY"
+        '';
       };
 
       zotero-portal = mkIf cfg.portal.enable {
         description = "Zotero local web portal";
         wantedBy = ["multi-user.target"];
         wants = [
-          credentialUnit
-          "zotero-portal-migrate.service"
+          provisionUnit
           "zotero-translation-server.service"
           "mysql.service"
           "network-online.target"
@@ -819,15 +756,14 @@ in {
           "phpfpm-zotero-dataserver.service"
         ];
         after = [
-          credentialUnit
-          "zotero-portal-migrate.service"
+          provisionUnit
           "zotero-translation-server.service"
           "mysql.service"
           "network-online.target"
           "caddy.service"
           "phpfpm-zotero-dataserver.service"
         ];
-        environment = portalLoggingEnvironment;
+        environment = portalLoggingEnvironment // {XDG_STATE_HOME = "%S/zotero-dataserver";};
         serviceConfig =
           restartAlways
           // {
@@ -835,12 +771,20 @@ in {
             Group = "zotero-portal";
             RuntimeDirectory = "zotero-portal";
             RuntimeDirectoryMode = "0750";
+            StateDirectory = "zotero-dataserver";
+            StateDirectoryMode = "0700";
             UMask = "0007";
-            ExecStart = "${getExe cfg.portal.package} --config /etc/zotero-dataserver/portal.toml";
+            ExecStart = "${getExe cfg.portal.package} --config /etc/zotero-dataserver/portal.toml serve";
+            WorkingDirectory = "${cfg.portal.package}/share/zotero-portal";
             LoadCredential = [
-              "oidc-client-secret:${cfg.portal.clientSecretFile}"
-              "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
-              "portal-cookie-key:${credentialFiles.portalCookieKey}"
+              "DATABASE_URL:${portalDatabaseUrlFile}"
+              "AUTH_SALT:${credentialFiles.authSalt}"
+              "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
+              "OIDC_CLIENT_SECRET:${cfg.portal.clientSecretFile}"
+              "DATASERVER_SUPER_PASSWORD:${credentialFiles.dataserverSuperPassword}"
+              "PORTAL_COOKIE_KEY:${credentialFiles.portalCookieKey}"
+              "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+              "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
             ];
           };
       };
@@ -848,7 +792,7 @@ in {
       phpfpm-zotero-dataserver = {
         wants =
           [
-            credentialUnit
+            provisionUnit
             "zotero-dataserver-schema.service"
             "zotero-attachment-proxy.service"
             "zotero-citeproc-js-server.service"
@@ -863,7 +807,7 @@ in {
         requires = ["zotero-fulltext-index.service" "opensearch.service"];
         after =
           [
-            credentialUnit
+            provisionUnit
             "zotero-dataserver-schema.service"
             "zotero-fulltext-index.service"
             "zotero-attachment-proxy.service"
@@ -882,19 +826,19 @@ in {
           Group = "zotero-dataserver";
           SupplementaryGroups = ["caddy"];
           LoadCredential = [
-            "auth-salt:${credentialFiles.authSalt}"
-            "attachment-proxy-secret:${credentialFiles.attachmentProxySecret}"
-            "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
-            "s3-access-key-id:${credentialFiles.s3AccessKeyId}"
-            "s3-secret-access-key:${credentialFiles.s3SecretAccessKey}"
+            "AUTH_SALT:${credentialFiles.authSalt}"
+            "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
+            "DATASERVER_SUPER_PASSWORD:${credentialFiles.dataserverSuperPassword}"
+            "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+            "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
           ];
         };
       };
 
       zotero-dataserver-schema = {
         description = "Update Zotero Dataserver's metadata schema";
-        wants = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service"] ++ optional cfg.portal.enable "zotero-portal-migrate.service";
-        after = [credentialUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service"] ++ optional cfg.portal.enable "zotero-portal-migrate.service";
+        wants = [provisionUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service"];
+        after = [provisionUnit "mysql.service" "redis-zotero-dataserver.service" "memcached.service"];
         serviceConfig =
           restartOnFailure
           // {
@@ -905,11 +849,11 @@ in {
             WorkingDirectory = "${package}/share/php/zotero-dataserver/admin";
             ExecStart = "${getExe package.php} ${package}/share/php/zotero-dataserver/admin/schema_update";
             LoadCredential = [
-              "auth-salt:${credentialFiles.authSalt}"
-              "attachment-proxy-secret:${credentialFiles.attachmentProxySecret}"
-              "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
-              "s3-access-key-id:${credentialFiles.s3AccessKeyId}"
-              "s3-secret-access-key:${credentialFiles.s3SecretAccessKey}"
+              "AUTH_SALT:${credentialFiles.authSalt}"
+              "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
+              "DATASERVER_SUPER_PASSWORD:${credentialFiles.dataserverSuperPassword}"
+              "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+              "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
             ];
           };
       };
@@ -917,8 +861,8 @@ in {
       zotero-fulltext-index = {
         description = "Initialize Zotero's local full-text search index";
         requires = ["opensearch.service"];
-        wants = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
-        after = [credentialUnit "opensearch.service"] ++ optional cfg.storage.manageBackend "versitygw.service";
+        wants = [provisionUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
+        after = [provisionUnit "opensearch.service"] ++ optional cfg.storage.manageBackend "versitygw.service";
         before = ["phpfpm-zotero-dataserver.service"];
         serviceConfig =
           restartOnFailure
@@ -931,11 +875,11 @@ in {
             StateDirectoryMode = "0700";
             WorkingDirectory = "${package}/share/php/zotero-dataserver/admin";
             LoadCredential = [
-              "auth-salt:${credentialFiles.authSalt}"
-              "attachment-proxy-secret:${credentialFiles.attachmentProxySecret}"
-              "dataserver-super-password:${credentialFiles.dataserverSuperPassword}"
-              "s3-access-key-id:${credentialFiles.s3AccessKeyId}"
-              "s3-secret-access-key:${credentialFiles.s3SecretAccessKey}"
+              "AUTH_SALT:${credentialFiles.authSalt}"
+              "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
+              "DATASERVER_SUPER_PASSWORD:${credentialFiles.dataserverSuperPassword}"
+              "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+              "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
             ];
           };
         script = ''
@@ -958,29 +902,29 @@ in {
       };
 
       versitygw = mkIf cfg.storage.manageBackend {
-        wants = [credentialUnit];
-        after = [credentialUnit];
+        wants = [provisionUnit];
+        after = [provisionUnit];
       };
 
       zotero-attachment-proxy = {
         description = "Zotero attachment-proxy";
         wantedBy = ["phpfpm-zotero-dataserver.service"];
-        wants = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
-        after = [credentialUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
+        wants = [provisionUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
+        after = [provisionUnit] ++ optional cfg.storage.manageBackend "versitygw.service";
         environment = {
           NODE_ENV = "attachment-proxy";
-          NODE_CONFIG_DIR = "${cfg.attachment-proxy.package}/lib/node_modules/attachment-proxy/config:/etc/zotero-dataserver";
+          NODE_CONFIG_DIR = "/etc/zotero-dataserver/attachment-proxy";
         };
         script = ''
-          export AWS_ACCESS_KEY_ID="$(< "$CREDENTIALS_DIRECTORY/s3-access-key-id")"
-          export AWS_SECRET_ACCESS_KEY="$(< "$CREDENTIALS_DIRECTORY/s3-secret-access-key")"
+          export AWS_ACCESS_KEY_ID="$(< "$CREDENTIALS_DIRECTORY/S3_ACCESS_KEY_ID")"
+          export AWS_SECRET_ACCESS_KEY="$(< "$CREDENTIALS_DIRECTORY/S3_SECRET_ACCESS_KEY")"
           exec ${getExe cfg.attachment-proxy.package}
         '';
         serviceConfig = {
           LoadCredential = [
-            "attachment-proxy-secret:${credentialFiles.attachmentProxySecret}"
-            "s3-access-key-id:${credentialFiles.s3AccessKeyId}"
-            "s3-secret-access-key:${credentialFiles.s3SecretAccessKey}"
+            "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
+            "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+            "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
           ];
           Restart = "always";
           RestartSec = 5;
@@ -992,11 +936,12 @@ in {
         description = "Zotero citeproc-js-server";
         wantedBy = ["phpfpm-zotero-dataserver.service"];
         environment = {
-          NODE_CONFIG = builtins.toJSON citeprocSettings;
-          NODE_CONFIG_DIR = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server/config";
+          NODE_ENV = "citeproc-js-server";
+          NODE_CONFIG_DIR = "/etc/zotero-dataserver/citeproc-js-server";
         };
         serviceConfig = {
           ExecStart = "${getExe cfg.citeproc-js-server.package}";
+          WorkingDirectory = "${cfg.citeproc-js-server.package}/lib/node_modules/citeproc-js-server";
           Restart = "always";
           RestartSec = 5;
           DynamicUser = true;
@@ -1009,7 +954,7 @@ in {
         after = ["redis-zotero-dataserver.service"];
         environment = {
           NODE_ENV = "stream-server";
-          NODE_CONFIG_DIR = "${cfg.stream-server.package}/lib/node_modules/zotero-stream-server/config:/etc/zotero-dataserver";
+          NODE_CONFIG_DIR = "/etc/zotero-dataserver/stream-server";
         };
         serviceConfig = {
           ExecStart = "${getExe cfg.stream-server.package}";
@@ -1043,7 +988,7 @@ in {
         after = ["network-online.target"];
         environment = {
           NODE_ENV = "translation-server";
-          NODE_CONFIG_DIR = "${cfg.translation-server.package}/lib/node_modules/translation-server/config:/etc/zotero-dataserver";
+          NODE_CONFIG_DIR = "/etc/zotero-dataserver/translation-server";
         };
         serviceConfig = {
           ExecStart = "${getExe cfg.translation-server.package}";

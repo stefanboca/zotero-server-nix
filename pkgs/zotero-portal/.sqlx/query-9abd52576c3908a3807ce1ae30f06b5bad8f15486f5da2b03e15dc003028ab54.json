@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "UPDATE browser_sessions\nSET\n    expiresAt = FROM_UNIXTIME(?),\n    lastSeenAt = CURRENT_TIMESTAMP(6),\n    userAgent = COALESCE(userAgent, ?)\nWHERE tokenHash = ?\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "9abd52576c3908a3807ce1ae30f06b5bad8f15486f5da2b03e15dc003028ab54"
+}

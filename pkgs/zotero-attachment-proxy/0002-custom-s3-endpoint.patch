@@ -10,7 +10,7 @@ index 404ddf1..0c122e6 100644
 +	tmpDir: process.env.CACHE_DIRECTORY || config.get('tmpDir'),
  	config: config.get('s3')
  });
-+const secret = fs.readFileSync(process.env.CREDENTIALS_DIRECTORY + '/attachment-proxy-secret', 'utf8').trim();
++const secret = fs.readFileSync(process.env.CREDENTIALS_DIRECTORY + '/ATTACHMENT_PROXY_SECRET', 'utf8').trim();
 +
  // Configure CORS for the web library PDF reader
  app.use(cors({
@@ -38,7 +38,7 @@ index 404ddf1..0c122e6 100644
  	log.info("Starting attachment-proxy [pid: " + process.pid + "] on port " + config.get('port'));
  	new Promise(resolve => {
 -		let server = app.listen(config.get('port'), resolve);
-+		let server = app.listen(config.get('port'), config.get('host'), resolve);
++		let server = app.listen(config.get('port'), config.has('host') ? config.get('host') : undefined, resolve);
  		// Set a timeout for disconnecting inactive clients
  		server.setTimeout(config.get('connectionTimeout') * 1000);
      });
