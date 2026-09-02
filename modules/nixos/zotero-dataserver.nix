@@ -42,16 +42,6 @@
     RUST_LOG = cfg.portal.logging.filter;
   };
 
-  minimalOpenSearch = pkgs.opensearch.overrideAttrs (old: {
-    pname = "opensearch-minimal";
-    postInstall =
-      (old.postInstall or "")
-      + ''
-        find "$out/plugins" -mindepth 1 -maxdepth 1 \
-          ! -name opensearch-security -exec rm -r -- {} +
-      '';
-  });
-
   credentialFiles = {
     authSalt = "${generatedCredentialDir}/AUTH_SALT";
     attachmentProxySecret = "${generatedCredentialDir}/ATTACHMENT_PROXY_SECRET";
@@ -581,7 +571,6 @@ in {
     services = {
       opensearch = {
         enable = true;
-        package = mkDefault minimalOpenSearch;
         settings = {
           "network.host" = mkDefault "127.0.0.1";
           "cluster.name" = mkDefault "zotero";
