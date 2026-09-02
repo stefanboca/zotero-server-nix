@@ -25,6 +25,7 @@ in {
     enable = true;
     virtualHost = zoteroUri;
     portal.enable = false;
+    secrets.dataserverSuperPasswordFile = pkgs.writeText "zotero-development-dataserver-password" "development";
     stream-server.settings = {
       httpPort = streamPort;
       listenAddress = "0.0.0.0";
@@ -73,11 +74,6 @@ in {
       "
     '';
   };
-
-  systemd.services.zotero-dataserver-provision.preStart = ''
-    printf '%s\n' development > "$STATE_DIRECTORY/DATASERVER_SUPER_PASSWORD"
-    chmod 0600 "$STATE_DIRECTORY/DATASERVER_SUPER_PASSWORD"
-  '';
 
   virtualisation.vmVariant.virtualisation = {
     cores = 4;

@@ -10,7 +10,7 @@ index 404ddf1..0c122e6 100644
 +	tmpDir: process.env.CACHE_DIRECTORY || config.get('tmpDir'),
  	config: config.get('s3')
  });
-+const secret = fs.readFileSync(process.env.CREDENTIALS_DIRECTORY + '/ATTACHMENT_PROXY_SECRET', 'utf8').trim();
++const secret = process.env.ATTACHMENT_PROXY_SECRET;
 +
  // Configure CORS for the web library PDF reader
  app.use(cors({

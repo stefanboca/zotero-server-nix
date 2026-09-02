@@ -193,19 +193,21 @@ Configure the local portal:
 
 ```nix
 services.zotero-dataserver.portal = {
-  clientSecretFile = config.sops.secrets.zotero-oidc-client-secret.path;
   config.oidc = {
     issuer = "https://auth.example.com";
     client_id = "zotero";
   };
 };
+
+services.zotero-dataserver.secrets.oidcClientSecretFile =
+  config.sops.secrets.zotero-oidc-client-secret.path;
 ```
 
 The callback URI is `https://zotero.example.com/auth/oidc/callback`. It must use
 HTTPS because the portal uses a secure `__Host-session` cookie.
 
 The module supplies the local MariaDB URL in the SecretSpec `DATABASE_URL`
-systemd credential. For an external database, set `portal.database.urlFile`.
+systemd credential. For an external database, set `secrets.databaseUrlFile`.
 This option must point to a runtime secret file that contains the connection
 URL. The `zotero-dataserver-provision` unit reads this credential. It generates
 the other SecretSpec secrets and applies the migrations. The portal starts
@@ -269,8 +271,8 @@ authelia crypto hash generate pbkdf2 --variant sha512 \
   --random --random.length 72 --random.charset rfc3986
 ```
 
-Store the plain secret in the file for `clientSecretFile`. Store the hash in
-the Authelia configuration:
+Store the plain secret in the file for `secrets.oidcClientSecretFile`. Store
+the hash in the Authelia configuration:
 
 ```yaml
 identity_providers:
@@ -507,8 +509,11 @@ services.zotero-dataserver.storage = {
   endpoint = "https://s3.example.com";
   region = "us-east-1";
   forcePathStyle = true;
-  accessKeyIdFile = config.sops.secrets.zotero-s3-access-key-id.path;
-  secretAccessKeyFile = config.sops.secrets.zotero-s3-secret-access-key.path;
+};
+
+services.zotero-dataserver.secrets = {
+  s3AccessKeyIdFile = config.sops.secrets.zotero-s3-access-key-id.path;
+  s3SecretAccessKeyFile = config.sops.secrets.zotero-s3-secret-access-key.path;
 };
 ```
 

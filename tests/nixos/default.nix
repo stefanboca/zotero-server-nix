@@ -45,9 +45,10 @@ in {
         package = zotero-dataserver;
         virtualHost = testDomain;
 
+        secrets.oidcClientSecretFile = oidcClientSecret;
+
         portal = {
           package = zotero-portal;
-          clientSecretFile = oidcClientSecret;
           config.oidc = {
             issuer = oidcIssuer;
             client_id = "zotero-test";
@@ -1382,14 +1383,14 @@ in {
           "systemctl show -P StateDirectory "
           "zotero-dataserver-provision.service"
       ).strip()
-      credential_directory = f"/var/lib/{credential_state}"
+      credential_directory = f"/var/lib/{credential_state}/zotero-server/production"
       for name, length in {
           "AUTH_SALT": 64,
           "ATTACHMENT_PROXY_SECRET": 64,
           "DATASERVER_SUPER_PASSWORD": 64,
           "PORTAL_COOKIE_KEY": 88,
-          "S3_ACCESS_KEY_ID": 32,
-          "S3_SECRET_ACCESS_KEY": 64,
+          "AWS_ACCESS_KEY_ID": 32,
+          "AWS_SECRET_ACCESS_KEY": 64,
       }.items():
           value = machine.succeed(f"cat {credential_directory}/{name}").strip()
           assert len(value) == length, (name, len(value))
@@ -1407,8 +1408,8 @@ in {
           return machine.succeed(
               "curl --silent --show-error --fail-with-body "
               "--aws-sigv4 'aws:amz:us-east-1:s3' "
-              f"--user \"$(cat {credential_directory}/S3_ACCESS_KEY_ID):"
-              f"$(cat {credential_directory}/S3_SECRET_ACCESS_KEY)\" "
+              f"--user \"$(cat {credential_directory}/AWS_ACCESS_KEY_ID):"
+              f"$(cat {credential_directory}/AWS_SECRET_ACCESS_KEY)\" "
               f"--request {method} {options} "
               f"http://127.0.0.1:11000/{path}"
           )

@@ -25,11 +25,11 @@
   redisPort = toString config.services.redis.servers.zotero-dataserver.port;
 
   provisionUnit = "zotero-dataserver-provision.service";
-  generatedCredentialDir = "%S/zotero-dataserver";
+  generatedCredentialDir = "%S/zotero-dataserver/zotero-server/production";
   portalDatabaseUrl = "mysql://zotero-portal@localhost/zotero_www?socket=${toString config.services.mysql.settings.mysqld.socket}";
   portalDatabaseUrlFile =
-    if cfg.portal.database.urlFile != null
-    then toString cfg.portal.database.urlFile
+    if cfg.secrets.databaseUrlFile != null
+    then toString cfg.secrets.databaseUrlFile
     else pkgs.writeText "zotero-portal-database-url" portalDatabaseUrl;
 
   restartAlways = {
@@ -55,16 +55,19 @@
   credentialFiles = {
     authSalt = "${generatedCredentialDir}/AUTH_SALT";
     attachmentProxySecret = "${generatedCredentialDir}/ATTACHMENT_PROXY_SECRET";
-    dataserverSuperPassword = "${generatedCredentialDir}/DATASERVER_SUPER_PASSWORD";
+    dataserverSuperPassword =
+      if cfg.secrets.dataserverSuperPasswordFile != null
+      then cfg.secrets.dataserverSuperPasswordFile
+      else "${generatedCredentialDir}/DATASERVER_SUPER_PASSWORD";
     portalCookieKey = "${generatedCredentialDir}/PORTAL_COOKIE_KEY";
     s3AccessKeyId =
-      if cfg.storage.accessKeyIdFile != null
-      then cfg.storage.accessKeyIdFile
-      else "${generatedCredentialDir}/S3_ACCESS_KEY_ID";
+      if cfg.secrets.s3AccessKeyIdFile != null
+      then cfg.secrets.s3AccessKeyIdFile
+      else "${generatedCredentialDir}/AWS_ACCESS_KEY_ID";
     s3SecretAccessKey =
-      if cfg.storage.secretAccessKeyFile != null
-      then cfg.storage.secretAccessKeyFile
-      else "${generatedCredentialDir}/S3_SECRET_ACCESS_KEY";
+      if cfg.secrets.s3SecretAccessKeyFile != null
+      then cfg.secrets.s3SecretAccessKeyFile
+      else "${generatedCredentialDir}/AWS_SECRET_ACCESS_KEY";
   };
 
   phpBool = value:
@@ -212,8 +215,8 @@
     $credentialDirectory = getenv('CREDENTIALS_DIRECTORY');
     Z_CONFIG::$AUTH_SALT = trim(file_get_contents($credentialDirectory . '/AUTH_SALT'));
     Z_CONFIG::$ATTACHMENT_PROXY_SECRET = trim(file_get_contents($credentialDirectory . '/ATTACHMENT_PROXY_SECRET'));
-    Z_CONFIG::$AWS_ACCESS_KEY = trim(file_get_contents($credentialDirectory . '/S3_ACCESS_KEY_ID'));
-    Z_CONFIG::$AWS_SECRET_KEY = trim(file_get_contents($credentialDirectory . '/S3_SECRET_ACCESS_KEY'));
+    Z_CONFIG::$AWS_ACCESS_KEY = trim(file_get_contents($credentialDirectory . '/AWS_ACCESS_KEY_ID'));
+    Z_CONFIG::$AWS_SECRET_KEY = trim(file_get_contents($credentialDirectory . '/AWS_SECRET_ACCESS_KEY'));
     Z_CONFIG::$API_SUPER_PASSWORD = trim(file_get_contents($credentialDirectory . '/DATASERVER_SUPER_PASSWORD'));
     $apiPath = parse_url(Z_CONFIG::$API_BASE_URI, PHP_URL_PATH);
     if ($apiPath && $apiPath !== '/') {
@@ -358,8 +361,6 @@ in {
       fulltextBucket = settingOption str "zotero-fulltext" "S3 bucket containing full-text content.";
       errorsBucket = settingOption str "zotero-errors" "S3 bucket receiving archived Dataserver error reports.";
       ttsBucket = settingOption str "zotero-tts" "S3 bucket containing generated TTS audio.";
-      accessKeyIdFile = settingOption (nullOr path) null "File containing the S3 access key ID. A persistent random key is generated for the managed backend when unset.";
-      secretAccessKeyFile = settingOption (nullOr path) null "File containing the S3 secret access key. A persistent random key is generated for the managed backend when unset.";
     };
 
     fulltext-search = {
@@ -402,15 +403,6 @@ in {
         description = "Whether to run the Zotero web portal and its database migrations.";
       };
       package = mkPackageOption pkgs "zotero-portal" {};
-      clientSecretFile = mkOption {
-        type = path;
-        description = "File containing the OIDC client secret.";
-      };
-      database.urlFile = mkOption {
-        type = nullOr path;
-        default = null;
-        description = "File containing the MariaDB connection URL. The local database is used when unset.";
-      };
       config = mkOption {
         type = submodule {
           freeformType = toml.type;
@@ -437,6 +429,33 @@ in {
       };
       logging = {
         filter = settingOption str "zotero_portal=info,tower_http=info" "Tracing filter for the portal, using the RUST_LOG directive syntax.";
+      };
+    };
+
+    secrets = {
+      databaseUrlFile = mkOption {
+        type = nullOr path;
+        default = null;
+        description = "File containing the MariaDB connection URL. The local database is used when unset.";
+      };
+      dataserverSuperPasswordFile = mkOption {
+        type = nullOr path;
+        default = null;
+        description = "File containing the password used by the portal to access Dataserver. A persistent random password is generated when unset.";
+      };
+      oidcClientSecretFile = mkOption {
+        type = path;
+        description = "File containing the OIDC client secret.";
+      };
+      s3AccessKeyIdFile = mkOption {
+        type = nullOr path;
+        default = null;
+        description = "File containing the S3 access key ID. A persistent random key is generated for the managed backend when unset.";
+      };
+      s3SecretAccessKeyFile = mkOption {
+        type = nullOr path;
+        default = null;
+        description = "File containing the S3 secret access key. A persistent random key is generated for the managed backend when unset.";
       };
     };
 
@@ -532,11 +551,11 @@ in {
 
     assertions = [
       {
-        assertion = (cfg.storage.accessKeyIdFile == null) == (cfg.storage.secretAccessKeyFile == null);
-        message = "storage.accessKeyIdFile and storage.secretAccessKeyFile must be set together";
+        assertion = (cfg.secrets.s3AccessKeyIdFile == null) == (cfg.secrets.s3SecretAccessKeyFile == null);
+        message = "secrets.s3AccessKeyIdFile and secrets.s3SecretAccessKeyFile must be set together";
       }
       {
-        assertion = cfg.storage.manageBackend || cfg.storage.accessKeyIdFile != null;
+        assertion = cfg.storage.manageBackend || cfg.secrets.s3AccessKeyIdFile != null;
         message = "an external S3 backend requires storage access-key files";
       }
     ];
@@ -780,11 +799,11 @@ in {
               "DATABASE_URL:${portalDatabaseUrlFile}"
               "AUTH_SALT:${credentialFiles.authSalt}"
               "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
-              "OIDC_CLIENT_SECRET:${cfg.portal.clientSecretFile}"
+              "OIDC_CLIENT_SECRET:${cfg.secrets.oidcClientSecretFile}"
               "DATASERVER_SUPER_PASSWORD:${credentialFiles.dataserverSuperPassword}"
               "PORTAL_COOKIE_KEY:${credentialFiles.portalCookieKey}"
-              "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
-              "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
+              "AWS_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+              "AWS_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
             ];
           };
       };
@@ -829,8 +848,8 @@ in {
             "AUTH_SALT:${credentialFiles.authSalt}"
             "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
             "DATASERVER_SUPER_PASSWORD:${credentialFiles.dataserverSuperPassword}"
-            "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
-            "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
+            "AWS_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+            "AWS_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
           ];
         };
       };
@@ -852,8 +871,8 @@ in {
               "AUTH_SALT:${credentialFiles.authSalt}"
               "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
               "DATASERVER_SUPER_PASSWORD:${credentialFiles.dataserverSuperPassword}"
-              "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
-              "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
+              "AWS_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+              "AWS_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
             ];
           };
       };
@@ -878,8 +897,8 @@ in {
               "AUTH_SALT:${credentialFiles.authSalt}"
               "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
               "DATASERVER_SUPER_PASSWORD:${credentialFiles.dataserverSuperPassword}"
-              "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
-              "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
+              "AWS_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+              "AWS_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
             ];
           };
         script = ''
@@ -914,22 +933,22 @@ in {
         environment = {
           NODE_ENV = "attachment-proxy";
           NODE_CONFIG_DIR = "/etc/zotero-dataserver/attachment-proxy";
+          XDG_STATE_HOME = "%S/zotero-attachment-proxy";
         };
-        script = ''
-          export AWS_ACCESS_KEY_ID="$(< "$CREDENTIALS_DIRECTORY/S3_ACCESS_KEY_ID")"
-          export AWS_SECRET_ACCESS_KEY="$(< "$CREDENTIALS_DIRECTORY/S3_SECRET_ACCESS_KEY")"
-          exec ${getExe cfg.attachment-proxy.package}
-        '';
         serviceConfig = {
+          ExecStart = "${getExe pkgs.secretspec} run --file ${cfg.portal.package}/share/zotero-portal/secretspec.toml --reason 'start attachment-proxy' --profile production --scope attachment-proxy -- ${getExe cfg.attachment-proxy.package}";
+          WorkingDirectory = "${cfg.portal.package}/share/zotero-portal";
           LoadCredential = [
             "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
-            "S3_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
-            "S3_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
+            "AWS_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
+            "AWS_SECRET_ACCESS_KEY:${credentialFiles.s3SecretAccessKey}"
           ];
           Restart = "always";
           RestartSec = 5;
           DynamicUser = true;
           CacheDirectory = "zotero-attachment-proxy";
+          StateDirectory = "zotero-attachment-proxy";
+          StateDirectoryMode = "0700";
         };
       };
       zotero-citeproc-js-server = {
