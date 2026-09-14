@@ -2,6 +2,7 @@
   buildNpmPackage,
   fetchFromGitHub,
   lib,
+  nix-update-script,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -24,6 +25,10 @@ buildNpmPackage (finalAttrs: {
   npmDepsHash = "sha256-j4ePfSOaG1eO/2KovH2Z4cd/7G8t6TnoP43zBtftOU0=";
 
   dontNpmBuild = true;
+
+  passthru.updateScript = nix-update-script {
+    extraArgs = ["--flake" "--version=branch=master"];
+  };
 
   meta = {
     description = "Web service to generate citations and bibliographies using citeproc-js";

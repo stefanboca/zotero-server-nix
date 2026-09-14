@@ -6,23 +6,10 @@
   lib,
   ruby,
   rubyPackages,
+  stdenvNoCC,
   unzip,
   zotero,
 }: let
-  version = "1.8.1";
-
-  release = fetchurl {
-    url = "https://github.com/zotero/web-library/releases/download/v${version}/web-library-v${version}.zip";
-    hash = "sha256-4Sg8erq859DmJoMdIsMz0eh/ZXh/MYgQiJpFzBSRvvU=";
-  };
-
-  citationStyles = fetchFromGitHub {
-    owner = "citation-style-language";
-    repo = "styles";
-    rev = "06b12a6d043cf961caf2839cc43ce2c27036d593";
-    hash = "sha256-PMhlM7exjd1m1jv+2K9fMbPb5t+Ms0UvvYD8xs1SBtA=";
-  };
-
   namae = buildRubyGem {
     inherit ruby;
     gemName = "namae";
@@ -46,16 +33,16 @@
     ];
   };
 in
-  buildNpmPackage {
+  buildNpmPackage (finalAttrs: {
     pname = "zotero-web-library";
-    inherit version;
+    version = "1.8.2-unstable-2026-09-11";
 
     src = fetchFromGitHub {
       owner = "zotero";
       repo = "web-library";
-      rev = "556d0bf6b1b48fa8402a91afa62b15533b713013";
+      rev = "9f6cf7923fbab6f55da46586793ab0a2f9a2dc84";
       fetchSubmodules = true;
-      hash = "sha256-qDTgjf/QXX5NPzFpxN7e5Sd5ZITH4VHwF45U21l40nM=";
+      hash = "sha256-J7wi6SlYhPnisdi0MH9AFkdaHhuRL85+e5LuFeh16e8=";
     };
 
     npmDepsHash = "sha256-OgmZ9aUQZDy0BFOuveW/t0u0Ng0syK7lDzOi+vi3di4=";
@@ -70,6 +57,29 @@ in
 
     nativeBuildInputs = [csl ruby unzip];
 
+    env = {
+      release = fetchurl {
+        url = "https://github.com/zotero/web-library/releases/download/v${finalAttrs.version}/web-library-v${finalAttrs.version}.zip";
+        hash = "sha256-4Sg8erq859DmJoMdIsMz0eh/ZXh/MYgQiJpFzBSRvvU=";
+      };
+
+      citationStyles = stdenvNoCC.mkDerivation {
+        pname = "citation-styles";
+        version = "0.2.210-unstable-2026-09-14";
+
+        src = fetchFromGitHub {
+          owner = "citation-style-language";
+          repo = "styles";
+          rev = "90e657c8622ec1c6f27788e041b355efac659397";
+          hash = "sha256-M+oPFo7LUYvith1e+DvsCpc/yt+1vBZs6oLfZjGQmXM=";
+        };
+
+        installPhase = ''
+          cp -r . "$out"
+        '';
+      };
+    };
+
     preBuild = ''
       mkdir -p \
         data \
@@ -80,15 +90,15 @@ in
         src/static/reader \
         src/static/styles
 
-      unzip -q ${release} -d release
-      releaseStatic=release/web-library-v${version}/static/web-library
+      unzip -q $release -d release
+      releaseStatic=release/web-library-v${finalAttrs.version}/static/web-library
       cp -r $releaseStatic/reader/. src/static/reader/
       cp -r $releaseStatic/pdf-worker/. src/static/pdf-worker/
       cp -r $releaseStatic/note-editor/. src/static/note-editor/
       cp $releaseStatic/fonts/36AC02_5_0.* src/static/fonts/
       cp ${zotero.src}/chrome/content/zotero/xpcom/citeproc.js citeproc.js
-      cp ${citationStyles}/*.csl ${citationStyles}/dependent/*.csl src/static/styles/
-      ruby ${./generate-styles-json.rb} ${citationStyles} data/styles.json
+      cp $citationStyles/*.csl $citationStyles/dependent/*.csl src/static/styles/
+      ruby ${./generate-styles-json.rb} $citationStyles data/styles.json
       cp data/styles.json src/static/styles/styles.json
       npx terser citeproc.js --output src/static/js/citeproc.js
     '';
@@ -117,9 +127,11 @@ in
       runHook postInstall
     '';
 
+    passthru.updateScript = [./update.sh];
+
     meta = {
       description = "Zotero Web Library packaged for Zotero Local Cloud";
       homepage = "https://github.com/zotero/web-library";
       license = lib.licenses.agpl3Only;
     };
-  }
+  })

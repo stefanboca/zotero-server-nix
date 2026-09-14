@@ -2,17 +2,18 @@
   buildNpmPackage,
   fetchFromGitHub,
   lib,
+  nix-update-script,
   ...
 }:
 buildNpmPackage (finalAttrs: {
   pname = "zotero-stream-server";
-  version = "0-unstable-2026-03-24";
+  version = "0-unstable-2026-09-02";
 
   src = fetchFromGitHub {
     owner = "zotero";
     repo = "stream-server";
-    rev = "55cb51c85f6787261d878529aaa440cbc08b8f15";
-    hash = "sha256-hVDdCwJaOrlpdD43ZXvpqk1NCOjD0dV6FpgbOUnA0Xw=";
+    rev = "9dc1725f71f816a2821c6d8985bc88729b7a4947";
+    hash = "sha256-j+Zxb6RHfQD7WTDH103yHKVtkJc4boJHJVAS3iT7TW4=";
   };
 
   patches = [
@@ -24,6 +25,10 @@ buildNpmPackage (finalAttrs: {
   npmDepsHash = "sha256-sIasdXvj+vZidDDaVdb+sdhE58dW2p36MUoyIs7/lMY=";
 
   dontNpmBuild = true;
+
+  passthru.updateScript = nix-update-script {
+    extraArgs = ["--flake" "--version=branch=master"];
+  };
 
   meta = {
     description = "Zotero Streaming API Server";

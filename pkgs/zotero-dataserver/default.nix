@@ -2,6 +2,7 @@
   fetchFromGitHub,
   lib,
   lndir,
+  nix-update-script,
   php,
   runCommandLocal,
   ...
@@ -35,13 +36,13 @@
 in
   php.buildComposerProject2 (finalAttrs: {
     pname = "zotero-dataserver";
-    version = "2026-08-02";
+    version = "0-unstable-2026-08-26";
 
     src = fetchFromGitHub {
       owner = "zotero";
       repo = "dataserver";
-      rev = "5cf550f3166e848981a8ec60696ae3a6a5d82bc7";
-      hash = "sha256-20vNlTrc915lnIwUpm/CwbW50Xw2/RrwBCRhvqXl4aU=";
+      rev = "476ed12c18cbd431170346702882d091710f5f61";
+      hash = "sha256-f13ZDoQL+n/oCUEJQiyw28zy6h9v7LdxCfHXUnf8PTU=";
       fetchSubmodules = true;
     };
 
@@ -75,13 +76,26 @@ in
     ];
 
     composerStrictValidation = false;
-    vendorHash = "sha256-IZtXmv2xKEpfjHFi6rp+lZvzHAsMN1vWOWqb/DH5ViY=";
+    vendorHash = "sha256-SPobvqh9JmAOLGAZlrdFBYvC18OXNIDFqk4QvzuxfF0=";
+
+    # Composer does not accept nix-update's 0-unstable-YYYY-MM-DD version as
+    # COMPOSER_ROOT_VERSION. The date alone is a valid Composer version.
+    composerVendor = php.mkComposerVendor {
+      inherit (finalAttrs) pname src vendorHash;
+      version = lib.removePrefix "0-unstable-" finalAttrs.version;
+      inherit (finalAttrs) php;
+      composerStrictValidation = false;
+    };
 
     preBuild = ''
       cp -a $zf1/library/Zend/. ./include/Zend
     '';
 
     passthru = {
+      updateScript = nix-update-script {
+        extraArgs = ["--flake" "--version=branch=master"];
+      };
+
       withConfig = {
         config,
         dbconnect,

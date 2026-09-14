@@ -2,6 +2,7 @@
   buildNpmPackage,
   fetchFromGitHub,
   lib,
+  nix-update-script,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -22,6 +23,10 @@ buildNpmPackage (finalAttrs: {
   npmDepsHash = "sha256-a/Qlzn5Rs1PoFdh1zEm2gDUbcYvAgbDCzP/LhDX4Gds=";
 
   dontNpmBuild = true;
+
+  passthru.updateScript = nix-update-script {
+    extraArgs = ["--flake" "--version=branch=master"];
+  };
 
   meta = {
     description = "A Node.js-based server to run Zotero translators";

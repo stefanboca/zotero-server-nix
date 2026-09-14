@@ -1,6 +1,7 @@
 {
   buildNpmPackage,
   fetchFromGitHub,
+  nix-update-script,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -19,6 +20,10 @@ buildNpmPackage (finalAttrs: {
   npmDepsHash = "sha256-j1mu81uwqCJZ3VWFd4uOOuG2M1ziIE4KFDM8cqQEqQg=";
 
   dontNpmBuild = true;
+
+  passthru.updateScript = nix-update-script {
+    extraArgs = ["--flake" "--version=branch=master"];
+  };
 
   meta = {
     description = "Node.js HTTP server to clean HTML using TinyMCE parsing/filtering logic";

@@ -14,6 +14,7 @@
   }: let
     inherit (nixpkgs) lib;
     inherit (lib.attrsets) genAttrs mapAttrs' nameValuePair;
+    inherit (lib.strings) concatMapStringsSep escapeShellArg escapeShellArgs;
     inherit (lib.meta) getExe;
 
     systems = ["x86_64-linux" "aarch64-linux"];
@@ -28,7 +29,20 @@
 
     apps = forAllSystems (system: let
       pkgs = nixpkgsFor.${system};
+      packages = self.packages.${system};
       sqlxPrepare = import ./dev/sqlx-prepare.nix {inherit lib pkgs;};
+      update = pkgs.writeShellApplication {
+        name = "update-zotero-server-packages";
+        text = concatMapStringsSep "\n" (name: ''UPDATE_NIX_ATTR_PATH=${escapeShellArg name} ${escapeShellArgs packages.${name}.passthru.updateScript}'') [
+          "zotero-attachment-proxy"
+          "zotero-citeproc-js-server"
+          "zotero-dataserver"
+          "zotero-stream-server"
+          "zotero-tinymce-clean-server"
+          "zotero-translation-server"
+          "zotero-web-library"
+        ];
+      };
       vm = lib.nixosSystem {
         inherit system;
         modules = [(import ./dev/vm.nix self)];
@@ -43,6 +57,11 @@
         type = "app";
         program = getExe sqlxPrepare;
         meta.description = "Prepare SQLx metadata with a temporary MariaDB database";
+      };
+      update = {
+        type = "app";
+        program = getExe update;
+        meta.description = "Update all upstream Zotero server packages";
       };
     });
 

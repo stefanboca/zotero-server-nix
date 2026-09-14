@@ -2,6 +2,7 @@
   buildNpmPackage,
   fetchFromGitHub,
   lib,
+  nix-update-script,
   ...
 }:
 buildNpmPackage (finalAttrs: {
@@ -24,6 +25,10 @@ buildNpmPackage (finalAttrs: {
   npmDepsHash = "sha256-NLMPzCmDiZOushrEEOJG4GGlPYUdi5yQhs7OyB0KYVw=";
 
   dontNpmBuild = true;
+
+  passthru.updateScript = nix-update-script {
+    extraArgs = ["--flake" "--version=branch=master"];
+  };
 
   postInstall = ''
     install -Dm444 config/sample-config.js "$out/lib/node_modules/attachment-proxy/config/default.js"
