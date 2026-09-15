@@ -12,7 +12,7 @@ use topcoat::{
     context::{Cx, app_context, try_request_context},
     router::{Body, Next, href, layer, page, response::Response},
     session,
-    view::{Unescaped, view},
+    view::{Unescaped, View, view},
 };
 use url::Url;
 
@@ -33,11 +33,11 @@ async fn web_library_request(cx: &Cx, body: Body, next: Next<'_>) -> Result<Resp
 }
 
 #[page]
-pub(super) async fn landing(cx: &Cx) -> Result {
+pub(super) async fn landing(cx: &Cx) -> Result<impl View> {
     library(cx).await
 }
 
-pub(super) async fn library(cx: &Cx) -> Result {
+pub(super) async fn library(cx: &Cx) -> Result<impl View + use<>> {
     let user = signed_in_user(cx).await?;
     let token_hash = session::token_hash(cx)
         .await?
@@ -56,7 +56,7 @@ pub(super) async fn library(cx: &Cx) -> Result {
         try_request_context::<GroupWebLibrary>(cx).is_some(),
     ))?;
 
-    view! {
+    Ok(view! {
         cx =>
         <main class="h-dvh w-full overflow-hidden">
             <div class="h-full min-w-0 flex-1" id="zotero-web-library"></div>
@@ -68,7 +68,7 @@ pub(super) async fn library(cx: &Cx) -> Result {
             </script>
             <script src="/static/web-library/zotero-web-library.js"></script>
         </main>
-    }
+    })
 }
 
 #[derive(serde::Serialize)]

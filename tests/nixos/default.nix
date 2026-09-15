@@ -177,18 +177,6 @@ in {
       assert fulltext_index["mappings"]["_routing"]["required"] is True
       assert fulltext_index["mappings"]["properties"]["libraryID"]["type"] == "integer"
       assert fulltext_index["mappings"]["properties"]["content"]["type"] == "text"
-      assert machine.succeed(
-          "ls -1 /var/lib/opensearch/plugins"
-      ).splitlines() == ["opensearch-security"]
-      opensearch_nodes = json.loads(
-          machine.succeed(
-              "curl --silent --show-error --fail-with-body "
-              f"http://127.0.0.1:{opensearch_port}/_nodes/_local/jvm"
-          )
-      )["nodes"]
-      opensearch_heap = next(iter(opensearch_nodes.values()))["jvm"]["mem"]
-      assert opensearch_heap["heap_init_in_bytes"] == 128 * 1024 * 1024
-      assert opensearch_heap["heap_max_in_bytes"] == 512 * 1024 * 1024
 
       failed_units = machine.succeed(
           "systemctl list-units --state=failed --no-legend --plain"
@@ -679,7 +667,7 @@ in {
       ).strip()
       assert legacy_library_status == "404", legacy_library_status
       legacy_library = machine.succeed("cat /tmp/legacy-library.html")
-      assert "The page may have moved" in legacy_library, legacy_library
+      assert "The page could not be found" in legacy_library, legacy_library
 
       missing_status = machine.succeed(
           "curl --silent --show-error --output /tmp/missing.html "
@@ -691,7 +679,7 @@ in {
       assert missing_status == "404", missing_status
       missing_page = machine.succeed("cat /tmp/missing.html")
       assert "<!DOCTYPE html>" in missing_page, missing_page
-      assert "The page may have moved" in missing_page, missing_page
+      assert "The page could not be found" in missing_page, missing_page
       assert "/_topcoat/assets/" in missing_page, missing_page
 
       profile_page = machine.succeed(

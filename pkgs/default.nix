@@ -1,5 +1,4 @@
-pkgs: let
-in {
+pkgs: {
   # keep-sorted start block=yes newline_separated=yes
   oidc-provider-mock = pkgs.callPackage ./oidc-provider-mock {};
 

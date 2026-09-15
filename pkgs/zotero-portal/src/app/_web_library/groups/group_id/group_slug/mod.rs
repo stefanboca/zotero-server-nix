@@ -6,6 +6,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{error::not_found, path_param},
+    view::View,
 };
 
 use crate::{
@@ -20,7 +21,7 @@ use super::GroupId;
 
 topcoat::router::path_param!(pub(in crate::app) group_slug);
 
-async fn group_library(cx: &Cx) -> Result {
+async fn group_library(cx: &Cx) -> Result<impl View> {
     let user_id = authenticated_user(cx).await?;
     let group_id = *path_param::<GroupId>(cx)?;
     let group = app_context::<Dataserver>(cx)

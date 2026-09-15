@@ -11,52 +11,50 @@ use jiff::Timestamp;
 use topcoat::{
     Result,
     context::Cx,
-    router::{Body, error::rewrite, href, layout, request::uri, response::Response, route},
-    view::{PromotedStr, view},
+    router::{Body, Slot, error::rewrite, href, layout, request::uri, route},
+    view::{PromotedStr, View, view},
 };
 
 use crate::app::{SidebarItem, portal_page, sidebar};
 
 #[route(GET)]
-pub(super) async fn settings(cx: &Cx) -> Result<Response> {
+pub(super) async fn settings(cx: &Cx) -> Result<()> {
     Err(rewrite(href!(profile::profile).resolve(cx), Body::empty()).into())
 }
 
 #[layout]
-async fn settings_layout(cx: &Cx, slot: Result) -> Result {
-    let slot = slot?;
+async fn settings_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let path = uri(cx).path();
-    let settings_root = href!(settings).resolve(cx);
-    let profile = href!(profile::profile).resolve(cx);
-    let security = href!(security::security).resolve(cx);
-    let storage = href!(storage::storage).resolve(cx);
+    let profile = href!(profile::profile);
+    let security = href!(security::security);
+    let storage = href!(storage::storage);
     let new_key = href!(keys::new_key_route).resolve(cx);
     let key_routes = new_key
         .rsplit_once('/')
         .map_or(new_key.as_str(), |(parent, _)| parent);
-    let security_active = path == security
+    let security_active = security.is_current(cx)
         || path == key_routes
         || path
             .strip_prefix(key_routes)
             .is_some_and(|suffix| suffix.starts_with('/'));
     let navigation = vec![
         SidebarItem {
-            active: path == profile || path == settings_root,
-            href: profile,
+            active: profile.is_current(cx) || href!(settings).is_current(cx),
+            href: profile.resolve(cx),
             label: PromotedStr(&"Profile"),
         },
         SidebarItem {
             active: security_active,
-            href: security,
+            href: security.resolve(cx),
             label: PromotedStr(&"Security"),
         },
         SidebarItem {
-            active: path == storage,
-            href: storage,
+            active: storage.is_current(cx),
+            href: storage.resolve(cx),
             label: PromotedStr(&"Storage"),
         },
     ];
-    view! {
+    Ok(view! {
         portal_page(
             <div class="portal-settings-heading-row">
                 <h1 class="portal-settings-heading">"Settings"</h1>
@@ -69,7 +67,7 @@ async fn settings_layout(cx: &Cx, slot: Result) -> Result {
                 <div class="min-w-0">(slot)</div>
             </div>
         )
-    }
+    })
 }
 
 pub(super) fn format_storage_size(mebibytes: f64) -> String {

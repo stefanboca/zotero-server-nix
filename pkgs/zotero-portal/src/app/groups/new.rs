@@ -2,14 +2,8 @@ use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{
-        content::Form,
-        error::see_other,
-        href, page,
-        response::{IntoResponse, Response},
-        route,
-    },
-    view::view,
+    router::{content::Form, error::see_other, href, page, route},
+    view::{View, view},
 };
 
 use crate::{
@@ -30,9 +24,9 @@ struct CreateGroup {
 }
 
 #[page]
-pub(super) async fn new_group(cx: &Cx) -> Result {
+pub(super) async fn new_group(cx: &Cx) -> Result<impl View> {
     authenticated_user(cx).await?;
-    view! {
+    Ok(view! {
         portal_page(
             section(
                 <h1 class="text-3xl font-semibold">"Create a Group"</h1>
@@ -74,15 +68,15 @@ pub(super) async fn new_group(cx: &Cx) -> Result {
                 </form>
             )
         )
-    }
+    })
 }
 
 #[route(POST)]
-async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result<Response> {
+async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result<()> {
     let user_id = authenticated_user(cx).await?;
     let group_id = app_context::<Dataserver>(cx)
         .create_private_group(user_id, input.name.as_str())
         .await?;
     tracing::info!(user_id = %user_id, group_id, "group created");
-    see_other(href!(library_settings, GroupId(group_id)).resolve(cx)).into_response(cx)
+    Err(see_other(href!(library_settings, GroupId(group_id)).resolve(cx)).into())
 }

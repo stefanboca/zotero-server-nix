@@ -1,11 +1,16 @@
-use topcoat::{Result, context::Cx, router::page, view::view};
+use topcoat::{
+    Result,
+    context::Cx,
+    router::page,
+    view::{View, view},
+};
 
 use crate::app::{section, signed_in_user};
 
 #[page]
-pub(super) async fn profile(cx: &Cx) -> Result {
+pub(super) async fn profile(cx: &Cx) -> Result<impl View> {
     let user = signed_in_user(cx).await?;
-    view! {
+    Ok(view! {
         <div>
             section(
                 <h2 class="portal-section-heading">"Account"</h2>
@@ -26,5 +31,5 @@ pub(super) async fn profile(cx: &Cx) -> Result {
                 </p>
             )
         </div>
-    }
+    })
 }

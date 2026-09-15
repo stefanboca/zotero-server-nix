@@ -9,14 +9,12 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{
+        Slot,
         content::Form,
         error::{bad_request, forbidden, not_found, see_other},
-        href, layout, path_param, query_params,
-        request::uri,
-        response::{IntoResponse, Response},
-        route,
+        href, layout, page, path_param, query_params, route,
     },
-    view::{PromotedStr, view},
+    view::{PromotedStr, View, view},
 };
 
 use crate::{
@@ -51,28 +49,26 @@ pub(super) async fn managed_group_settings(cx: &Cx) -> Result<GroupSettingsConte
 }
 
 #[layout]
-async fn group_settings_layout(cx: &Cx, slot: Result) -> Result {
-    let slot = slot?;
-    let path = uri(cx).path();
+async fn group_settings_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let group_id = *path_param::<GroupId>(cx)?;
     let group = group_by_id(cx, group_id).await?.ok_or_else(not_found)?;
-    let general = href!(settings, GroupId(group_id)).resolve(cx);
-    let library = href!(library::library, GroupId(group_id)).resolve(cx);
-    let members = href!(members::members, GroupId(group_id)).resolve(cx);
+    let general = href!(settings, GroupId(group_id));
+    let members = href!(members::members, GroupId(group_id));
+    let library = href!(library::library, GroupId(group_id));
     let navigation = vec![
         SidebarItem {
-            active: path == general,
-            href: general,
+            active: general.is_current(cx),
+            href: general.resolve(cx),
             label: PromotedStr(&"Group"),
         },
         SidebarItem {
-            active: path == members,
-            href: members,
+            active: members.is_current(cx),
+            href: members.resolve(cx),
             label: PromotedStr(&"Members"),
         },
         SidebarItem {
-            active: path == library,
-            href: library,
+            active: library.is_current(cx),
+            href: library.resolve(cx),
             label: PromotedStr(&"Library"),
         },
     ];
@@ -80,9 +76,8 @@ async fn group_settings_layout(cx: &Cx, slot: Result) -> Result {
         super::group_slug::group_overview,
         GroupId(group.id),
         super::group_slug::GroupSlug(group.slug()),
-    )
-    .resolve(cx);
-    view! {
+    );
+    Ok(view! {
         portal_page(
             <div class="portal-settings-heading-row">
                 <h1 class="portal-settings-heading break-words">
@@ -97,7 +92,7 @@ async fn group_settings_layout(cx: &Cx, slot: Result) -> Result {
                 <div class="min-w-0">(slot)</div>
             </div>
         )
-    }
+    })
 }
 
 #[derive(Deserialize)]
@@ -114,8 +109,8 @@ struct SettingsQuery {
     saved: Option<bool>,
 }
 
-#[topcoat::router::page]
-pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result {
+#[page]
+pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
     let context = managed_group_settings(cx).await?;
     let query = query_params::<SettingsQuery>(cx)?;
     let transfer_candidates = if context.actor_role == GroupRole::Owner {
@@ -127,7 +122,7 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result {
     } else {
         None
     };
-    view! {
+    Ok(view! {
         if query.saved == Some(true) {
             success_message(message: "Group Settings Saved")
         }
@@ -246,11 +241,11 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result {
                 )
             }
         </div>
-    }
+    })
 }
 
 #[route(POST)]
-async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<Response> {
+async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<()> {
     let context = managed_group_settings(cx).await?;
     let name = input.name.as_str();
     let description = input.description.trim();
@@ -266,10 +261,10 @@ async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<Respo
         group_id = group.id,
         "group settings updated",
     );
-    see_other(
+    Err(see_other(
         href!(settings, GroupId(group.id))
             .query(SettingsQuery { saved: Some(true) })
             .resolve(cx),
     )
-    .into_response(cx)
+    .into())
 }

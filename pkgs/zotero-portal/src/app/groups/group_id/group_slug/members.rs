@@ -2,7 +2,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{href, page},
-    view::view,
+    view::{View, view},
 };
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
 use super::current_slug_group;
 
 #[page]
-pub(super) async fn members(cx: &Cx) -> Result {
+pub(super) async fn members(cx: &Cx) -> Result<impl View> {
     let (_, group, role) = current_slug_group(cx).await?;
     if role.is_none() {
         return Err(topcoat::router::error::not_found().into());
@@ -21,7 +21,7 @@ pub(super) async fn members(cx: &Cx) -> Result {
     let users = app_context::<Database>(cx)
         .users_by_ids(&group.user_ids())
         .await?;
-    view! {
+    Ok(view! {
         portal_page(
             section(
                 <header class="border-b border-stone-200 pb-6">
@@ -58,5 +58,5 @@ pub(super) async fn members(cx: &Cx) -> Result {
                 </ul>
             )
         )
-    }
+    })
 }

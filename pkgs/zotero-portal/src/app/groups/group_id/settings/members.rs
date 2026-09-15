@@ -2,8 +2,8 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{href, page},
-    runtime::shard,
-    view::{component, view},
+    runtime::{shard, signal},
+    view::{View, component, view},
 };
 
 use crate::{
@@ -15,12 +15,13 @@ use crate::{
 use super::managed_group_settings;
 
 #[page]
-pub(in crate::app::groups) async fn members(cx: &Cx) -> Result {
+pub(in crate::app::groups) async fn members(cx: &Cx) -> Result<impl View> {
     let context = managed_group_settings(cx).await?;
     let group_id = context.group.id;
-    view! {
-        signal members_refresh = false;
 
+    let members_refresh = signal(cx, || false);
+
+    Ok(view! {
         <div class="space-y-6">
             <input
                 type="checkbox"
@@ -40,14 +41,14 @@ pub(in crate::app::groups) async fn members(cx: &Cx) -> Result {
                 "src/app/groups/group_id/group_actions.js"
             ))
         ></script>
-    }
+    })
 }
 
 #[shard]
-async fn members_shard(cx: &Cx, refresh: bool) -> Result {
+async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
     let _ = refresh;
     let context = managed_group_settings(cx).await?;
-    let group = &context.group;
+    let group = context.group.clone();
     let mut users = app_context::<Database>(cx)
         .users_by_ids(&group.user_ids())
         .await?;
@@ -66,7 +67,7 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result {
     .resolve(cx);
     let groups = href!(crate::app::groups::list_groups).resolve(cx);
 
-    view! {
+    Ok(view! {
         <div data-members-region="">
             <h2 class="portal-section-heading">"Current Members"</h2>
             <form
@@ -177,15 +178,15 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result {
                 </div>
             </form>
         </div>
-    }
+    })
 }
 
 #[component]
-async fn member_invitations(cx: &Cx, group_id: u64) -> Result {
+async fn member_invitations(cx: &Cx, group_id: u64) -> Result<impl View> {
     let invitations = app_context::<Database>(cx)
         .group_invitations(group_id)
         .await?;
-    view! {
+    Ok(view! {
         section(
             <h2 class="portal-section-heading">"Member Invitations"</h2>
             if !invitations.is_empty() {
@@ -254,5 +255,5 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result {
                 "Send More Invitations"
             </a>
         )
-    }
+    })
 }

@@ -3,13 +3,12 @@ use topcoat::{
     context::{Cx, app_context},
     cookie::{Cookies as _, SameSite, cookie_store, private_cookies},
     router::{
-        HeaderValue, StatusCode,
-        error::{bad_request, forbidden},
-        header, href, page, query_params,
+        error::{bad_request, forbidden, see_other},
+        header, href, query_params,
         request::headers,
+        route,
     },
     session,
-    view::view,
 };
 
 use crate::{
@@ -27,16 +26,8 @@ struct CallbackQuery {
     error_description: Option<String>,
 }
 
-#[page]
-async fn callback(cx: &Cx) -> Result {
-    let result = callback_inner(cx).await;
-    if let Err(error) = &result {
-        tracing::error!(error = %format_args!("{error:#}"), "OIDC callback failed");
-    }
-    result
-}
-
-async fn callback_inner(cx: &Cx) -> Result {
+#[route(GET)]
+async fn callback(cx: &Cx) -> Result<()> {
     let query = query_params::<CallbackQuery>(cx)?;
     if let Some(error) = &query.error {
         let description = query.error_description.as_deref().unwrap_or(error);
@@ -105,22 +96,8 @@ async fn callback_inner(cx: &Cx) -> Result {
     );
 
     if flow.session_token.is_some() {
-        view! {
-            cx =>
-            (StatusCode::SEE_OTHER)
-            ((
-                header::LOCATION,
-                HeaderValue::try_from(
-                    href!(crate::app::user::login::done::done).resolve(cx),
-                )?,
-            ))
-        }
+        Err(see_other(href!(crate::app::user::login::done::done).resolve(cx)).into())
     } else {
-        let location = HeaderValue::try_from(flow.return_path)?;
-        view! {
-            cx =>
-            (StatusCode::SEE_OTHER)
-            ((header::LOCATION, location))
-        }
+        Err(see_other(flow.return_path).into())
     }
 }

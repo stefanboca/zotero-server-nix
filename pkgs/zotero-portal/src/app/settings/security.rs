@@ -4,7 +4,7 @@ use topcoat::{
     context::{Cx, app_context},
     router::{href, page},
     session,
-    view::{component, view},
+    view::{View, component, view},
 };
 
 use crate::{
@@ -17,18 +17,18 @@ use crate::{
 use super::{format_relative_time, format_timestamp, parse_client_timestamp};
 
 #[page]
-pub(super) async fn security(cx: &Cx) -> Result {
+pub(super) async fn security(cx: &Cx) -> Result<impl View> {
     let user_id = signed_in_user(cx).await?.user_id;
-    view! {
+    Ok(view! {
         <div class="space-y-6">
             section(browser_sessions(user_id: user_id))
             section(applications(user_id: user_id))
         </div>
-    }
+    })
 }
 
 #[component]
-async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result {
+async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result<impl View> {
     let database = app_context::<Database>(cx);
     let current_handle = session::token_hash(cx)
         .await?
@@ -39,8 +39,7 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result {
         .await?;
     browser_sessions.sort_by_key(|browser_session| browser_session.handle != current_handle);
     let now = Timestamp::now();
-    let current_handle = current_handle.as_str();
-    view! {
+    Ok(view! {
         <div id="sessions">
             <h3 class="portal-section-heading">"Browser Sessions"</h3>
             <p class="mt-2">
@@ -117,7 +116,7 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result {
                 </table>
             </div>
         </div>
-    }
+    })
 }
 
 fn browser_platform(user_agent: Option<&str>) -> String {
@@ -161,10 +160,10 @@ fn browser_platform(user_agent: Option<&str>) -> String {
 }
 
 #[component]
-async fn applications(cx: &Cx, user_id: UserId) -> Result {
+async fn applications(cx: &Cx, user_id: UserId) -> Result<impl View> {
     let access_keys = app_context::<Dataserver>(cx).access_keys(user_id).await?;
     let now = Timestamp::now();
-    view! {
+    Ok(view! {
         <div id="applications">
             <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -266,5 +265,5 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result {
                 </div>
             }
         </div>
-    }
+    })
 }

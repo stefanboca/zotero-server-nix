@@ -12,26 +12,21 @@ mod user;
 mod web;
 
 use jiff::SignedDuration;
-use std::{os::unix::fs::PermissionsExt as _, sync::Arc, time::Duration};
 
-use anyhow::Context as _;
-use base64::{Engine as _, prelude::BASE64_STANDARD};
 use topcoat::{
     Result,
-    asset::{AssetBundle, RouterBuilderAssetExt},
     context::{Cx, app_context, memoize, try_request_context},
-    cookie::RouterBuilderCookieExt,
     router::{
-        Body, LayerFn, LayerFuture, Next, Path, RouterBuilder, RouterBuilderDiscoverExt,
-        StatusCode,
-        error::{RedirectError, RewriteError, not_found, redirect, redirect_permanent},
+        RouterBuilder, RouterBuilderDiscoverExt, Slot, StatusCode,
+        error::{RedirectError, RewriteError, not_found, redirect},
         href, layout,
         request::{headers, uri},
         response::IntoResponse,
         tower::TowerLayer,
     },
-    session::{self, RouterBuilderSessionExt, SessionConfig},
-    view::{PromotedStr, StaticStr, View, component, view},
+    runtime::RouterBuilderRuntimeExt as _,
+    session,
+    view::{Child, PromotedStr, StaticStr, View, component, error_boundary, view},
 };
 use tower_http::{
     LatencyUnit,
@@ -41,79 +36,19 @@ use tracing::Level;
 
 use crate::{
     app::_web_library::WebLibrary,
-    config::Config,
     database::{self, Database},
     dataserver::Dataserver,
     id::UserId,
-    oidc::Oidc,
 };
 
 pub(crate) const FLOW_LIFETIME: SignedDuration = SignedDuration::from_mins(15);
 
-pub async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
-    let secrets = config.secrets()?;
-    let cookie_key = BASE64_STANDARD
-        .decode(secrets.portal_cookie_key.trim())
-        .context("decoding PORTAL_COOKIE_KEY")?;
-    let cookie_key = topcoat::cookie::Key::try_from(cookie_key.as_slice())
-        .context("PORTAL_COOKIE_KEY must decode to at least 64 bytes")?;
-    let database = Database::new(config.clone(), secrets.database_url.trim()).await?;
-    let dataserver = Dataserver::new(config.clone(), secrets.dataserver_super_password)?;
-    let oidc = Oidc::new(config.clone(), secrets.oidc_client_secret).await?;
-    let router = routes()
-        .cookies()
-        .sessions(
-            SessionConfig::builder()
-                .lifetime(Duration::from_secs(config.browser_session_lifetime_seconds))
-                .build(),
-        )
-        .app_context(cookie_key)
-        .app_context(database)
-        .app_context(dataserver)
-        .app_context(oidc)
-        .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
-        .build();
-
-    match config.server_address.scheme() {
-        "unix" => {
-            let socket = config.server_address.path();
-            match std::fs::remove_file(&socket) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error).context("removing stale auth socket"),
-            };
-            let listener =
-                tokio::net::UnixListener::bind(&socket).context("binding auth socket")?;
-            std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660))
-                .with_context(|| format!("setting portal socket permissions on {socket}"))?;
-            tracing::info!(socket, "listening on Unix socket");
-            topcoat::serve(listener, router)
-                .await
-                .context("serving auth portal")
-        }
-        "http" | "https" => {
-            let address = config.server_address.authority();
-            let listener = tokio::net::TcpListener::bind(address)
-                .await
-                .context("binding tcp socket")?;
-            tracing::info!(address, "listening on TCP socket");
-            topcoat::serve(listener, router)
-                .await
-                .context("serving auth portal")
-        }
-        scheme => Err(anyhow::anyhow!("address has unknown scheme `{scheme}`")),
-    }
-}
-
-fn routes() -> RouterBuilder {
+pub fn routes() -> RouterBuilder {
     topcoat::router::module_router!()
+        .runtime()
         // Shards and explicit-path compatibility routes are registered through
         // the outer discovery extension.
         .discover()
-        // A module-root `#[layer]` resolves to the `/` route prefix, which
-        // only wraps matched routes. This layer is deliberately pathless so
-        // it can render router-level 404 and 405 errors with the site layout.
-        .layer(LayerFn::new(None::<&Path>, canonicalize_trailing_slash))
         .layer(TowerLayer::new(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
@@ -206,62 +141,11 @@ pub(crate) fn normalized_return_path(value: &str) -> Option<String> {
     Some(path)
 }
 
-fn canonicalize_trailing_slash<'a>(cx: &'a Cx, body: Body, next: Next<'a>) -> LayerFuture<'a> {
-    Box::pin(async move {
-        let request_uri = uri(cx);
-        let path = request_uri.path();
-        if path != "/" && path.ends_with('/') {
-            let mut location = path.trim_end_matches('/').to_owned();
-            if let Some(query) = request_uri.query() {
-                location.push('?');
-                location.push_str(query);
-            }
-            return redirect_permanent(&location).into_response(cx);
-        }
-        match next.run(cx, body).await {
-            Ok(response) => Ok(response),
-            Err(error) if error.downcast_ref::<RedirectError>().is_some() => {
-                error.into_response(cx)
-            }
-            Err(error) if error.downcast_ref::<RewriteError>().is_some() => Err(error),
-            // Unmatched routes sit outside Topcoat's path-scoped session
-            // layer, so their error document cannot look up account state.
-            Err(error) => root_document(cx, Err(error), false)
-                .await?
-                .into_response(cx),
-        }
-    })
-}
-
 #[layout]
-async fn root_layout(cx: &Cx, slot: Result) -> Result {
-    root_document(cx, slot, true).await
-}
-
-async fn root_document(cx: &Cx, slot: Result, load_navigation_user: bool) -> Result {
-    let content = match slot {
-        Ok(content) => content,
-        Err(error)
-            if error.downcast_ref::<RedirectError>().is_some()
-                || error.downcast_ref::<RewriteError>().is_some() =>
-        {
-            return Err(error);
-        }
-        Err(error) => {
-            let error_message = format!("{error:#}");
-            let status = error
-                .into_response(cx)
-                .expect("error.into_response() always return Ok")
-                .status();
-            if status.is_server_error() {
-                tracing::error!(error = error_message, %status, "request handler failed");
-            }
-            friendly_error_page(cx, status).await?
-        }
-    };
+async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let web_library_active = try_request_context::<WebLibrary>(cx).is_some();
     let show_portal_navigation = !web_library_active;
-    let navigation_user = if show_portal_navigation && load_navigation_user {
+    let navigation_user = if show_portal_navigation {
         match current_user(cx).await? {
             Some(user_id) => authenticated_user_summary(cx, user_id).await?,
             None => None,
@@ -269,12 +153,9 @@ async fn root_document(cx: &Cx, slot: Result, load_navigation_user: bool) -> Res
     } else {
         None
     };
-    let path = uri(cx).path();
-    let landing = href!(_web_library::landing).resolve(cx);
-    let groups = href!(groups::list_groups).resolve(cx);
-    let groups_active = path == groups || path.starts_with(&format!("{groups}/"));
-    view! {
-        cx =>
+    let landing = href!(_web_library::landing);
+    let groups = href!(groups::list_groups);
+    Ok(view! {
         <!DOCTYPE html>
         <html lang="en">
             <head>
@@ -302,9 +183,9 @@ async fn root_document(cx: &Cx, slot: Result, load_navigation_user: bool) -> Res
             </head>
             <body
                 class=(if web_library_active {
-                    "min-h-screen"
+                    PromotedStr(&"min-h-screen")
                 } else {
-                    "portal-theme"
+                    PromotedStr(&"portal-theme")
                 })
             >
                 if show_portal_navigation {
@@ -316,8 +197,10 @@ async fn root_document(cx: &Cx, slot: Result, load_navigation_user: bool) -> Res
                             <div class="flex min-w-0 items-center">
                                 <a
                                     class="portal-brand"
-                                    href=(landing.as_str())
-                                    aria-current=((path == landing).then_some("page"))
+                                    href=(landing.resolve(cx))
+                                    aria-current=(landing
+                                        .is_current(cx)
+                                        .then_some(PromotedStr(&"page")))
                                 >
                                     <img
                                         class="portal-logo"
@@ -333,8 +216,10 @@ async fn root_document(cx: &Cx, slot: Result, load_navigation_user: bool) -> Res
                             >
                                 <a
                                     class="portal-nav-link"
-                                    href=(groups)
-                                    aria-current=(groups_active.then_some("page"))
+                                    href=(groups.resolve(cx))
+                                    aria-current=(groups
+                                        .is_current(cx)
+                                        .then_some(PromotedStr(&"page")))
                                 >
                                     "Groups"
                                 </a>
@@ -376,18 +261,20 @@ async fn root_document(cx: &Cx, slot: Result, load_navigation_user: bool) -> Res
                             </div>
                         </nav>
                     </header>
-                    (content)
-                } else {
-                    (content)
                 }
+                error_boundary(fallback: |error| friendly_error_page(cx, error), (slot))
             </body>
         </html>
-    }
+    })
 }
 
 #[component]
-pub(crate) async fn confirm_button(label: &str, confirmation: &str, class: &str) -> Result {
-    view! {
+pub(crate) async fn confirm_button(
+    label: &str,
+    confirmation: &str,
+    class: &str,
+) -> Result<impl View> {
+    Ok(view! {
         <button
             class=(class)
             type="submit"
@@ -396,14 +283,14 @@ pub(crate) async fn confirm_button(label: &str, confirmation: &str, class: &str)
         >
             (label)
         </button>
-    }
+    })
 }
 
 /// Responsive content boundary shared by portal pages. The Web Library does
 /// not use it because that application owns the entire viewport.
 #[component]
-pub(crate) async fn portal_page(child: View) -> Result {
-    view! { <main class="portal-page">(child)</main> }
+pub(crate) async fn portal_page(child: Child<'_>) -> Result<impl View> {
+    Ok(view! { <main class="portal-page">(child)</main> })
 }
 
 pub(crate) struct SidebarItem {
@@ -413,8 +300,8 @@ pub(crate) struct SidebarItem {
 }
 
 #[component]
-pub(crate) async fn sidebar(aria_label: PromotedStr, items: Vec<SidebarItem>) -> Result {
-    view! {
+pub(crate) async fn sidebar(aria_label: PromotedStr, items: Vec<SidebarItem>) -> Result<impl View> {
+    Ok(view! {
         <nav class="portal-sidebar" aria-label=(aria_label)>
             <ul class="portal-sidebar-items">
                 for item in items {
@@ -434,41 +321,53 @@ pub(crate) async fn sidebar(aria_label: PromotedStr, items: Vec<SidebarItem>) ->
                 }
             </ul>
         </nav>
-    }
+    })
 }
 
 /// The modern zotero.org settings theme uses the same bordered white surface
 /// for independent sections. Keeping it here prevents pages from drifting.
 #[component]
-pub(crate) async fn section(child: View) -> Result {
-    view! { <section class="portal-card">(child)</section> }
+pub(crate) async fn section(child: Child<'_>) -> Result<impl View> {
+    Ok(view! { <section class="portal-card">(child)</section> })
 }
 
 #[component]
-pub(crate) async fn success_message(message: &str) -> Result {
-    view! {
+pub(crate) async fn success_message(message: &str) -> Result<impl View> {
+    Ok(view! {
         <p class="portal-alert portal-alert-success mb-6" role="status">(message)</p>
-    }
+    })
 }
 
-async fn friendly_error_page(cx: &Cx, status: StatusCode) -> Result<View> {
+fn friendly_error_page(cx: &Cx, error: topcoat::Error) -> Result<impl View> {
+    if error.downcast_ref::<RedirectError>().is_some()
+        || error.downcast_ref::<RewriteError>().is_some()
+    {
+        return Err(error);
+    }
+    let status = error
+        .into_response(cx)
+        .expect("error.into_response() always return Ok")
+        .status();
     let message = match status {
         StatusCode::UNAUTHORIZED => "Sign in and try again",
         StatusCode::FORBIDDEN => "Your account is not allowed to perform that action.",
-        StatusCode::NOT_FOUND => "The page may have moved, or you may not have access to it.",
-        _ => "The request could not be completed. Please try again",
+        StatusCode::NOT_FOUND => "The page could not be found. Check the address and try again.",
+        _ => "Something went wrong. Please try again",
     };
-    view! {
+    Ok(view! {
         cx =>
         (status)
         <main class="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
-            <h1 class="text-4xl font-semibold text-red-800">(status.as_u16())</h1>
-            if let Some(title) = status.canonical_reason() {
-                <p class="mt-2 text-2xl font-semibold">(StaticStr(title))</p>
-            }
+            <h1 class="text-4xl font-semibold text-red-800">
+                (status.as_u16())
+                if let Some(title) = status.canonical_reason() {
+                    " — "
+                    (StaticStr(title))
+                }
+            </h1>
             <p class="mt-4 max-w-2xl leading-7 text-stone-600">(StaticStr(message))</p>
         </main>
-    }
+    })
 }
 
 pub(crate) async fn signed_in_user(cx: &Cx) -> Result<database::UserSummary> {

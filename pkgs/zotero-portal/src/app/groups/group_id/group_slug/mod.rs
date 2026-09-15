@@ -4,7 +4,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{error::not_found, href, page, path_param},
-    view::{component, view},
+    view::{View, component, view},
 };
 
 use crate::{
@@ -40,9 +40,9 @@ pub(super) async fn current_slug_group(cx: &Cx) -> Result<(UserId, Group, Option
 }
 
 #[page]
-pub(in crate::app) async fn group_overview(cx: &Cx) -> Result {
+pub(in crate::app) async fn group_overview(cx: &Cx) -> Result<impl View> {
     let (_, group, role) = current_slug_group(cx).await?;
-    view! {
+    Ok(view! {
         portal_page(
             section(
                 <header class="border-b border-stone-200 pb-6">
@@ -101,18 +101,18 @@ pub(in crate::app) async fn group_overview(cx: &Cx) -> Result {
                 }
             )
         )
-    }
+    })
 }
 
 #[component]
-async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Result {
+async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Result<impl View> {
     let owner = app_context::<Database>(cx)
         .user_by_id(group.owner)
         .await?
         .ok_or_else(not_found)?;
     let registered = group.created.strftime("%Y-%m-%d").to_string();
     let leave_confirmation = format!("Leave “{}”?", group.name);
-    view! {
+    Ok(view! {
         <section>
             <h2 class="text-xl font-semibold">"Group Details"</h2>
             <dl class="mt-3 grid grid-cols-[8rem_1fr] gap-3 text-sm">
@@ -193,16 +193,16 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
                 </div>
             }
         </section>
-    }
+    })
 }
 
 #[component]
-async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
+async fn recent_group_items(cx: &Cx, group: &Group) -> Result<impl View> {
     let recently_added = app_context::<Dataserver>(cx)
         .recent_group_items(group.id)
         .await?;
     let total = recently_added.total;
-    view! {
+    Ok(view! {
         <section class="border-t border-stone-200 py-8">
             <h2 class="text-xl font-semibold">"Recently Added Items"</h2>
             if recently_added.items.is_empty() {
@@ -293,5 +293,5 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result {
                 </p>
             }
         </section>
-    }
+    })
 }

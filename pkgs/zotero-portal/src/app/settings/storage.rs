@@ -4,7 +4,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context, memoize},
     router::{href, page},
-    view::{component, view},
+    view::{View, component, view},
 };
 
 use crate::{
@@ -38,9 +38,9 @@ async fn storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {
 }
 
 #[page]
-pub(in crate::app) async fn storage(cx: &Cx) -> Result {
+pub(in crate::app) async fn storage(cx: &Cx) -> Result<impl View> {
     let user_id = signed_in_user(cx).await?.user_id;
-    view! {
+    Ok(view! {
         <div class="space-y-6">
             section(
                 <div>
@@ -61,11 +61,11 @@ pub(in crate::app) async fn storage(cx: &Cx) -> Result {
                 </p>
             )
         </div>
-    }
+    })
 }
 
 #[component]
-async fn current_plan(cx: &Cx, user_id: UserId) -> Result {
+async fn current_plan(cx: &Cx, user_id: UserId) -> Result<impl View> {
     let usage = storage_usage(cx, user_id).await?;
     let quota = usage
         .quota_mb
@@ -75,7 +75,7 @@ async fn current_plan(cx: &Cx, user_id: UserId) -> Result {
         .expiration
         .map(format_timestamp)
         .unwrap_or_else(|| "Never".to_owned());
-    view! {
+    Ok(view! {
         <div>
             <h2 class="portal-storage-heading">"Current Plan"</h2>
             <dl class="portal-storage-details">
@@ -85,20 +85,21 @@ async fn current_plan(cx: &Cx, user_id: UserId) -> Result {
                 <dd>(expiration)</dd>
             </dl>
         </div>
-    }
+    })
 }
 
 #[component]
-async fn current_usage(cx: &Cx, user_id: UserId) -> Result {
+async fn current_usage(cx: &Cx, user_id: UserId) -> Result<impl View> {
     let usage = storage_usage(cx, user_id).await?;
     let mut group_usage = usage.groups.clone();
     group_usage.sort_by_key(|usage| usage.group_id);
-    let library_usage = format!("My Library - {}", format_storage_size(usage.library_mb),);
-    let total_usage = format!("Total - {}", format_storage_size(usage.total_mb));
-    view! {
+    Ok(view! {
         <dl class="portal-storage-details portal-storage-usage">
             <dt>"Current Usage"</dt>
-            <dd>(library_usage)</dd>
+            <dd>
+                "My Library - "
+                (format_storage_size(usage.library_mb))
+            </dd>
             for usage in group_usage {
                 group_storage_usage(
                     key: usage.group_id,
@@ -107,21 +108,27 @@ async fn current_usage(cx: &Cx, user_id: UserId) -> Result {
                 )
             }
             <dt aria-hidden="true"></dt>
-            <dd>(total_usage)</dd>
+            <dd>
+                "Total - "
+                (format_storage_size(usage.total_mb))
+            </dd>
         </dl>
-    }
+    })
 }
 
 #[component]
-async fn group_storage_usage(cx: &Cx, group_id: u64, usage_mb: f64) -> Result {
+async fn group_storage_usage(cx: &Cx, group_id: u64, usage_mb: f64) -> Result<impl View> {
     let group_name = app_context::<Dataserver>(cx)
         .group(group_id)
         .await?
         .map(|group| group.name)
         .unwrap_or_else(|| format!("Group {group_id}"));
-    let usage = format!("{group_name} - {}", format_storage_size(usage_mb));
-    view! {
+    Ok(view! {
         <dt aria-hidden="true"></dt>
-        <dd>(usage)</dd>
-    }
+        <dd>
+            (group_name)
+            " - "
+            (format_storage_size(usage_mb))
+        </dd>
+    })
 }

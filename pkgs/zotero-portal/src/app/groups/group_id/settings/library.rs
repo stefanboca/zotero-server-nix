@@ -2,14 +2,8 @@ use serde::{Deserialize, Serialize};
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{
-        content::Form,
-        error::see_other,
-        href, page, query_params,
-        response::{IntoResponse, Response},
-        route,
-    },
-    view::{PromotedStr, view},
+    router::{content::Form, error::see_other, href, page, query_params, route},
+    view::{PromotedStr, View, component, view},
 };
 
 use crate::{
@@ -49,11 +43,11 @@ struct LibraryQuery {
 }
 
 #[page]
-pub(in crate::app::groups) async fn library(cx: &Cx) -> Result {
+pub(in crate::app::groups) async fn library(cx: &Cx) -> Result<impl View> {
     let context = managed_group_settings(cx).await?;
-    let group = &context.group;
+    let group = context.group.clone();
     let query = query_params::<LibraryQuery>(cx)?;
-    view! {
+    Ok(view! {
         if query.saved == Some(true) {
             success_message(message: "Settings saved")
         }
@@ -119,18 +113,18 @@ pub(in crate::app::groups) async fn library(cx: &Cx) -> Result {
                 </button>
             </form>
         )
-    }
+    })
 }
 
-#[topcoat::view::component]
+#[component]
 async fn setting_radio(
     id: PromotedStr,
     name: PromotedStr,
     value: PromotedStr,
     label: PromotedStr,
     checked: bool,
-) -> Result {
-    view! {
+) -> Result<impl View> {
+    Ok(view! {
         <label class="flex items-center gap-3" for=(id)>
             <input
                 id=(id)
@@ -142,11 +136,11 @@ async fn setting_radio(
             >
             <span>(label)</span>
         </label>
-    }
+    })
 }
 
 #[route(POST)]
-async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<Response> {
+async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<()> {
     let mut group = managed_group_settings(cx).await?.group;
     group.library_editing = match input.library_editing {
         LibraryEditing::Members => "members",
@@ -160,10 +154,10 @@ async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<Res
     }
     .to_owned();
     app_context::<Dataserver>(cx).update_group(&group).await?;
-    see_other(
+    Err(see_other(
         href!(library, GroupId(group.id))
             .query(LibraryQuery { saved: Some(true) })
             .resolve(cx),
     )
-    .into_response(cx)
+    .into())
 }

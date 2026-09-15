@@ -2,7 +2,7 @@ use topcoat::{
     Result,
     context::Cx,
     router::{href, page},
-    view::view,
+    view::{View, view},
 };
 
 use crate::app::signed_in_user;
@@ -10,9 +10,9 @@ use crate::app::signed_in_user;
 use super::key_editor;
 
 #[page]
-pub(in crate::app::settings) async fn new_key(cx: &Cx) -> Result {
+pub(in crate::app::settings) async fn new_key(cx: &Cx) -> Result<impl View> {
     let user = signed_in_user(cx).await?;
-    view! {
+    Ok(view! {
         <div class="portal-key-editor-page">
             <a
                 class="portal-link"
@@ -24,5 +24,5 @@ pub(in crate::app::settings) async fn new_key(cx: &Cx) -> Result {
             <header><h1 class="portal-key-title">"New Key"</h1></header>
             <div class="mt-4">key_editor(user_id: user.user_id, key_value: None)</div>
         </div>
-    }
+    })
 }

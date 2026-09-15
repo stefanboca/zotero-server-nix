@@ -2,7 +2,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{error::not_found, href, page, path_param},
-    view::{component, view},
+    view::{View, component, view},
 };
 
 use crate::{
@@ -16,7 +16,7 @@ topcoat::router::path_param!(pub(super) profile_username);
 
 /// The official navbar's "My Profile" entry points to `/<username>`.
 #[page("/{profile_username}")]
-pub(super) async fn profile(cx: &Cx) -> Result {
+pub(super) async fn profile(cx: &Cx) -> Result<impl View> {
     let actor_id = authenticated_user(cx).await?;
     let username = path_param::<ProfileUsername>(cx);
     let user = app_context::<Database>(cx)
@@ -24,7 +24,7 @@ pub(super) async fn profile(cx: &Cx) -> Result {
         .await?
         .filter(|user| user.username == username)
         .ok_or_else(not_found)?;
-    view! {
+    Ok(view! {
         portal_page(
             <div class="space-y-6">
                 <header>
@@ -51,17 +51,17 @@ pub(super) async fn profile(cx: &Cx) -> Result {
                 profile_groups(actor_id: actor_id, profile_user_id: user.user_id)
             </div>
         )
-    }
+    })
 }
 
 #[component]
-async fn profile_groups(cx: &Cx, actor_id: UserId, profile_user_id: UserId) -> Result {
+async fn profile_groups(cx: &Cx, actor_id: UserId, profile_user_id: UserId) -> Result<impl View> {
     let mut groups = app_context::<Dataserver>(cx)
         .groups_for_user(actor_id)
         .await?;
     groups.retain(|group| group.role(profile_user_id).is_some());
     groups.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
-    view! {
+    Ok(view! {
         section(
             <h2 class="text-xl font-semibold">"Groups"</h2>
             if groups.is_empty() {
@@ -95,5 +95,5 @@ async fn profile_groups(cx: &Cx, actor_id: UserId, profile_user_id: UserId) -> R
                 </ul>
             }
         )
-    }
+    })
 }

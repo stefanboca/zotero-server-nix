@@ -9,7 +9,7 @@ use topcoat::{
         route,
     },
     session,
-    view::view,
+    view::{View, view},
 };
 
 use crate::{
@@ -35,7 +35,7 @@ fn redirect_to(query: &LoginQuery) -> Result<String> {
 }
 
 #[page]
-pub(crate) async fn login(cx: &Cx) -> Result {
+pub(crate) async fn login(cx: &Cx) -> Result<impl View> {
     let query = query_params::<LoginQuery>(cx)?;
     let user_id = current_user(cx).await?;
     let form_query = if let Some(dataserver_session) = query.session.as_deref() {
@@ -60,7 +60,7 @@ pub(crate) async fn login(cx: &Cx) -> Result {
             redirect_to: Some(redirect_to),
         }
     };
-    view! {
+    Ok(view! {
         portal_page(
             <div class="mx-auto max-w-lg text-center">
                 section(
@@ -80,7 +80,7 @@ pub(crate) async fn login(cx: &Cx) -> Result {
                 )
             </div>
         )
-    }
+    })
 }
 
 #[route(POST)]

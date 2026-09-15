@@ -8,8 +8,8 @@ use topcoat::{
     Result,
     context::{Cx, app_context},
     router::{href, page},
-    runtime::shard,
-    view::{component, view},
+    runtime::{shard, signal},
+    view::{View, ViewExt as _, component, view},
 };
 
 use crate::{
@@ -65,9 +65,9 @@ impl TryFrom<String> for GroupName {
 }
 
 #[page]
-pub(super) async fn list_groups(cx: &Cx) -> Result {
+pub(super) async fn list_groups(cx: &Cx) -> Result<impl View> {
     let user = signed_in_user(cx).await?;
-    view! {
+    Ok(view! {
         portal_page(
             <div class="space-y-6">
                 incoming_invitations(user_id: user.user_id)
@@ -84,16 +84,16 @@ pub(super) async fn list_groups(cx: &Cx) -> Result {
                 )
             </div>
         )
-    }
+    })
 }
 
 #[component]
-async fn groups_list(cx: &Cx) -> Result {
+async fn groups_list(cx: &Cx) -> Result<impl View> {
     let user = signed_in_user(cx).await?;
     let dataserver = app_context::<Dataserver>(cx);
     let groups = dataserver.groups_for_user(user.user_id).await?;
     let total = groups.len();
-    view! {
+    Ok(view! {
         if !groups.is_empty() {
             <div class="mt-5 border-t border-stone-300">
                 for group in groups.iter().take(GROUPS_PER_PAGE) {
@@ -104,17 +104,15 @@ async fn groups_list(cx: &Cx) -> Result {
                 }
             </div>
         }
-    }
+    })
 }
 
-// A loaded page renders the control for its successor. Boxing this component
-// breaks that recursive component/shard future type cycle.
-#[component(boxed)]
-async fn more_groups(offset: usize) -> Result {
-    view! {
-        signal load = false;
-        signal offset = offset.to_string();
+#[component]
+async fn more_groups(cx: &Cx, offset: usize) -> Result<impl View> {
+    let load = signal(cx, || false);
+    let offset = signal(cx, || offset.to_string());
 
+    Ok(view! {
         <div class="pt-5" :hidden=$(load.get())>
             <button
                 class="portal-link"
@@ -126,12 +124,13 @@ async fn more_groups(offset: usize) -> Result {
         </div>
         groups_page(offset: $(offset.get()), load: $(load.get()))
     }
+    .boxed())
 }
 
 #[shard]
-async fn groups_page(cx: &Cx, offset: String, load: bool) -> Result {
+async fn groups_page(cx: &Cx, offset: String, load: bool) -> Result<impl View> {
     if !load {
-        return view! {};
+        return Ok(view! {}.boxed());
     }
     let user = signed_in_user(cx).await?;
     let offset = offset.parse::<usize>()?;
@@ -139,7 +138,7 @@ async fn groups_page(cx: &Cx, offset: String, load: bool) -> Result {
         .groups_for_user(user.user_id)
         .await?;
     let next_offset = offset.saturating_add(GROUPS_PER_PAGE);
-    view! {
+    Ok(view! {
         for group in groups.iter().skip(offset).take(GROUPS_PER_PAGE) {
             group_card(key: group.id, group: group, user_id: user.user_id)
         }
@@ -147,14 +146,15 @@ async fn groups_page(cx: &Cx, offset: String, load: bool) -> Result {
             more_groups(offset: next_offset)
         }
     }
+    .boxed())
 }
 
 #[component]
-async fn group_card(group: &Group, user_id: UserId) -> Result {
+async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
     let role = group.role(user_id).unwrap_or(GroupRole::Member);
     let member_count = group.user_ids().len();
     let slug = group.slug();
-    view! {
+    Ok(view! {
         <article class="border-b border-stone-300 py-5">
             <h3 class="text-lg font-semibold">
                 <a
@@ -212,18 +212,18 @@ async fn group_card(group: &Group, user_id: UserId) -> Result {
                 }
             </dl>
         </article>
-    }
+    })
 }
 
 #[component]
-async fn incoming_invitations(cx: &Cx, user_id: UserId) -> Result {
+async fn incoming_invitations(cx: &Cx, user_id: UserId) -> Result<impl View> {
     let invitations = app_context::<Database>(cx)
         .group_invitations_for_user(user_id)
         .await?;
     if invitations.is_empty() {
-        return view! {};
+        return Ok(view! {}.boxed());
     }
-    view! {
+    Ok(view! {
         section(
             <h2 class="portal-section-heading">"Group Invitations"</h2>
             <div class="mt-4 divide-y divide-stone-200">
@@ -236,17 +236,18 @@ async fn incoming_invitations(cx: &Cx, user_id: UserId) -> Result {
             </div>
         )
     }
+    .boxed())
 }
 
 #[component]
-async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result {
+async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result<impl View> {
     let Some(group) = app_context::<Dataserver>(cx)
         .group(invitation.group_id)
         .await?
     else {
-        return view! {};
+        return Ok(view! {}.boxed());
     };
-    view! {
+    Ok(view! {
         <div
             class="flex flex-wrap items-center justify-between gap-4 py-4 first:pt-0 last:pb-0"
         >
@@ -291,6 +292,7 @@ async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result {
             </div>
         </div>
     }
+    .boxed())
 }
 
 #[cfg(test)]

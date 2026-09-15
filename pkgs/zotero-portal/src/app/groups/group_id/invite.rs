@@ -4,8 +4,8 @@ use serde::Deserialize;
 use topcoat::{
     Result,
     context::{Cx, app_context},
-    router::{content::Form, href, page},
-    view::{component, view},
+    router::{content::Form, error::see_other, href, page},
+    view::{View, component, view},
 };
 
 use crate::{
@@ -23,8 +23,12 @@ struct Invitations {
 }
 
 #[component]
-async fn invitation_form(group: &Group, identifiers: &str, error: Option<&str>) -> Result {
-    view! {
+async fn invitation_form(
+    group: &Group,
+    identifiers: &str,
+    error: Option<&str>,
+) -> Result<impl View> {
+    Ok(view! {
         portal_page(
             section(
                 <header class="border-b border-stone-200 pb-6">
@@ -79,17 +83,17 @@ async fn invitation_form(group: &Group, identifiers: &str, error: Option<&str>) 
                 </form>
             )
         )
-    }
+    })
 }
 
 #[page]
-pub(in crate::app::groups) async fn invite_members(cx: &Cx) -> Result {
+pub(in crate::app::groups) async fn invite_members(cx: &Cx) -> Result<impl View> {
     let group = managed_group(cx).await?;
-    view! { invitation_form(group: &group, identifiers: "", error: None) }
+    Ok(view! { invitation_form(group: &group, identifiers: "", error: None) })
 }
 
 #[page(POST)]
-async fn send_invitations(cx: &Cx, Form(input): Form<Invitations>) -> Result {
+async fn send_invitations(cx: &Cx, Form(input): Form<Invitations>) -> Result<impl View> {
     let group = managed_group(cx).await?;
     let actor_id = authenticated_user(cx).await?;
     let mut seen = HashSet::new();
@@ -129,13 +133,13 @@ async fn send_invitations(cx: &Cx, Form(input): Form<Invitations>) -> Result {
     }
 
     if let Some(error) = validation_error {
-        return view! {
+        return Ok(view! {
             invitation_form(
                 group: &group,
                 identifiers: input.identifiers.as_str(),
                 error: Some(error.as_str())
             )
-        };
+        });
     }
 
     let database = app_context::<Database>(cx);
@@ -145,14 +149,7 @@ async fn send_invitations(cx: &Cx, Form(input): Form<Invitations>) -> Result {
             .await?;
     }
 
-    let location = href!(super::members_settings, GroupId(group.id)).resolve(cx);
-    view! {
-        (topcoat::router::StatusCode::SEE_OTHER)
-        ((
-            topcoat::router::header::LOCATION,
-            topcoat::router::HeaderValue::try_from(location)?,
-        ))
-    }
+    Err(see_other(href!(super::members_settings, GroupId(group.id)).resolve(cx)).into())
 }
 
 #[cfg(test)]

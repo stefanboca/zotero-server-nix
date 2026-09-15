@@ -11,7 +11,7 @@ use topcoat::{
     Result,
     context::{Cx, app_context, memoize},
     router::{error::not_found, href},
-    view::{PromotedStr, component, view},
+    view::{PromotedStr, View, component, view},
 };
 
 use crate::{
@@ -116,8 +116,11 @@ fn default_access() -> ApiKeyAccess {
 }
 
 #[component]
-pub(super) async fn key_editor(user_id: UserId, key_value: Option<&ApiKeyValue>) -> Result {
-    view! {
+pub(super) async fn key_editor(
+    user_id: UserId,
+    key_value: Option<&ApiKeyValue>,
+) -> Result<impl View> {
+    Ok(view! {
         <form
             class="space-y-8"
             id="key-editor-form"
@@ -199,13 +202,13 @@ pub(super) async fn key_editor(user_id: UserId, key_value: Option<&ApiKeyValue>)
             type="module"
             src=(topcoat::asset::asset!("src/app/settings/keys/key_editor.js"))
         ></script>
-    }
+    })
 }
 
 #[component]
-async fn key_name(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyValue>) -> Result {
+async fn key_name(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyValue>) -> Result<impl View> {
     let access_key = editor_key(cx, user_id, key_value).await?;
-    view! {
+    Ok(view! {
         <div>
             <label class="portal-form-label" for="key-name">"Key Name"</label>
             <input
@@ -221,18 +224,22 @@ async fn key_name(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyValue>) -> 
                 autofocus="autofocus"
             >
         </div>
-    }
+    })
 }
 
 #[component]
-async fn library_permissions(cx: &Cx, user_id: UserId, key_value: Option<&ApiKeyValue>) -> Result {
+async fn library_permissions(
+    cx: &Cx,
+    user_id: UserId,
+    key_value: Option<&ApiKeyValue>,
+) -> Result<impl View> {
     let access_key = editor_key(cx, user_id, key_value).await?;
     let access = access_key
         .as_ref()
         .map(|access_key| access_key.access.clone())
         .unwrap_or_else(default_access);
     let all_groups = permission_value(access.groups.get(&ApiKeyGroupTarget::All));
-    view! {
+    Ok(view! {
         <section class="portal-key-permission-box">
             <h2 class="portal-key-heading">"Personal Library"</h2>
             <div class="mt-4 space-y-1">
@@ -274,7 +281,7 @@ async fn library_permissions(cx: &Cx, user_id: UserId, key_value: Option<&ApiKey
                 "Allow access to all current and future groups."
             </p>
         </section>
-    }
+    })
 }
 
 #[component]
@@ -282,7 +289,7 @@ async fn specific_group_permissions(
     cx: &Cx,
     user_id: UserId,
     key_value: Option<&ApiKeyValue>,
-) -> Result {
+) -> Result<impl View> {
     // The sibling fields component starts the memoized key lookup while this
     // component loads the user's groups. Awaiting the shared key afterward
     // preserves parallel I/O without a page-level join.
@@ -306,7 +313,7 @@ async fn specific_group_permissions(
             (group, permission)
         })
         .collect::<Vec<_>>();
-    view! {
+    Ok(view! {
         <section>
             <h2 class="portal-key-heading">"Specific Groups"</h2>
             <label class="mt-4 flex items-center gap-2">
@@ -347,7 +354,7 @@ async fn specific_group_permissions(
                 }
             </div>
         </section>
-    }
+    })
 }
 
 #[component]
@@ -357,8 +364,8 @@ async fn permission_checkbox(
     description: PromotedStr,
     name: PromotedStr,
     checked: bool,
-) -> Result {
-    view! {
+) -> Result<impl View> {
+    Ok(view! {
         <label class="flex items-start gap-3" for=(id)>
             <input class="mt-1" id=(id) type="checkbox" name=(name) checked=(checked)>
             <span>
@@ -366,12 +373,12 @@ async fn permission_checkbox(
                 <span class="mt-1 block text-sm text-stone-600">(description)</span>
             </span>
         </label>
-    }
+    })
 }
 
 #[component]
-async fn permission_radios(name: &str, group_id: Option<u64>, selected: &str) -> Result {
-    view! {
+async fn permission_radios(name: &str, group_id: Option<u64>, selected: &str) -> Result<impl View> {
+    Ok(view! {
         <div
             class="mt-3 space-y-2"
             data-group-permission=(group_id
@@ -394,7 +401,7 @@ async fn permission_radios(name: &str, group_id: Option<u64>, selected: &str) ->
                 </label>
             }
         </div>
-    }
+    })
 }
 
 fn permission_value(access: Option<&ApiKeyGroupAccess>) -> &'static str {
