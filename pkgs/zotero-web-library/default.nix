@@ -45,23 +45,32 @@ in
       hash = "sha256-J7wi6SlYhPnisdi0MH9AFkdaHhuRL85+e5LuFeh16e8=";
     };
 
-    npmDepsHash = "sha256-OgmZ9aUQZDy0BFOuveW/t0u0Ng0syK7lDzOi+vi3di4=";
+    npmDepsHash = "sha256-KgNnjqVEkCAAwziDMF4S1cM/CjedDRbPqEzoRlFxqFk=";
 
     patches = [
       ./0001-default-missing-tag-colors-to-empty.patch
       ./0002-use-configured-api-for-item-templates.patch
       ./0004-use-configured-buy-storage-url.patch
-      ./0005-remove-myfonts-tracking-import.patch
       ./0006-format-partial-write-errors.patch
     ];
 
     nativeBuildInputs = [csl ruby unzip];
 
     env = {
-      release = fetchurl {
-        url = "https://github.com/zotero/web-library/releases/download/v${finalAttrs.version}/web-library-v${finalAttrs.version}.zip";
-        hash = "sha256-4Sg8erq859DmJoMdIsMz0eh/ZXh/MYgQiJpFzBSRvvU=";
-      };
+      release = stdenvNoCC.mkDerivation (finalReleaseAttrs: {
+        pname = "web-library-release";
+        version = "1.8.2";
+
+        src = fetchurl {
+          url = "https://github.com/zotero/web-library/releases/download/v${finalReleaseAttrs.version}/web-library-v${finalReleaseAttrs.version}.zip";
+          hash = "sha256-MZg5LA/vwBsS4bSfPqDpXfYyePIIpJxHQ8rGc4N6lGE=";
+        };
+
+        dontUnpack = true;
+        installPhase = ''
+          cp "$src" "$out"
+        '';
+      });
 
       citationStyles = stdenvNoCC.mkDerivation {
         pname = "citation-styles";
@@ -91,7 +100,7 @@ in
         src/static/styles
 
       unzip -q $release -d release
-      releaseStatic=release/web-library-v${finalAttrs.version}/static/web-library
+      releaseStatic=release/web-library-v${finalAttrs.env.release.version}/static/web-library
       cp -r $releaseStatic/reader/. src/static/reader/
       cp -r $releaseStatic/pdf-worker/. src/static/pdf-worker/
       cp -r $releaseStatic/note-editor/. src/static/note-editor/
