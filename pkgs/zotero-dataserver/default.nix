@@ -87,6 +87,12 @@ in
       composerStrictValidation = false;
     };
 
+    # The project derivation's install hook sets COMPOSER_ROOT_VERSION from the
+    # Nix package version again, so override it after that hook has run.
+    postConfigure = ''
+      export COMPOSER_ROOT_VERSION=${lib.removePrefix "0-unstable-" finalAttrs.version}
+    '';
+
     preBuild = ''
       cp -a $zf1/library/Zend/. ./include/Zend
     '';
