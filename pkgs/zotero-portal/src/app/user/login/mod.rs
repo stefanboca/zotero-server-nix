@@ -37,7 +37,7 @@ pub(crate) async fn login(cx: &Cx) -> Result<impl View> {
         let dataserver = app_context::<Dataserver>(cx);
         if let Some(user_id) = user_id {
             complete_desktop_login(database, dataserver, dataserver_session, user_id).await?;
-            return Err(redirect(&href!(done::done).resolve(cx)).into());
+            return Err(redirect(href!(done::done).resolve(cx)).into());
         }
         require_pending_desktop_login(dataserver, dataserver_session).await?;
         LoginQuery {

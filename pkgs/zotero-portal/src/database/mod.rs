@@ -4,7 +4,6 @@ mod users;
 
 use std::collections::BTreeMap;
 use std::str::FromStr as _;
-use std::sync::Arc;
 
 use anyhow::Context as _;
 use jiff::Timestamp;
@@ -13,7 +12,6 @@ use sha2::{Digest as _, Sha256};
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use sqlx::{MySql, MySqlPool, Transaction};
 
-use crate::config::Config;
 use crate::dataserver::{Dataserver, WebLibraryAccess};
 use crate::id::UserId;
 use crate::oidc::OidcProfile;
@@ -48,9 +46,9 @@ pub struct GroupInvitation {
 pub struct LoginCompletionLock<'a>(Transaction<'a, MySql>);
 
 impl Database {
-    pub async fn new(config: Arc<Config>, database_url: &str) -> anyhow::Result<Self> {
+    pub async fn new(max_connections: u32, database_url: &str) -> anyhow::Result<Self> {
         let db = MySqlPoolOptions::new()
-            .max_connections(config.database.max_connections)
+            .max_connections(max_connections)
             .connect_with(MySqlConnectOptions::from_str(database_url)?)
             .await
             .context("connecting to MariaDB")?;

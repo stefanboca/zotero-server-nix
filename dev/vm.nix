@@ -57,8 +57,14 @@ in {
   systemd.services.zotero-development-database-access = {
     description = "Create the Zotero development database user";
     wantedBy = ["multi-user.target"];
-    requires = ["mysql.service"];
-    after = ["mysql.service"];
+    requires = [
+      "mysql.service"
+      "zotero-dataserver-provision.service"
+    ];
+    after = [
+      "mysql.service"
+      "zotero-dataserver-provision.service"
+    ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
@@ -79,6 +85,7 @@ in {
     cores = 4;
     graphics = false;
     memorySize = 6 * 1024;
+    qemu.enableSharedMemory = true;
     forwardPorts = [
       {
         from = "host";

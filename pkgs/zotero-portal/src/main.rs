@@ -30,20 +30,13 @@ async fn main() -> anyhow::Result<()> {
     init_tracing()?;
     let arguments = Arguments::parse();
     let command = arguments.command.unwrap_or(Command::Serve);
-    let development = cfg!(debug_assertions) && env::var_os("TOPCOAT_DEV_URL").is_some();
-    let config = if arguments.config.is_some() || development {
-        Some(Config::new(arguments.config.as_deref())?)
-    } else {
-        None
-    };
-
     match command {
         Command::Provision { state_directory } => {
-            provision(config, &state_directory).await?;
+            provision(&state_directory).await?;
             Ok(())
         }
         Command::Serve => {
-            let config = config.ok_or_else(|| anyhow!("--config is required"))?;
+            let config = Config::new(arguments.config.as_deref())?;
             serve(config).await
         }
     }

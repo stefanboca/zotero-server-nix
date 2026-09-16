@@ -35,7 +35,8 @@ pub async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
         .context("decoding PORTAL_COOKIE_KEY")?;
     let cookie_key = topcoat::cookie::Key::try_from(cookie_key.as_slice())
         .context("PORTAL_COOKIE_KEY must decode to at least 64 bytes")?;
-    let database = Database::new(config.clone(), secrets.database_url.trim()).await?;
+    let database =
+        Database::new(config.database.max_connections, secrets.database_url.trim()).await?;
     let dataserver = Dataserver::new(config.clone(), secrets.dataserver_super_password)?;
     let oidc = Oidc::new(config.clone(), secrets.oidc_client_secret).await?;
     let router = app::routes()
@@ -55,14 +56,13 @@ pub async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     match config.server_address.scheme() {
         "unix" => {
             let socket = config.server_address.path();
-            match std::fs::remove_file(&socket) {
+            match std::fs::remove_file(socket) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error).context("removing stale auth socket"),
             };
-            let listener =
-                tokio::net::UnixListener::bind(&socket).context("binding auth socket")?;
-            std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660))
+            let listener = tokio::net::UnixListener::bind(socket).context("binding auth socket")?;
+            std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o660))
                 .with_context(|| format!("setting portal socket permissions on {socket}"))?;
             tracing::info!(socket, "listening on Unix socket");
             topcoat::serve(listener, router)

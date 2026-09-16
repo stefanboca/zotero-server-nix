@@ -99,8 +99,9 @@ mariadb --host=127.0.0.1 --port=3306 --user=development --password=development z
 The portal uses checked SQLx query files. These files are in
 `pkgs/zotero-portal/queries/<group>/<query>.sql`.
 
-The `pkgs/zotero-portal/.env` file connects SQLx to the development VM. After
-you start a new VM, apply the migrations:
+The `pkgs/zotero-portal/.env` file connects SQLx to the development VM. A new
+VM applies the portal migrations during provisioning. To apply new migrations
+to an already-running VM manually:
 
 ```console
 cd pkgs/zotero-portal

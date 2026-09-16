@@ -57,7 +57,7 @@ async fn profile_groups(cx: &Cx, actor_id: UserId, profile_user_id: UserId) -> R
         .groups_for_user(actor_id)
         .await?;
     groups.retain(|group| group.role(profile_user_id).is_some());
-    groups.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    groups.sort_by_key(|left| left.name.to_lowercase());
     Ok(view! {
         section(
             <h2 class="text-xl font-semibold">"Groups"</h2>

@@ -390,7 +390,7 @@ in {
       enable = mkOption {
         type = bool;
         default = true;
-        description = "Whether to run the Zotero web portal and its database migrations.";
+        description = "Whether to run the Zotero web portal.";
       };
       package = mkPackageOption pkgs "zotero-portal" {};
       config = mkOption {
@@ -557,15 +557,18 @@ in {
             isSystemUser = true;
             group = "zotero-dataserver";
           };
-        }
-        // optionalAttrs cfg.portal.enable {
           zotero-portal = {
             isSystemUser = true;
             group = "zotero-portal";
           };
+        }
+        // optionalAttrs cfg.portal.enable {
           caddy.extraGroups = ["zotero-portal"];
         };
-      groups = {zotero-dataserver = {};} // optionalAttrs cfg.portal.enable {zotero-portal = {};};
+      groups = {
+        zotero-dataserver = {};
+        zotero-portal = {};
+      };
     };
 
     services = {
@@ -602,24 +605,23 @@ in {
       mysql = {
         enable = true;
         package = mkDefault pkgs.mariadb;
-        ensureUsers =
-          [
-            {
-              name = "zotero-dataserver";
-              ensurePermissions = {
-                "zotero_ids.*" = "ALL PRIVILEGES";
-                "zotero_master.*" = "ALL PRIVILEGES";
-                "zotero_shard.*" = "ALL PRIVILEGES";
-                "zotero_www.*" = "ALL PRIVILEGES";
-              };
-            }
-          ]
-          ++ optional cfg.portal.enable {
+        ensureUsers = [
+          {
+            name = "zotero-dataserver";
+            ensurePermissions = {
+              "zotero_ids.*" = "ALL PRIVILEGES";
+              "zotero_master.*" = "ALL PRIVILEGES";
+              "zotero_shard.*" = "ALL PRIVILEGES";
+              "zotero_www.*" = "ALL PRIVILEGES";
+            };
+          }
+          {
             name = "zotero-portal";
             ensurePermissions = {
               "zotero_www.*" = "ALL PRIVILEGES";
             };
-          };
+          }
+        ];
         initialDatabases = [
           {
             name = "zotero_master";
@@ -727,8 +729,8 @@ in {
     systemd.services = {
       zotero-dataserver-provision = {
         description = "Provision Zotero Dataserver credentials and database";
-        wants = optional cfg.portal.enable "mysql.service";
-        after = optional cfg.portal.enable "mysql.service";
+        requires = ["mysql.service"];
+        after = ["mysql.service"];
         environment = portalLoggingEnvironment // {XDG_STATE_HOME = "%S/zotero-dataserver";};
         serviceConfig =
           restartOnFailure
@@ -739,28 +741,22 @@ in {
             StateDirectoryMode = "0700";
             UMask = "0077";
             WorkingDirectory = "${cfg.portal.package}/share/zotero-portal";
-            LoadCredential = optional cfg.portal.enable "DATABASE_URL:${portalDatabaseUrlFile}";
-          }
-          // optionalAttrs cfg.portal.enable {
+            LoadCredential = "DATABASE_URL:${portalDatabaseUrlFile}";
             User = "zotero-portal";
             Group = "zotero-portal";
           };
         script = ''
-          ${getExe cfg.portal.package} \
-            ${optionalString cfg.portal.enable "--config /etc/zotero-dataserver/portal.toml"} \
-            provision --state-directory "$STATE_DIRECTORY"
+          ${getExe cfg.portal.package} provision --state-directory "$STATE_DIRECTORY"
         '';
       };
 
       zotero-portal = mkIf cfg.portal.enable {
         description = "Zotero local web portal";
         wantedBy = ["multi-user.target"];
+        requires = [provisionUnit "mysql.service"];
         wants = [
-          provisionUnit
           "zotero-translation-server.service"
-          "mysql.service"
           "network-online.target"
-          "caddy.service"
           "phpfpm-zotero-dataserver.service"
         ];
         after = [
@@ -768,7 +764,6 @@ in {
           "zotero-translation-server.service"
           "mysql.service"
           "network-online.target"
-          "caddy.service"
           "phpfpm-zotero-dataserver.service"
         ];
         environment = portalLoggingEnvironment // {XDG_STATE_HOME = "%S/zotero-dataserver";};

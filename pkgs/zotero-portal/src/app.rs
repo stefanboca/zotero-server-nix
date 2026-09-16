@@ -93,7 +93,7 @@ pub(crate) async fn authenticated_user(cx: &Cx) -> Result<UserId> {
         normalized_return_path(uri(cx).path_and_query().map_or("/", |path| path.as_str()))
             .unwrap_or_else(|| "/".to_owned());
     Err(redirect(
-        &href!(user::login::login)
+        href!(user::login::login)
             .query(user::login::LoginQuery {
                 session: None,
                 redirect_to: Some(return_path),

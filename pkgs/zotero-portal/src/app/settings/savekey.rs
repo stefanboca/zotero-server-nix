@@ -47,7 +47,7 @@ pub(in crate::app::settings) async fn save_key(
     if name.chars().count() > 255 {
         return Err(bad_request("key name cannot exceed 255 characters").into());
     }
-    if input.access.user.library == false
+    if !input.access.user.library
         && (input.access.user.notes || input.access.user.files || input.access.user.write)
     {
         return Err(bad_request("personal-library permissions require library access").into());
