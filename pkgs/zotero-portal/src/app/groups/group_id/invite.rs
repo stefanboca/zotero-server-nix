@@ -1,20 +1,18 @@
 use std::collections::HashSet;
 
 use serde::Deserialize;
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{content::Form, error::see_other, href, page},
-    view::{View, component, view},
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::content::Form;
+use topcoat::router::error::see_other;
+use topcoat::router::{href, page};
+use topcoat::view::{View, component, view};
 
-use crate::{
-    app::{authenticated_user, portal_page, section},
-    database::Database,
-    dataserver::Group,
-};
-
-use super::{GroupId, members::managed_group};
+use super::GroupId;
+use super::members::managed_group;
+use crate::app::{authenticated_user, portal_page, section};
+use crate::database::Database;
+use crate::dataserver::Group;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

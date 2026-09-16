@@ -1,16 +1,11 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        error::see_other,
-        href,
-        response::{IntoResponse, Response},
-        route,
-    },
-    session,
-};
+use topcoat::context::{Cx, app_context};
+use topcoat::router::error::see_other;
+use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::{href, route};
+use topcoat::{Result, session};
 
-use crate::{database::Database, dataserver::Dataserver};
+use crate::database::Database;
+use crate::dataserver::Dataserver;
 
 // The built-in Web Library navigation renders menu entries as links, matching
 // zotero.org's GET /user/logout endpoint. Keep POST for the portal's form.

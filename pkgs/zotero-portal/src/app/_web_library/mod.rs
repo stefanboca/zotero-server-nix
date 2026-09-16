@@ -4,24 +4,19 @@ mod user_slug;
 pub(in crate::app) use groups::{
     GroupId as LibraryGroupId, GroupSlug as LibraryGroupSlug, LibraryPath, group_library_path,
 };
+use serde_json::json;
+use topcoat::context::{Cx, app_context, try_request_context};
+use topcoat::router::response::Response;
+use topcoat::router::{Body, Next, href, layer, page};
+use topcoat::view::{Unescaped, View, view};
+use topcoat::{Result, session};
+use url::Url;
 pub(in crate::app) use user_slug::{UserSlug, personal_library_root};
 
-use serde_json::json;
-use topcoat::{
-    Result,
-    context::{Cx, app_context, try_request_context},
-    router::{Body, Next, href, layer, page, response::Response},
-    session,
-    view::{Unescaped, View, view},
-};
-use url::Url;
-
-use crate::{
-    app::signed_in_user,
-    database::{self, Database},
-    dataserver::{Dataserver, WebLibraryAccess},
-    id::UserId,
-};
+use crate::app::signed_in_user;
+use crate::database::{self, Database};
+use crate::dataserver::{Dataserver, WebLibraryAccess};
+use crate::id::UserId;
 
 pub(crate) struct WebLibrary;
 struct GroupWebLibrary;

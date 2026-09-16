@@ -1,8 +1,7 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{error::redirect, href, route},
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::error::redirect;
+use topcoat::router::{href, route};
 
 #[route(*)]
 async fn register(cx: &Cx) -> Result<()> {

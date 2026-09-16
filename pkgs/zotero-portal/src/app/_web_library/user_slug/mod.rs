@@ -3,10 +3,13 @@ pub(super) mod library;
 mod library_path;
 
 pub(in crate::app) use items::personal_library_root;
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::path_param;
+use topcoat::view::View;
 
-use topcoat::{Result, context::Cx, router::path_param, view::View};
-
-use crate::app::{_web_library::library, signed_in_user};
+use crate::app::_web_library::library;
+use crate::app::signed_in_user;
 
 topcoat::router::path_param!(pub(in crate::app) user_slug);
 

@@ -1,23 +1,16 @@
 mod library_path;
 
 pub(in crate::app) use library_path::{LibraryPath, group_library_path};
-
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{error::not_found, path_param},
-    view::View,
-};
-
-use crate::{
-    app::{
-        _web_library::{GroupWebLibrary, library},
-        authenticated_user,
-    },
-    dataserver::Dataserver,
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::error::not_found;
+use topcoat::router::path_param;
+use topcoat::view::View;
 
 use super::GroupId;
+use crate::app::_web_library::{GroupWebLibrary, library};
+use crate::app::authenticated_user;
+use crate::dataserver::Dataserver;
 
 topcoat::router::path_param!(pub(in crate::app) group_slug);
 

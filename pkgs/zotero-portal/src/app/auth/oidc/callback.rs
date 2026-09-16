@@ -1,22 +1,14 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    cookie::{Cookies as _, SameSite, cookie_store, private_cookies},
-    router::{
-        error::{bad_request, forbidden, see_other},
-        header, href, query_params,
-        request::headers,
-        route,
-    },
-    session,
-};
+use topcoat::context::{Cx, app_context};
+use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
+use topcoat::router::error::{bad_request, forbidden, see_other};
+use topcoat::router::request::headers;
+use topcoat::router::{header, href, query_params, route};
+use topcoat::{Result, session};
 
-use crate::{
-    app::user::complete_desktop_login,
-    database::Database,
-    dataserver::Dataserver,
-    oidc::{Oidc, OidcFlow},
-};
+use crate::app::user::complete_desktop_login;
+use crate::database::Database;
+use crate::dataserver::Dataserver;
+use crate::oidc::{Oidc, OidcFlow};
 
 #[query_params(error = bad_request)]
 struct CallbackQuery {

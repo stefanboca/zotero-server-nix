@@ -1,14 +1,16 @@
 mod authorization;
 
-use anyhow::Context as _;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use jiff::Timestamp;
+use openidconnect::core::{
+    CoreAuthenticationFlow, CoreClient, CoreProviderMetadata, CoreUserInfoClaims,
+};
 use openidconnect::{
     AccessTokenHash, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet,
     EndpointNotSet, EndpointSet, IssuerUrl, Nonce, OAuth2TokenResponse as _, PkceCodeChallenge,
     PkceCodeVerifier, RedirectUrl, Scope, TokenResponse as _,
-    core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata, CoreUserInfoClaims},
 };
 
 use crate::config::Config;

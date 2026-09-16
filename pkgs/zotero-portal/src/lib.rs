@@ -11,24 +11,22 @@ mod id;
 mod oidc;
 mod provision;
 
-pub use config::Config;
-pub use provision::provision;
-
 use std::fmt::Write as _;
-
-use std::{os::unix::fs::PermissionsExt as _, sync::Arc, time::Duration};
+use std::os::unix::fs::PermissionsExt as _;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
-use base64::{Engine as _, prelude::BASE64_STANDARD};
-use topcoat::{
-    asset::{AssetBundle, RouterBuilderAssetExt},
-    cookie::RouterBuilderCookieExt,
-    session::{RouterBuilderSessionExt, SessionConfig},
-};
-
+use base64::Engine as _;
+use base64::prelude::BASE64_STANDARD;
+pub use config::Config;
 use database::Database;
 use dataserver::Dataserver;
 use oidc::Oidc;
+pub use provision::provision;
+use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
+use topcoat::cookie::RouterBuilderCookieExt;
+use topcoat::session::{RouterBuilderSessionExt, SessionConfig};
 
 pub async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     let secrets = config.secrets()?;

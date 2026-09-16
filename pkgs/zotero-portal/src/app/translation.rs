@@ -1,16 +1,10 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        Body,
-        request::{headers, uri},
-    },
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::Body;
+use topcoat::router::request::{headers, uri};
 
-use crate::{
-    app::authenticated_user,
-    dataserver::{Dataserver, TranslationEndpoint, TranslationResponse},
-};
+use crate::app::authenticated_user;
+use crate::dataserver::{Dataserver, TranslationEndpoint, TranslationResponse};
 
 pub(super) async fn proxy_translation(
     cx: &Cx,

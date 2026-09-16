@@ -1,21 +1,15 @@
 use serde::Deserialize;
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{content::Form, error::see_other, href, page, route},
-    view::{View, view},
-};
-
-use crate::{
-    app::{
-        authenticated_user,
-        groups::group_id::{GroupId, library_settings},
-        portal_page, section,
-    },
-    dataserver::Dataserver,
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::content::Form;
+use topcoat::router::error::see_other;
+use topcoat::router::{href, page, route};
+use topcoat::view::{View, view};
 
 use super::GroupName;
+use crate::app::groups::group_id::{GroupId, library_settings};
+use crate::app::{authenticated_user, portal_page, section};
+use crate::dataserver::Dataserver;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

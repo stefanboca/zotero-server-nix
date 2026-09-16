@@ -1,19 +1,14 @@
 mod purge;
 
-use topcoat::{
-    Result,
-    context::{Cx, app_context, memoize},
-    router::{href, page},
-    view::{View, component, view},
-};
-
-use crate::{
-    app::{confirm_button, section, signed_in_user},
-    dataserver::{Dataserver, StorageUsage},
-    id::UserId,
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context, memoize};
+use topcoat::router::{href, page};
+use topcoat::view::{View, component, view};
 
 use super::{format_storage_size, format_timestamp};
+use crate::app::{confirm_button, section, signed_in_user};
+use crate::dataserver::{Dataserver, StorageUsage};
+use crate::id::UserId;
 
 #[memoize]
 async fn memoized_storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {

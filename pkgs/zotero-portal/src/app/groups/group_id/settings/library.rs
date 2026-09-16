@@ -1,17 +1,15 @@
 use serde::{Deserialize, Serialize};
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{content::Form, error::see_other, href, page, query_params, route},
-    view::{PromotedStr, View, component, view},
-};
-
-use crate::{
-    app::{groups::group_id::GroupId, section, success_message},
-    dataserver::Dataserver,
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::content::Form;
+use topcoat::router::error::see_other;
+use topcoat::router::{href, page, query_params, route};
+use topcoat::view::{PromotedStr, View, component, view};
 
 use super::managed_group_settings;
+use crate::app::groups::group_id::GroupId;
+use crate::app::{section, success_message};
+use crate::dataserver::Dataserver;
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]

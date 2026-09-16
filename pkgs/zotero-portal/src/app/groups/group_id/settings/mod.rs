@@ -3,31 +3,20 @@ mod members;
 
 pub(in crate::app::groups) use library::library as library_settings;
 pub(in crate::app::groups) use members::members as members_settings;
-
 use serde::{Deserialize, Serialize};
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        Slot,
-        content::Form,
-        error::{bad_request, forbidden, not_found, see_other},
-        href, layout, page, path_param, query_params, route,
-    },
-    view::{PromotedStr, View, view},
-};
-
-use crate::{
-    app::{
-        SidebarItem, confirm_button, groups::GroupName, portal_page, section, sidebar,
-        success_message,
-    },
-    database::Database,
-    dataserver::{Dataserver, Group, GroupRole},
-    id::UserId,
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::content::Form;
+use topcoat::router::error::{bad_request, forbidden, not_found, see_other};
+use topcoat::router::{Slot, href, layout, page, path_param, query_params, route};
+use topcoat::view::{PromotedStr, View, view};
 
 use super::{GroupId, current_group, group_by_id};
+use crate::app::groups::GroupName;
+use crate::app::{SidebarItem, confirm_button, portal_page, section, sidebar, success_message};
+use crate::database::Database;
+use crate::dataserver::{Dataserver, Group, GroupRole};
+use crate::id::UserId;
 
 #[derive(Clone)]
 pub(super) struct GroupSettingsContext {

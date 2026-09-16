@@ -1,16 +1,13 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{error::not_found, href, page, path_param},
-    view::{View, component, view},
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::error::not_found;
+use topcoat::router::{href, page, path_param};
+use topcoat::view::{View, component, view};
 
-use crate::{
-    app::{authenticated_user, portal_page, section},
-    database::Database,
-    dataserver::Dataserver,
-    id::UserId,
-};
+use crate::app::{authenticated_user, portal_page, section};
+use crate::database::Database;
+use crate::dataserver::Dataserver;
+use crate::id::UserId;
 
 topcoat::router::path_param!(pub(super) profile_username);
 

@@ -1,13 +1,9 @@
 use anyhow::Context as _;
 use reqwest::StatusCode;
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{
-        Body,
-        response::{IntoResponse, Response},
-    },
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::Body;
+use topcoat::router::response::{IntoResponse, Response};
 
 use super::Dataserver;
 

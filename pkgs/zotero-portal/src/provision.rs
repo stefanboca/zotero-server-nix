@@ -1,8 +1,10 @@
-use std::{path::Path, sync::Arc};
+use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 
-use crate::{Config, database::Database};
+use crate::Config;
+use crate::database::Database;
 
 pub async fn provision(config: Option<Arc<Config>>, state_directory: &Path) -> anyhow::Result<()> {
     let provider = format!("file:{}", state_directory.display());

@@ -1,8 +1,11 @@
-use std::{env, path::PathBuf};
+use std::env;
+use std::path::PathBuf;
 
 use anyhow::anyhow;
 use clap::{Parser, Subcommand};
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 use zotero_portal::{Config, provision, serve};
 
 #[derive(Parser)]

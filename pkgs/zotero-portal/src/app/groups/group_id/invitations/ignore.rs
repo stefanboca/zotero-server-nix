@@ -1,17 +1,12 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        error::not_found,
-        href, path_param,
-        response::{IntoResponse, Response},
-        route,
-    },
-};
-
-use crate::{app::authenticated_user, database::Database};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::error::not_found;
+use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::{href, path_param, route};
 
 use super::super::GroupId;
+use crate::app::authenticated_user;
+use crate::database::Database;
 
 #[route(POST)]
 pub(in crate::app::groups) async fn ignore(cx: &Cx) -> Result<Response> {

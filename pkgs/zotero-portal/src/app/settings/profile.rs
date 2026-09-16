@@ -1,9 +1,7 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::page,
-    view::{View, view},
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::page;
+use topcoat::view::{View, view};
 
 use crate::app::{section, signed_in_user};
 

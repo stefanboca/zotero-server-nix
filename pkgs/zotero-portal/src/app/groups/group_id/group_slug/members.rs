@@ -1,16 +1,11 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{href, page},
-    view::{View, view},
-};
-
-use crate::{
-    app::{portal_page, section},
-    database::Database,
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::{href, page};
+use topcoat::view::{View, view};
 
 use super::current_slug_group;
+use crate::app::{portal_page, section};
+use crate::database::Database;
 
 #[page]
 pub(super) async fn members(cx: &Cx) -> Result<impl View> {

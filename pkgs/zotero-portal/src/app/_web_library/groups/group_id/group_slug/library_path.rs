@@ -1,9 +1,7 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{page, path_param},
-    view::View,
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::{page, path_param};
+use topcoat::view::View;
 
 path_param!(pub(in crate::app) *library_path);
 

@@ -2,22 +2,17 @@ mod group_id;
 mod r#new;
 
 pub(in crate::app) use group_id::{GroupId, GroupSlug, group_overview};
-
 use serde::Deserialize;
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{href, page},
-    runtime::{shard, signal},
-    view::{View, ViewExt as _, component, view},
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::{href, page};
+use topcoat::runtime::{shard, signal};
+use topcoat::view::{View, ViewExt as _, component, view};
 
-use crate::{
-    app::{portal_page, section, signed_in_user},
-    database::{Database, GroupInvitation},
-    dataserver::{Dataserver, Group, GroupRole, group_slug},
-    id::UserId,
-};
+use crate::app::{portal_page, section, signed_in_user};
+use crate::database::{Database, GroupInvitation};
+use crate::dataserver::{Dataserver, Group, GroupRole, group_slug};
+use crate::id::UserId;
 
 const RESERVED_GROUP_SLUGS: &[&str] = &[
     "delete",

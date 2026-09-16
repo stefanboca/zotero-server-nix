@@ -1,13 +1,10 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{href, page},
-    view::{View, view},
-};
-
-use crate::app::signed_in_user;
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::{href, page};
+use topcoat::view::{View, view};
 
 use super::key_editor;
+use crate::app::signed_in_user;
 
 #[page]
 pub(in crate::app::settings) async fn new_key(cx: &Cx) -> Result<impl View> {

@@ -1,13 +1,10 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{href, page, path_param},
-    view::{View, view},
-};
-
-use crate::app::signed_in_user;
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::{href, page, path_param};
+use topcoat::view::{View, view};
 
 use super::super::{ApiKeyValue, key_editor};
+use crate::app::signed_in_user;
 
 topcoat::router::path_param!(pub(in crate::app::settings) key_id: ApiKeyValue, error = not_found);
 

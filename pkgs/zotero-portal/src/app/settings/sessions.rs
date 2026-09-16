@@ -1,22 +1,14 @@
 use serde::Deserialize;
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        content::Form,
-        error::{not_found, see_other},
-        href,
-        response::{IntoResponse as _, Response},
-        route,
-    },
-    session,
-};
+use topcoat::context::{Cx, app_context};
+use topcoat::router::content::Form;
+use topcoat::router::error::{not_found, see_other};
+use topcoat::router::response::{IntoResponse as _, Response};
+use topcoat::router::{href, route};
+use topcoat::{Result, session};
 
-use crate::{
-    app::signed_in_user,
-    database::{self, Database},
-    dataserver::Dataserver,
-};
+use crate::app::signed_in_user;
+use crate::database::{self, Database};
+use crate::dataserver::Dataserver;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

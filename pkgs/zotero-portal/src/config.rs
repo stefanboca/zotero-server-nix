@@ -1,4 +1,6 @@
-use std::{env, fs, path::Path, sync::Arc};
+use std::path::Path;
+use std::sync::Arc;
+use std::{env, fs};
 
 use anyhow::Context as _;
 use serde::Deserialize;

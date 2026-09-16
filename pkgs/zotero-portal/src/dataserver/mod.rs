@@ -4,16 +4,17 @@ mod login;
 mod storage;
 mod translation;
 
-pub(crate) use groups::group_slug;
-pub use translation::{TranslationEndpoint, TranslationResponse};
-
-use std::{collections::BTreeMap, sync::Arc};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use anyhow::Context as _;
+pub(crate) use groups::group_slug;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
+pub use translation::{TranslationEndpoint, TranslationResponse};
 
-use crate::{config::Config, id::UserId};
+use crate::config::Config;
+use crate::id::UserId;
 
 pub struct Dataserver {
     config: Arc<Config>,

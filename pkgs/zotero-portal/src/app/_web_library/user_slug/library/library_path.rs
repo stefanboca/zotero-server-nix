@@ -1,11 +1,9 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{page, path_param},
-    view::View,
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::page;
+use topcoat::view::View;
 
-path_param!(*library_path);
+topcoat::router::path_param!(*library_path);
 
 #[page]
 async fn personal_library_path(cx: &Cx) -> Result<impl View> {

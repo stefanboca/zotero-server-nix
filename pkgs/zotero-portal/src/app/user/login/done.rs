@@ -1,8 +1,6 @@
-use topcoat::{
-    Result,
-    router::page,
-    view::{View, view},
-};
+use topcoat::Result;
+use topcoat::router::page;
+use topcoat::view::{View, view};
 
 #[page]
 pub(crate) async fn done() -> Result<impl View> {

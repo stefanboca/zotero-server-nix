@@ -1,18 +1,14 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{href, page},
-    runtime::{shard, signal},
-    view::{View, component, view},
-};
-
-use crate::{
-    app::{groups::group_id::GroupId, section},
-    database::Database,
-    dataserver::{Dataserver, GroupRole},
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::{href, page};
+use topcoat::runtime::{shard, signal};
+use topcoat::view::{View, component, view};
 
 use super::managed_group_settings;
+use crate::app::groups::group_id::GroupId;
+use crate::app::section;
+use crate::database::Database;
+use crate::dataserver::{Dataserver, GroupRole};
 
 #[page]
 pub(in crate::app::groups) async fn members(cx: &Cx) -> Result<impl View> {

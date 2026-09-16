@@ -1,13 +1,8 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{
-        error::see_other,
-        href,
-        response::{IntoResponse, Response},
-        route,
-    },
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::error::see_other;
+use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::{href, route};
 
 use crate::app::signed_in_user;
 

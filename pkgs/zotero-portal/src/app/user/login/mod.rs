@@ -1,24 +1,18 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    cookie::{Cookies as _, SameSite, cookie_store, private_cookies},
-    router::{
-        error::{bad_request, forbidden, redirect, see_other},
-        href, page, query_params,
-        response::{IntoResponse, Response},
-        route,
-    },
-    session,
-    view::{View, view},
-};
+pub(crate) mod done;
 
-use crate::{
-    app::{FLOW_LIFETIME, current_user, normalized_return_path, portal_page, section},
-    database::Database,
-    dataserver::Dataserver,
-    id::UserId,
-    oidc::{Oidc, OidcFlow},
-};
+use topcoat::context::{Cx, app_context};
+use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
+use topcoat::router::error::{bad_request, forbidden, redirect, see_other};
+use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::{href, page, query_params, route};
+use topcoat::view::{View, view};
+use topcoat::{Result, session};
+
+use crate::app::{FLOW_LIFETIME, current_user, normalized_return_path, portal_page, section};
+use crate::database::Database;
+use crate::dataserver::Dataserver;
+use crate::id::UserId;
+use crate::oidc::{Oidc, OidcFlow};
 
 #[query_params(error = bad_request)]
 #[derive(serde::Serialize)]
@@ -168,5 +162,3 @@ pub(crate) async fn complete_desktop_login(
     transaction.commit().await?;
     Ok(())
 }
-
-pub(crate) mod done;

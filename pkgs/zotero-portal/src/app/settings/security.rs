@@ -1,20 +1,14 @@
 use jiff::Timestamp;
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{href, page},
-    session,
-    view::{View, component, view},
-};
-
-use crate::{
-    app::{confirm_button, section, signed_in_user},
-    database::{self, Database},
-    dataserver::Dataserver,
-    id::UserId,
-};
+use topcoat::context::{Cx, app_context};
+use topcoat::router::{href, page};
+use topcoat::view::{View, component, view};
+use topcoat::{Result, session};
 
 use super::{format_relative_time, format_timestamp, parse_client_timestamp};
+use crate::app::{confirm_button, section, signed_in_user};
+use crate::database::{self, Database};
+use crate::dataserver::Dataserver;
+use crate::id::UserId;
 
 #[page]
 pub(super) async fn security(cx: &Cx) -> Result<impl View> {

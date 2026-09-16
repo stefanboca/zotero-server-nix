@@ -1,18 +1,12 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        error::{forbidden, see_other},
-        href,
-        response::{IntoResponse, Response},
-        route,
-    },
-};
-
-use crate::database::Database;
-use crate::dataserver::{Dataserver, GroupRole};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::error::{forbidden, see_other};
+use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::{href, route};
 
 use super::current_group;
+use crate::database::Database;
+use crate::dataserver::{Dataserver, GroupRole};
 
 #[route(POST)]
 pub(super) async fn delete_group(cx: &Cx) -> Result<Response> {

@@ -5,22 +5,18 @@ mod revoke;
 pub(super) use edit::{EditKeyId, edit_key as edit_key_route};
 pub(super) use r#new::new_key as new_key_route;
 pub(super) use revoke::revoke_key;
-
 use serde::Deserialize;
-use topcoat::{
-    Result,
-    context::{Cx, app_context, memoize},
-    router::{error::not_found, href},
-    view::{PromotedStr, View, component, view},
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context, memoize};
+use topcoat::router::error::not_found;
+use topcoat::router::href;
+use topcoat::view::{PromotedStr, View, component, view};
 
-use crate::{
-    app::confirm_button,
-    dataserver::{
-        ApiKey, ApiKeyAccess, ApiKeyGroupAccess, ApiKeyGroupTarget, ApiKeyLibraryAccess, Dataserver,
-    },
-    id::UserId,
+use crate::app::confirm_button;
+use crate::dataserver::{
+    ApiKey, ApiKeyAccess, ApiKeyGroupAccess, ApiKeyGroupTarget, ApiKeyLibraryAccess, Dataserver,
 };
+use crate::id::UserId;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(try_from = "String")]

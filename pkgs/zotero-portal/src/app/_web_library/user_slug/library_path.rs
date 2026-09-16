@@ -1,9 +1,8 @@
-use topcoat::{
-    Result,
-    context::Cx,
-    router::{error::not_found, page, path_param},
-    view::View,
-};
+use topcoat::Result;
+use topcoat::context::Cx;
+use topcoat::router::error::not_found;
+use topcoat::router::{page, path_param};
+use topcoat::view::View;
 
 topcoat::router::path_param!(*personal_library_path);
 

@@ -1,15 +1,11 @@
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        error::see_other,
-        href,
-        response::{IntoResponse, Response},
-        route,
-    },
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::error::see_other;
+use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::{href, route};
 
-use crate::{app::signed_in_user, dataserver::Dataserver};
+use crate::app::signed_in_user;
+use crate::dataserver::Dataserver;
 
 #[route(POST)]
 pub(super) async fn purge_personal_storage(cx: &Cx) -> Result<Response> {

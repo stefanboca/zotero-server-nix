@@ -1,29 +1,20 @@
 mod leave;
 
-pub(super) use leave::leave_group;
-
 use std::collections::HashSet;
 
+pub(super) use leave::leave_group;
 use serde::{Deserialize, Serialize};
-use topcoat::{
-    Result,
-    context::{Cx, app_context},
-    router::{
-        content::Json,
-        error::{bad_request, forbidden, see_other},
-        href,
-        response::{IntoResponse, Response},
-        route,
-    },
-};
-
-use crate::{
-    database::Database,
-    dataserver::{Dataserver, Group, GroupRole},
-    id::UserId,
-};
+use topcoat::Result;
+use topcoat::context::{Cx, app_context};
+use topcoat::router::content::Json;
+use topcoat::router::error::{bad_request, forbidden, see_other};
+use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::{href, route};
 
 use super::{GroupId, current_group};
+use crate::database::Database;
+use crate::dataserver::{Dataserver, Group, GroupRole};
+use crate::id::UserId;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

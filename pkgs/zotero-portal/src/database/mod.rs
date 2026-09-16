@@ -2,24 +2,21 @@ mod invitations;
 mod sessions;
 mod users;
 
-pub use sessions::session_handle;
-
-use std::{collections::BTreeMap, str::FromStr as _, sync::Arc};
+use std::collections::BTreeMap;
+use std::str::FromStr as _;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use jiff::Timestamp;
+pub use sessions::session_handle;
 use sha2::{Digest as _, Sha256};
-use sqlx::{
-    MySql, MySqlPool, Transaction,
-    mysql::{MySqlConnectOptions, MySqlPoolOptions},
-};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
+use sqlx::{MySql, MySqlPool, Transaction};
 
-use crate::{
-    config::Config,
-    dataserver::{Dataserver, WebLibraryAccess},
-    id::UserId,
-    oidc::OidcProfile,
-};
+use crate::config::Config;
+use crate::dataserver::{Dataserver, WebLibraryAccess};
+use crate::id::UserId;
+use crate::oidc::OidcProfile;
 
 pub struct Database {
     db: MySqlPool,
