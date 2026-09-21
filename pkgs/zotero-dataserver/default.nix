@@ -36,13 +36,13 @@
 in
   php.buildComposerProject2 (finalAttrs: {
     pname = "zotero-dataserver";
-    version = "0-unstable-2026-08-26";
+    version = "0-unstable-2026-09-20";
 
     src = fetchFromGitHub {
       owner = "zotero";
       repo = "dataserver";
-      rev = "476ed12c18cbd431170346702882d091710f5f61";
-      hash = "sha256-f13ZDoQL+n/oCUEJQiyw28zy6h9v7LdxCfHXUnf8PTU=";
+      rev = "6e091852b8a3e369056f390ba69e5de90cda1134";
+      hash = "sha256-9MC/VM/LEMjkb+k1EHw8cvYKzdFgHgXaj7Tf1ENXIo8=";
       fetchSubmodules = true;
     };
 
@@ -76,7 +76,7 @@ in
     ];
 
     composerStrictValidation = false;
-    vendorHash = "sha256-SPobvqh9JmAOLGAZlrdFBYvC18OXNIDFqk4QvzuxfF0=";
+    vendorHash = "sha256-/QNcnQjCKoYwxuGUWLNDdIkZBO/S42+J0SKWcIbm41w=";
 
     # Composer does not accept nix-update's 0-unstable-YYYY-MM-DD version as
     # COMPOSER_ROOT_VERSION. The date alone is a valid Composer version.

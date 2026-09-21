@@ -74,13 +74,13 @@ in
 
       citationStyles = stdenvNoCC.mkDerivation {
         pname = "citation-styles";
-        version = "0.2.210-unstable-2026-09-14";
+        version = "0.2.211-unstable-2026-09-18";
 
         src = fetchFromGitHub {
           owner = "citation-style-language";
           repo = "styles";
-          rev = "90e657c8622ec1c6f27788e041b355efac659397";
-          hash = "sha256-M+oPFo7LUYvith1e+DvsCpc/yt+1vBZs6oLfZjGQmXM=";
+          rev = "81c3eb863d1c5a83aab7e296e045013d2422f2cb";
+          hash = "sha256-O+CtDsg/vbj0IfQURjsHhBrMqJDbo519V8Bfok3aN18=";
         };
 
         installPhase = ''
