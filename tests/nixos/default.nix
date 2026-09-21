@@ -216,12 +216,19 @@ in {
           "systemctl show -P Wants zotero-portal.service"
       ).split()
       for unit in [
-          "mysql.service",
           "zotero-translation-server.service",
-          "caddy.service",
           "phpfpm-zotero-dataserver.service",
       ]:
           assert unit in portal_wants, (unit, portal_wants)
+
+      portal_requires = machine.succeed(
+          "systemctl show -P Requires zotero-portal.service"
+      ).split()
+      for unit in [
+          "zotero-dataserver-provision.service",
+          "mysql.service",
+      ]:
+          assert unit in portal_requires, (unit, portal_requires)
 
       phpfpm_wants = machine.succeed(
           "systemctl show -P Wants phpfpm-zotero-dataserver.service"
