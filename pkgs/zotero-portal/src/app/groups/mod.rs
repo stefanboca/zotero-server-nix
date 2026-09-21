@@ -155,10 +155,10 @@ async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
                 <a
                     class="portal-link"
                     href=(href!(
-                            group_id::group_overview,
-                            group_id::GroupId(group.id),
-                            group_id::GroupSlug(slug.clone()),
-                        ))
+                        group_id::group_overview,
+                        group_id::GroupId(group.id),
+                        group_id::GroupSlug(slug.clone()),
+                    ))
                 >
                     (group.name.as_str())
                 </a>
@@ -178,21 +178,30 @@ async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
                 <div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                     <a
                         class="portal-link"
-                        href=(href!(group_id::group_settings, group_id::GroupId(group.id)))
+                        href=(href!(
+                            group_id::group_settings,
+                            group_id::GroupId(group.id),
+                        ))
                     >
                         "Manage Profile"
                     </a>
                     <span aria-hidden="true">"·"</span>
                     <a
                         class="portal-link"
-                        href=(href!(group_id::members_settings, group_id::GroupId(group.id)))
+                        href=(href!(
+                            group_id::members_settings,
+                            group_id::GroupId(group.id),
+                        ))
                     >
                         "Manage Members"
                     </a>
                     <span aria-hidden="true">"·"</span>
                     <a
                         class="portal-link"
-                        href=(href!(group_id::library_settings, group_id::GroupId(group.id)))
+                        href=(href!(
+                            group_id::library_settings,
+                            group_id::GroupId(group.id),
+                        ))
                     >
                         "Manage Library"
                     </a>
@@ -264,7 +273,10 @@ async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result<imp
             <div class="flex gap-2">
                 <form
                     method="post"
-                    action=(href!(group_id::accept_invitation, group_id::GroupId(group.id)))
+                    action=(href!(
+                        group_id::accept_invitation,
+                        group_id::GroupId(group.id),
+                    ))
                 >
                     <button
                         class="portal-button portal-button-primary text-sm"
@@ -275,7 +287,10 @@ async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result<imp
                 </form>
                 <form
                     method="post"
-                    action=(href!(group_id::ignore_invitation, group_id::GroupId(group.id)))
+                    action=(href!(
+                        group_id::ignore_invitation,
+                        group_id::GroupId(group.id),
+                    ))
                 >
                     <button
                         class="portal-button portal-button-secondary text-sm"

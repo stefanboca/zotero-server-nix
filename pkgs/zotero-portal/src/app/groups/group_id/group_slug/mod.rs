@@ -50,11 +50,11 @@ pub(in crate::app) async fn group_overview(cx: &Cx) -> Result<impl View> {
                             <a
                                 class="portal-link"
                                 href=(href!(
-                                crate::app::_web_library::group_library_path,
-                                crate::app::_web_library::LibraryGroupId(group.id),
-                                crate::app::_web_library::LibraryGroupSlug(group.slug()),
-                                crate::app::_web_library::LibraryPath(["items"]),
-                            ))
+                                    crate::app::_web_library::group_library_path,
+                                    crate::app::_web_library::LibraryGroupId(group.id),
+                                    crate::app::_web_library::LibraryGroupSlug(group.slug()),
+                                    crate::app::_web_library::LibraryPath(["items"]),
+                                ))
                             >
                                 "Group Library"
                             </a>
@@ -246,11 +246,9 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result<impl View> {
                                                 crate::app::_web_library::group_library_path,
                                                 crate::app::_web_library::LibraryGroupId(group.id),
                                                 crate::app::_web_library::LibraryGroupSlug(group.slug()),
-                                                crate::app::_web_library::LibraryPath([
-                                                    "items",
-                                                    "itemKey",
-                                                    item.key.as_str(),
-                                                ]),
+                                                crate::app::_web_library::LibraryPath(
+                                                    ["items", "itemKey", item.key.as_str()],
+                                                ),
                                             ))
                                         >
                                             (title)

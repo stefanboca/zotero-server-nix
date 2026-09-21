@@ -251,9 +251,7 @@ async fn library_permissions(
                 permission_checkbox(
                     id: PromotedStr(&"user-notes"),
                     label: PromotedStr(&"Allow notes access"),
-                    description: PromotedStr(
-                        &"Allow third party to access your notes.",
-                    ),
+                    description: PromotedStr(&"Allow third party to access your notes."),
                     name: PromotedStr(&"user-notes"),
                     checked: access.user.notes
                 )

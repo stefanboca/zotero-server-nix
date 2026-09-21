@@ -16,8 +16,9 @@ pub(in crate::app::settings) async fn edit_key(cx: &Cx) -> Result<impl View> {
         <div class="portal-key-editor-page">
             <a
                 class="portal-link"
-                href=(href!(super::super::super::security::security)
-                    .fragment("applications"))
+                href=(href!(super::super::super::security::security).fragment(
+                    "applications",
+                ))
             >
                 "Manage all access keys"
             </a>

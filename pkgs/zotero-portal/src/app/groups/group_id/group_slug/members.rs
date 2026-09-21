@@ -33,9 +33,9 @@ pub(super) async fn members(cx: &Cx) -> Result<impl View> {
                                 <a
                                     class="portal-link font-medium"
                                     href=(href!(
-                                    crate::app::profile::profile,
-                                    crate::app::profile::ProfileUsername(user.username.clone()),
-                                ))
+                                        crate::app::profile::profile,
+                                        crate::app::profile::ProfileUsername(user.username.clone()),
+                                    ))
                                 >
                                     (user.display_name())
                                 </a>

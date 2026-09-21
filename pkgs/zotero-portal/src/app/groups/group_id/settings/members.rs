@@ -33,9 +33,7 @@ pub(in crate::app::groups) async fn members(cx: &Cx) -> Result<impl View> {
 
         <script
             type="module"
-            src=(topcoat::asset::asset!(
-                "src/app/groups/group_id/group_actions.js"
-            ))
+            src=(topcoat::asset::asset!("src/app/groups/group_id/group_actions.js"))
         ></script>
     })
 }
@@ -67,10 +65,7 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
         <div data-members-region="">
             <h2 class="portal-section-heading">"Current Members"</h2>
             <form
-                action=(href!(
-                    super::super::members::create_member,
-                    GroupId(group.id),
-                ))
+                action=(href!(super::super::members::create_member, GroupId(group.id)))
                 data-member-roles=""
                 data-redirect=(group_overview.as_str())
                 data-removed-redirect=(groups.as_str())
@@ -106,12 +101,9 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
                                     </td>
                                     <td>(member.display_name())</td>
                                     <td class="whitespace-nowrap">
-                                        if let Some(joined) = joined_by_user
-                                            .get(&member.user_id) {
+                                        if let Some(joined) = joined_by_user.get(&member.user_id) {
                                             <time datetime=(joined.to_string())>
-                                                (joined
-                                                    .strftime("%Y-%m-%d %H:%M:%S")
-                                                    .to_string())
+                                                (joined.strftime("%Y-%m-%d %H:%M:%S").to_string())
                                             </time>
                                         } else {
                                             "--"
@@ -226,10 +218,10 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result<impl View> {
                                         <form
                                             method="post"
                                             action=(href!(
-                                            super::super::cancel_invitation,
-                                            GroupId(group_id),
-                                            super::super::InviteeUserId(invitation.invitee.user_id),
-                                        ))
+                                                super::super::cancel_invitation,
+                                                GroupId(group_id),
+                                                super::super::InviteeUserId(invitation.invitee.user_id),
+                                            ))
                                         >
                                             <button class="portal-link-danger" type="submit">
                                                 "Cancel"

@@ -155,12 +155,12 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
             if let Some(users) = transfer_candidates {
                 let has_transfer_candidates = !users.is_empty();
                 let transfer_confirmation = format!(
-                "Transfer “{}” to the selected member? You will become an administrator.",
-                context.group.name,
-            );
+                    "Transfer “{}” to the selected member? You will become an administrator.",
+                    context.group.name,
+                );
                 let delete_confirmation = format!(
-                "Permanently delete “{}” and its synced items and files?",
-                context.group.name,
+                    "Permanently delete “{}” and its synced items and files?",
+                    context.group.name,
                 );
                 section(
                     <h2 class="portal-section-heading">"Owner Options"</h2>
@@ -171,9 +171,9 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
                                 class="mt-4"
                                 method="post"
                                 action=(href!(
-                            super::owner::transfer_owner,
-                            GroupId(context.group.id),
-                        ))
+                                    super::owner::transfer_owner,
+                                    GroupId(context.group.id),
+                                ))
                             >
                                 <label class="inline-block max-w-full">
                                     <span class="portal-form-label">"New Owner"</span>
@@ -216,9 +216,9 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
                             class="mt-4"
                             method="post"
                             action=(href!(
-                        super::delete::delete_group,
-                        GroupId(context.group.id),
-                    ))
+                                super::delete::delete_group,
+                                GroupId(context.group.id),
+                            ))
                         >
                             confirm_button(
                                 label: "Delete Group",

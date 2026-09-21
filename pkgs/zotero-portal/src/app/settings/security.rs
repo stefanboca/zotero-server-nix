@@ -57,9 +57,7 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result<impl View> {
                             let expires_text = format_timestamp(expires);
                             <tr data-browser-session-item="">
                                 <td class="font-medium">
-                                    (browser_platform(
-                                        browser_session.user_agent.as_deref(),
-                                    ))
+                                    (browser_platform(browser_session.user_agent.as_deref()))
                                     if is_current {
                                         <span class="ml-2 text-xs font-normal">"Current"</span>
                                     }
@@ -227,9 +225,9 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result<impl View> {
                                         <a
                                             class="portal-link"
                                             href=(href!(
-                                        super::keys::edit_key_route,
-                                        super::keys::EditKeyId(key_id),
-                                    ))
+                                                super::keys::edit_key_route,
+                                                super::keys::EditKeyId(key_id),
+                                            ))
                                         >
                                             "Edit Key"
                                         </a>
@@ -241,9 +239,9 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result<impl View> {
                                         >
                                             <input type="hidden" name="key" value=(key.key.as_str())>
                                             let delete_confirmation = format!(
-                                        "Delete API key “{}”?",
-                                        key.name,
-                                    );
+                                                "Delete API key “{}”?",
+                                                key.name,
+                                            );
                                             confirm_button(
                                                 key: key.key.as_str(),
                                                 label: "Delete Key",
