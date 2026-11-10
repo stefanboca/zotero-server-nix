@@ -150,7 +150,7 @@ Add the module to a NixOS configuration:
 
 ```nix
 {
-  inputs.zotero-server.url = "github:your-name/zotero-server-nix";
+  inputs.zotero-server.url = "github:stefanboca/zotero-server-nix";
 
   outputs = {nixpkgs, zotero-server, ...}: {
     nixosConfigurations.server = nixpkgs.lib.nixosSystem {
