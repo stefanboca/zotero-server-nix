@@ -1,6 +1,5 @@
 use topcoat::context::{Cx, context};
-use topcoat::router::error::not_found;
-use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::error::{SeeOther, not_found};
 use topcoat::router::{href, route};
 use topcoat::{Error, Result};
 
@@ -12,7 +11,7 @@ use crate::id::UserId;
 topcoat::router::module_param!(pub(in crate::app::groups) invitee_user_id: UserId else not_found);
 
 #[route(POST)]
-pub(in crate::app::groups) async fn cancel(cx: &Cx) -> Result<Response> {
+pub(in crate::app::groups) async fn cancel(cx: &Cx) -> Result<SeeOther> {
     let group = managed_group(cx).await?;
     let invitee_id = invitee_user_id(cx)?;
     if !context::<Database>(cx)
@@ -22,12 +21,11 @@ pub(in crate::app::groups) async fn cancel(cx: &Cx) -> Result<Response> {
     {
         return Err(not_found().into());
     }
-    topcoat::router::error::see_other(
+    Ok(topcoat::router::error::see_other(
         href!(
             crate::app::groups::group_id::members_settings,
             group_id: group.id,
         )
         .resolve(cx),
-    )
-    .into_response(cx)
+    ))
 }

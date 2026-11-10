@@ -1,6 +1,5 @@
 use topcoat::context::{Cx, context};
-use topcoat::router::error::{bad_request, not_found, see_other};
-use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::error::{SeeOther, bad_request, not_found, see_other};
 use topcoat::router::{href, route};
 use topcoat::{Error, Result};
 
@@ -10,7 +9,7 @@ use crate::database::Database;
 use crate::dataserver::{Dataserver, GroupRole};
 
 #[route(POST)]
-pub(in crate::app::groups) async fn accept(cx: &Cx) -> Result<Response> {
+pub(in crate::app::groups) async fn accept(cx: &Cx) -> Result<SeeOther> {
     let user_id = authenticated_user(cx).await?;
     let group_id = *group_id(cx)?;
     let database = context::<Database>(cx);
@@ -32,13 +31,12 @@ pub(in crate::app::groups) async fn accept(cx: &Cx) -> Result<Response> {
         .delete_group_invitation(group_id, user_id)
         .await
         .map_err(Error::from_anyhow)?;
-    see_other(
+    Ok(see_other(
         href!(
             crate::app::groups::group_id::group_slug::group_overview,
             group_id: group.id,
             crate::app::groups::group_id::group_slug::group_slug: group.slug(),
         )
         .resolve(cx),
-    )
-    .into_response(cx)
+    ))
 }

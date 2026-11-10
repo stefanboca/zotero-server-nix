@@ -1,8 +1,7 @@
 use serde::Deserialize;
 use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
-use topcoat::router::error::{bad_request, forbidden, not_found, see_other};
-use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::error::{SeeOther, bad_request, forbidden, not_found, see_other};
 use topcoat::router::{href, route};
 use topcoat::{Error, Result};
 
@@ -17,7 +16,7 @@ struct TransferOwner {
 }
 
 #[route(POST)]
-pub(super) async fn transfer_owner(cx: &Cx, Form(input): Form<TransferOwner>) -> Result<Response> {
+pub(super) async fn transfer_owner(cx: &Cx, Form(input): Form<TransferOwner>) -> Result<SeeOther> {
     let (actor_id, group, actor_role) = current_group(cx).await?;
     if actor_role != GroupRole::Owner {
         return Err(forbidden().into());
@@ -45,6 +44,7 @@ pub(super) async fn transfer_owner(cx: &Cx, Form(input): Form<TransferOwner>) ->
         new_owner_id = %target.user_id,
         "group ownership transferred",
     );
-    see_other(href!(super::settings::members_settings, group_id: group.id).resolve(cx))
-        .into_response(cx)
+    Ok(see_other(
+        href!(super::settings::members_settings, group_id: group.id).resolve(cx),
+    ))
 }

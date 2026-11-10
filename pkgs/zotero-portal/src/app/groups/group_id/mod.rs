@@ -13,8 +13,7 @@ pub(in crate::app::groups) use invitations::{
 pub(super) use invite::invite_members;
 pub(super) use settings::{library_settings, members_settings, settings as group_settings};
 use topcoat::context::{Cx, context, memoize};
-use topcoat::router::error::{not_found, see_other};
-use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::error::{SeeOther, not_found, see_other};
 use topcoat::router::{href, route};
 use topcoat::{Error, Result};
 
@@ -55,15 +54,14 @@ pub(super) async fn current_group(cx: &Cx) -> Result<(UserId, Group, GroupRole)>
 }
 
 #[route(GET)]
-async fn show_group(cx: &Cx) -> Result<Response> {
+async fn show_group(cx: &Cx) -> Result<SeeOther> {
     let (_, group, _) = current_group(cx).await?;
-    see_other(
+    Ok(see_other(
         href!(
             group_slug::group_overview,
             group_id: group.id,
             group_slug::group_slug: group.slug(),
         )
         .resolve(cx),
-    )
-    .into_response(cx)
+    ))
 }

@@ -1,8 +1,7 @@
 use topcoat::context::{Cx, context};
 use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
-use topcoat::router::error::{bad_request, forbidden, see_other};
+use topcoat::router::error::{SeeOther, bad_request, forbidden, see_other};
 use topcoat::router::request::headers;
-use topcoat::router::response::{IntoResponse as _, Response};
 use topcoat::router::{header, href, query_params, route};
 use topcoat::{Error, Result, session};
 
@@ -20,12 +19,11 @@ struct CallbackQuery {
 }
 
 #[route(GET)]
-async fn callback(cx: &Cx) -> Result<Response> {
+async fn callback(cx: &Cx) -> Result<SeeOther> {
     let query = query_params::<CallbackQuery>(cx)?;
     if let Some(error) = &query.error {
         let description = query.error_description.as_deref().unwrap_or(error);
-        return bad_request(format!("OIDC provider rejected login: {description}"))
-            .into_response(cx);
+        return Err(bad_request(format!("OIDC provider rejected login: {description}")).into());
     }
     let code = query
         .code
@@ -48,10 +46,10 @@ async fn callback(cx: &Cx) -> Result<Response> {
     .parse()?
     .ok_or_else(|| bad_request("missing or invalid OIDC flow cookie"))?;
     if flow.read().state != state {
-        return bad_request("unknown OIDC state").into_response(cx);
+        return Err(bad_request("unknown OIDC state").into());
     }
     if flow.read().expires_at < jiff::Timestamp::now() {
-        return bad_request("OIDC login flow expired").into_response(cx);
+        return Err(bad_request("OIDC login flow expired").into());
     }
     let flow_value = flow.get();
     flow.remove();
@@ -96,8 +94,10 @@ async fn callback(cx: &Cx) -> Result<Response> {
     );
 
     if flow.session_token.is_some() {
-        see_other(href!(crate::app::user::login::done::done).resolve(cx)).into_response(cx)
+        Ok(see_other(
+            href!(crate::app::user::login::done::done).resolve(cx),
+        ))
     } else {
-        see_other(flow.return_path).into_response(cx)
+        Ok(see_other(flow.return_path))
     }
 }

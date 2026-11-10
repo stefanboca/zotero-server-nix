@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
-use topcoat::router::error::see_other;
-use topcoat::router::response::{IntoResponse as _, Response};
+use topcoat::router::error::{SeeOther, see_other};
 use topcoat::router::{href, page, query_params, route};
 use topcoat::view::{PromotedStr, View, component, view};
 use topcoat::{Error, Result};
@@ -140,7 +139,7 @@ async fn setting_radio(
 }
 
 #[route(POST)]
-async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<Response> {
+async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<SeeOther> {
     let mut group = managed_group_settings(cx).await?.group;
     group.library_editing = match input.library_editing {
         LibraryEditing::Members => "members",
@@ -157,10 +156,9 @@ async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<Res
         .update_group(&group)
         .await
         .map_err(Error::from_anyhow)?;
-    see_other(
+    Ok(see_other(
         href!(library, group_id: group.id)
             .query(LibraryQuery { saved: Some(true) })
             .resolve(cx),
-    )
-    .into_response(cx)
+    ))
 }

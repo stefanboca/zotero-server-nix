@@ -1,8 +1,7 @@
 use serde::Deserialize;
 use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
-use topcoat::router::error::{not_found, see_other};
-use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::error::{SeeOther, not_found, see_other};
 use topcoat::router::{href, route};
 use topcoat::{Error, Result};
 
@@ -20,7 +19,7 @@ struct RevokeKey {
 pub(in crate::app::settings) async fn revoke_key(
     cx: &Cx,
     Form(input): Form<RevokeKey>,
-) -> Result<Response> {
+) -> Result<SeeOther> {
     let user = signed_in_user(cx).await?;
     if !context::<Dataserver>(cx)
         .delete_access_key(user.user_id, input.key.as_str())
@@ -30,10 +29,9 @@ pub(in crate::app::settings) async fn revoke_key(
         return Err(not_found().into());
     }
     tracing::info!(user_id = %user.user_id, "API key revoked");
-    see_other(
+    Ok(see_other(
         href!(crate::app::settings::security::security)
             .fragment("applications")
             .resolve(cx),
-    )
-    .into_response(cx)
+    ))
 }

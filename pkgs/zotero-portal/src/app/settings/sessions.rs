@@ -1,8 +1,7 @@
 use serde::Deserialize;
 use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
-use topcoat::router::error::{not_found, see_other};
-use topcoat::router::response::{IntoResponse as _, Response};
+use topcoat::router::error::{SeeOther, not_found, see_other};
 use topcoat::router::{href, route};
 use topcoat::{Error, Result, session};
 
@@ -17,7 +16,7 @@ struct RevokeSession {
 }
 
 #[route(POST)]
-pub(super) async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) -> Result<Response> {
+pub(super) async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) -> Result<SeeOther> {
     let user = signed_in_user(cx).await?;
     let database = context::<Database>(cx);
     let dataserver = context::<Dataserver>(cx);
@@ -39,12 +38,11 @@ pub(super) async fn revoke_session(cx: &Cx, Form(input): Form<RevokeSession>) ->
     );
     if input.handle == current_handle {
         session::stop(cx).await?;
-        return see_other(href!(crate::app::user::login::login).resolve(cx)).into_response(cx);
+        return Ok(see_other(href!(crate::app::user::login::login).resolve(cx)));
     }
-    see_other(
+    Ok(see_other(
         href!(super::security::security)
             .fragment("sessions")
             .resolve(cx),
-    )
-    .into_response(cx)
+    ))
 }
