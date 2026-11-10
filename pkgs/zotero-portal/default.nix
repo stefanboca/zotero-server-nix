@@ -1,6 +1,7 @@
 {
   lib,
   rustPlatform,
+  stdenv,
   tailwindcss_4,
   topcoat-cli,
 }: let
@@ -33,26 +34,12 @@ in
       TAILWIND_CLI = getExe tailwindcss_4;
     };
 
-    # Let Topcoat own the Cargo build so it can bundle the exact artifact it
-    # produced without launching a second build.
-    buildPhase = ''
-      runHook preBuild
-      topcoat asset bundle --release --bin zotero-portal
-      runHook postBuild
+    postBuild = ''
+      CARGO_BUILD_TARGET="${stdenv.hostPlatform.rust.rustcTarget}" topcoat asset bundle --release --bin zotero-portal --out $out/bin/assets
     '';
 
-    checkPhase = ''
-      runHook preCheck
-      cargo test -j "$NIX_BUILD_CORES" --offline --profile release
-      runHook postCheck
-    '';
-
-    installPhase = ''
-      runHook preInstall
-      install -Dm755 target/release/zotero-portal $out/bin/zotero-portal
-      cp -r target/release/assets $out/bin/assets
+    postInstall = ''
       install -Dm644 secretspec.toml $out/share/zotero-portal/secretspec.toml
-      runHook postInstall
     '';
 
     meta = {
