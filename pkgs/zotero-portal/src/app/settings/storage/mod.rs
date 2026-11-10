@@ -1,9 +1,9 @@
 mod purge;
 
-use topcoat::Result;
-use topcoat::context::{Cx, app_context, memoize};
+use topcoat::context::{Cx, context, memoize};
 use topcoat::router::{href, page};
 use topcoat::view::{View, component, view};
+use topcoat::{Error, Result};
 
 use super::{format_storage_size, format_timestamp};
 use crate::app::{confirm_button, section, signed_in_user};
@@ -12,10 +12,10 @@ use crate::id::UserId;
 
 #[memoize]
 async fn memoized_storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {
-    app_context::<Dataserver>(cx)
+    context::<Dataserver>(cx)
         .storage_usage(user_id)
         .await
-        .map_err(Into::into)
+        .map_err(Error::from_anyhow)
 }
 
 async fn storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {
@@ -27,7 +27,7 @@ async fn storage_usage(cx: &Cx, user_id: UserId) -> Result<StorageUsage> {
                 error = %format_args!("{error:#}"),
                 "failed to load storage usage",
             );
-            Err(anyhow::anyhow!("failed to load storage usage").into())
+            Err(topcoat::Error::msg("failed to load storage usage"))
         }
     }
 }
@@ -95,12 +95,9 @@ async fn current_usage(cx: &Cx, user_id: UserId) -> Result<impl View> {
                 "My Library - "
                 (format_storage_size(usage.library_mb))
             </dd>
+            #[key(usage.group_id)]
             for usage in group_usage {
-                group_storage_usage(
-                    key: usage.group_id,
-                    group_id: usage.group_id,
-                    usage_mb: usage.usage_mb
-                )
+                group_storage_usage(group_id: usage.group_id, usage_mb: usage.usage_mb)
             }
             <dt aria-hidden="true"></dt>
             <dd>
@@ -113,9 +110,10 @@ async fn current_usage(cx: &Cx, user_id: UserId) -> Result<impl View> {
 
 #[component]
 async fn group_storage_usage(cx: &Cx, group_id: u64, usage_mb: f64) -> Result<impl View> {
-    let group_name = app_context::<Dataserver>(cx)
+    let group_name = context::<Dataserver>(cx)
         .group(group_id)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
         .map(|group| group.name)
         .unwrap_or_else(|| format!("Group {group_id}"));
     Ok(view! {

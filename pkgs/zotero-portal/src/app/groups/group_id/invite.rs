@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 
 use serde::Deserialize;
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
 use topcoat::router::error::see_other;
 use topcoat::router::{href, page};
 use topcoat::view::{View, component, view};
+use topcoat::{Error, Result};
 
-use super::GroupId;
+use super::group_id;
 use super::members::managed_group;
 use crate::app::{authenticated_user, portal_page, section};
 use crate::database::Database;
@@ -22,6 +22,7 @@ struct Invitations {
 
 #[component]
 async fn invitation_form(
+    cx: &Cx,
     group: &Group,
     identifiers: &str,
     error: Option<&str>,
@@ -44,7 +45,7 @@ async fn invitation_form(
                 <form
                     class="space-y-6 pt-8"
                     method="post"
-                    action=(href!(invite_members, GroupId(group.id)))
+                    action=(href!(invite_members, group_id: group.id))
                 >
                     <div>
                         <label class="portal-form-label" for="invite-identifiers">
@@ -73,7 +74,7 @@ async fn invitation_form(
                         </button>
                         <a
                             class="portal-button portal-button-secondary"
-                            href=(href!(super::members_settings, GroupId(group.id)))
+                            href=(href!(super::members_settings, group_id: group.id))
                         >
                             "Cancel"
                         </a>
@@ -113,9 +114,13 @@ async fn send_invitations(cx: &Cx, Form(input): Form<Invitations>) -> Result<imp
 
     let mut invitee_ids = HashSet::with_capacity(identifiers.len());
     if validation_error.is_none() {
-        let database = app_context::<Database>(cx);
+        let database = context::<Database>(cx);
         for identifier in identifiers {
-            let Some(invitee) = database.user_by_identifier(identifier).await? else {
+            let Some(invitee) = database
+                .user_by_identifier(identifier)
+                .await
+                .map_err(Error::from_anyhow)?
+            else {
                 validation_error = Some(format!("Error sending invitation to \"{identifier}\""));
                 break;
             };
@@ -140,14 +145,15 @@ async fn send_invitations(cx: &Cx, Form(input): Form<Invitations>) -> Result<imp
         });
     }
 
-    let database = app_context::<Database>(cx);
+    let database = context::<Database>(cx);
     for invitee_id in invitee_ids {
         database
             .create_group_invitation(group.id, actor_id, invitee_id)
-            .await?;
+            .await
+            .map_err(Error::from_anyhow)?;
     }
 
-    Err(see_other(href!(super::members_settings, GroupId(group.id)).resolve(cx)).into())
+    Err(see_other(href!(super::members_settings, group_id: group.id).resolve(cx)).into())
 }
 
 #[cfg(test)]

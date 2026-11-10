@@ -1,11 +1,11 @@
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::{href, page};
 use topcoat::runtime::{shard, signal};
 use topcoat::view::{View, component, view};
+use topcoat::{Error, Result};
 
 use super::managed_group_settings;
-use crate::app::groups::group_id::GroupId;
+use crate::app::groups::group_id::group_id;
 use crate::app::section;
 use crate::database::Database;
 use crate::dataserver::{Dataserver, GroupRole};
@@ -41,22 +41,24 @@ pub(in crate::app::groups) async fn members(cx: &Cx) -> Result<impl View> {
 #[shard]
 async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
     let _ = refresh;
-    let context = managed_group_settings(cx).await?;
-    let group = context.group.clone();
-    let mut users = app_context::<Database>(cx)
+    let group_context = managed_group_settings(cx).await?;
+    let group = group_context.group.clone();
+    let mut users = context::<Database>(cx)
         .users_by_ids(&group.user_ids())
-        .await?;
-    let joined_by_user = app_context::<Dataserver>(cx)
+        .await
+        .map_err(Error::from_anyhow)?;
+    let joined_by_user = context::<Dataserver>(cx)
         .group_memberships(group.id)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
         .into_iter()
         .map(|membership| (membership.user_id, membership.joined))
         .collect::<std::collections::BTreeMap<_, _>>();
-    users.sort_by_key(|member| member.user_id != context.actor_id);
+    users.sort_by_key(|member| member.user_id != group_context.actor_id);
     let group_overview = href!(
         super::super::group_slug::group_overview,
-        GroupId(group.id),
-        super::super::group_slug::GroupSlug(group.slug()),
+        group_id: group.id,
+        super::super::group_slug::group_slug: group.slug(),
     )
     .resolve(cx);
     let groups = href!(crate::app::groups::list_groups).resolve(cx);
@@ -65,7 +67,7 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
         <div data-members-region="">
             <h2 class="portal-section-heading">"Current Members"</h2>
             <form
-                action=(href!(super::super::members::create_member, GroupId(group.id)))
+                action=(href!(super::super::members::create_member, group_id: group.id))
                 data-member-roles=""
                 data-redirect=(group_overview.as_str())
                 data-removed-redirect=(groups.as_str())
@@ -91,9 +93,7 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
                                             class="portal-link"
                                             href=(href!(
                                                 crate::app::profile::profile,
-                                                crate::app::profile::ProfileUsername(
-                                                    member.username.clone(),
-                                                ),
+                                                crate::app::profile::profile_username: member.username.clone(),
                                             ))
                                         >
                                             (member.username.as_str())
@@ -120,7 +120,7 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
                                                     data-member-role=""
                                                     data-user-id=(member.user_id.to_string())
                                                     data-current-role=(member_role.to_string())
-                                                    data-self=(if member.user_id == context.actor_id {
+                                                    data-self=(if member.user_id == group_context.actor_id {
                                                         "true"
                                                     } else {
                                                         "false"
@@ -171,9 +171,10 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
 
 #[component]
 async fn member_invitations(cx: &Cx, group_id: u64) -> Result<impl View> {
-    let invitations = app_context::<Database>(cx)
+    let invitations = context::<Database>(cx)
         .group_invitations(group_id)
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     Ok(view! {
         section(
             <h2 class="portal-section-heading">"Member Invitations"</h2>
@@ -200,9 +201,7 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result<impl View> {
                                             class="portal-link"
                                             href=(href!(
                                                 crate::app::profile::profile,
-                                                crate::app::profile::ProfileUsername(
-                                                    invitation.invitee.username.clone(),
-                                                ),
+                                                crate::app::profile::profile_username: invitation.invitee.username.clone(),
                                             ))
                                         >
                                             (invitation.invitee.username.as_str())
@@ -219,8 +218,8 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result<impl View> {
                                             method="post"
                                             action=(href!(
                                                 super::super::cancel_invitation,
-                                                GroupId(group_id),
-                                                super::super::InviteeUserId(invitation.invitee.user_id),
+                                                group_id: group_id,
+                                                super::super::invitee_user_id: invitation.invitee.user_id,
                                             ))
                                         >
                                             <button class="portal-link-danger" type="submit">
@@ -238,7 +237,7 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result<impl View> {
             }
             <a
                 class="portal-link mt-4 inline-block"
-                href=(href!(super::super::invite_members, GroupId(group_id)))
+                href=(href!(super::super::invite_members, group_id: group_id))
             >
                 "Send More Invitations"
             </a>

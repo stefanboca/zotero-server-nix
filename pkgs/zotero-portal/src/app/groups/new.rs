@@ -1,13 +1,14 @@
 use serde::Deserialize;
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
 use topcoat::router::error::see_other;
+use topcoat::router::response::{IntoResponse as _, Response};
 use topcoat::router::{href, page, route};
 use topcoat::view::{View, view};
+use topcoat::{Error, Result};
 
 use super::GroupName;
-use crate::app::groups::group_id::{GroupId, library_settings};
+use crate::app::groups::group_id::{group_id, library_settings};
 use crate::app::{authenticated_user, portal_page, section};
 use crate::dataserver::Dataserver;
 
@@ -66,11 +67,12 @@ pub(super) async fn new_group(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST)]
-async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result<()> {
+async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result<Response> {
     let user_id = authenticated_user(cx).await?;
-    let group_id = app_context::<Dataserver>(cx)
+    let group_id = context::<Dataserver>(cx)
         .create_private_group(user_id, input.name.as_str())
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     tracing::info!(user_id = %user_id, group_id, "group created");
-    Err(see_other(href!(library_settings, GroupId(group_id)).resolve(cx)).into())
+    see_other(href!(library_settings, group_id: group_id).resolve(cx)).into_response(cx)
 }

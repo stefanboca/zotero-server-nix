@@ -4,14 +4,15 @@ mod members;
 pub(in crate::app::groups) use library::library as library_settings;
 pub(in crate::app::groups) use members::members as members_settings;
 use serde::{Deserialize, Serialize};
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
 use topcoat::router::error::{bad_request, forbidden, not_found, see_other};
-use topcoat::router::{Slot, href, layout, page, path_param, query_params, route};
+use topcoat::router::response::{IntoResponse as _, Response};
+use topcoat::router::{Slot, href, layout, page, query_params, route};
 use topcoat::view::{PromotedStr, View, view};
+use topcoat::{Error, Result};
 
-use super::{GroupId, current_group, group_by_id};
+use super::{current_group, group_by_id, group_id};
 use crate::app::groups::GroupName;
 use crate::app::{SidebarItem, confirm_button, portal_page, section, sidebar, success_message};
 use crate::database::Database;
@@ -39,11 +40,11 @@ pub(super) async fn managed_group_settings(cx: &Cx) -> Result<GroupSettingsConte
 
 #[layout]
 async fn group_settings_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
-    let group_id = *path_param::<GroupId>(cx)?;
-    let group = group_by_id(cx, group_id).await?.ok_or_else(not_found)?;
-    let general = href!(settings, GroupId(group_id));
-    let members = href!(members::members, GroupId(group_id));
-    let library = href!(library::library, GroupId(group_id));
+    let group_id = group_id(cx)?;
+    let group = group_by_id(cx, *group_id).await?.ok_or_else(not_found)?;
+    let general = href!(settings, group_id: group_id);
+    let members = href!(members::members, group_id: group_id);
+    let library = href!(library::library, group_id: group_id);
     let navigation = vec![
         SidebarItem {
             active: general.is_current(cx),
@@ -63,8 +64,8 @@ async fn group_settings_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     ];
     let group_href = href!(
         super::group_slug::group_overview,
-        GroupId(group.id),
-        super::group_slug::GroupSlug(group.slug()),
+        group_id: group.id,
+        super::group_slug::group_slug: group.slug(),
     );
     Ok(view! {
         portal_page(
@@ -100,13 +101,14 @@ struct SettingsQuery {
 
 #[page]
 pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
-    let context = managed_group_settings(cx).await?;
+    let group_context = managed_group_settings(cx).await?;
     let query = query_params::<SettingsQuery>(cx)?;
-    let transfer_candidates = if context.actor_role == GroupRole::Owner {
-        let mut users = app_context::<Database>(cx)
-            .users_by_ids(&context.group.user_ids())
-            .await?;
-        users.retain(|user| user.user_id != context.group.owner);
+    let transfer_candidates = if group_context.actor_role == GroupRole::Owner {
+        let mut users = context::<Database>(cx)
+            .users_by_ids(&group_context.group.user_ids())
+            .await
+            .map_err(Error::from_anyhow)?;
+        users.retain(|user| user.user_id != group_context.group.owner);
         Some(users)
     } else {
         None
@@ -121,7 +123,7 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
                 <form
                     class="mt-5 space-y-6"
                     method="post"
-                    action=(href!(settings, GroupId(context.group.id)))
+                    action=(href!(settings, group_id: group_context.group.id))
                 >
                     <div>
                         <label class="portal-form-label" for="group-name">"Name"</label>
@@ -129,7 +131,7 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
                             class="portal-form-control portal-form-control-block"
                             id="group-name"
                             name="name"
-                            value=(context.group.name.as_str())
+                            value=(group_context.group.name.as_str())
                             required="required"
                             maxlength="255"
                         >
@@ -144,7 +146,7 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
                             name="description"
                             maxlength="10000"
                         >
-                            (context.group.description.as_str())
+                            (group_context.group.description.as_str())
                         </textarea>
                     </div>
                     <button class="portal-button portal-button-primary" type="submit">
@@ -156,11 +158,11 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
                 let has_transfer_candidates = !users.is_empty();
                 let transfer_confirmation = format!(
                     "Transfer “{}” to the selected member? You will become an administrator.",
-                    context.group.name,
+                    group_context.group.name,
                 );
                 let delete_confirmation = format!(
                     "Permanently delete “{}” and its synced items and files?",
-                    context.group.name,
+                    group_context.group.name,
                 );
                 section(
                     <h2 class="portal-section-heading">"Owner Options"</h2>
@@ -172,7 +174,7 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
                                 method="post"
                                 action=(href!(
                                     super::owner::transfer_owner,
-                                    GroupId(context.group.id),
+                                    group_id: group_context.group.id,
                                 ))
                             >
                                 <label class="inline-block max-w-full">
@@ -217,7 +219,7 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
                             method="post"
                             action=(href!(
                                 super::delete::delete_group,
-                                GroupId(context.group.id),
+                                group_id: group_context.group.id,
                             ))
                         >
                             confirm_button(
@@ -234,26 +236,29 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST)]
-async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<()> {
-    let context = managed_group_settings(cx).await?;
+async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<Response> {
+    let group_context = managed_group_settings(cx).await?;
     let name = input.name.as_str();
     let description = input.description.trim();
     if description.chars().count() > 10_000 {
         return Err(bad_request("group description cannot exceed 10000 characters").into());
     }
-    let mut group = context.group.clone();
+    let mut group = group_context.group.clone();
     group.name = name.to_owned();
     group.description = description.to_owned();
-    app_context::<Dataserver>(cx).update_group(&group).await?;
+    context::<Dataserver>(cx)
+        .update_group(&group)
+        .await
+        .map_err(Error::from_anyhow)?;
     tracing::info!(
-        user_id = %context.actor_id,
+        user_id = %group_context.actor_id,
         group_id = group.id,
         "group settings updated",
     );
-    Err(see_other(
-        href!(settings, GroupId(group.id))
+    see_other(
+        href!(settings, group_id: group.id)
             .query(SettingsQuery { saved: Some(true) })
             .resolve(cx),
     )
-    .into())
+    .into_response(cx)
 }

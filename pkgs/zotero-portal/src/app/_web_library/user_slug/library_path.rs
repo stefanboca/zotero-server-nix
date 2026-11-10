@@ -1,16 +1,16 @@
 use topcoat::Result;
 use topcoat::context::Cx;
 use topcoat::router::error::not_found;
-use topcoat::router::{page, path_param};
+use topcoat::router::page;
 use topcoat::view::View;
 
-topcoat::router::path_param!(*personal_library_path);
+topcoat::router::module_param!(*personal_library_path);
 
 /// Render client-side Web Library routes on a direct request or refresh while
 /// leaving unrelated paths available for portal routes and normal 404s.
 #[page]
-async fn personal_library_path(cx: &Cx) -> Result<impl View> {
-    let mut path = path_param::<PersonalLibraryPath>(cx);
+async fn personal_library_path_(cx: &Cx) -> Result<impl View> {
+    let mut path = personal_library_path(cx);
     let Some(prefix) = path.next() else {
         return Err(not_found().into());
     };

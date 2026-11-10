@@ -1,17 +1,17 @@
 use topcoat::Result;
 use topcoat::context::Cx;
-use topcoat::router::{href, page, path_param};
+use topcoat::router::{href, page};
 use topcoat::view::{View, view};
 
 use super::super::{ApiKeyValue, key_editor};
 use crate::app::signed_in_user;
 
-topcoat::router::path_param!(pub(in crate::app::settings) key_id: ApiKeyValue, error = not_found);
+topcoat::router::module_param!(pub(in crate::app::settings) key_id: ApiKeyValue else not_found);
 
 #[page]
 pub(in crate::app::settings) async fn edit_key(cx: &Cx) -> Result<impl View> {
     let user = signed_in_user(cx).await?;
-    let key_id = path_param::<KeyId>(cx)?;
+    let key_id = key_id(cx)?;
     Ok(view! {
         <div class="portal-key-editor-page">
             <a

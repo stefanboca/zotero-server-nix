@@ -3,7 +3,7 @@ use topcoat::context::Cx;
 use topcoat::router::page;
 use topcoat::view::View;
 
-topcoat::router::path_param!(*library_path);
+topcoat::router::module_param!(*library_path);
 
 #[page]
 async fn personal_library_path(cx: &Cx) -> Result<impl View> {

@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::content::Json;
 use topcoat::router::error::{bad_request, not_found};
 use topcoat::router::{query_params, route};
+use topcoat::{Error, Result};
 
 use super::keys::ApiKeyValue;
 use crate::app::signed_in_user;
@@ -61,8 +61,11 @@ pub(in crate::app::settings) async fn save_key(
         return Err(bad_request("group write permission requires library access").into());
     }
 
-    let dataserver = app_context::<Dataserver>(cx);
-    let groups = dataserver.groups_for_user(user.user_id).await?;
+    let dataserver = context::<Dataserver>(cx);
+    let groups = dataserver
+        .groups_for_user(user.user_id)
+        .await
+        .map_err(Error::from_anyhow)?;
     for target in input.access.groups.keys() {
         if let ApiKeyGroupTarget::Group(group_id) = target
             && !groups.iter().any(|group| group.id == *group_id)
@@ -77,13 +80,15 @@ pub(in crate::app::settings) async fn save_key(
         (None, None) => (
             dataserver
                 .create_access_key(user.user_id, name, &input.access)
-                .await?,
+                .await
+                .map_err(Error::from_anyhow)?,
             true,
         ),
         (Some(query_key), Some(body_key)) if query_key == body_key => (
             dataserver
                 .update_access_key(user.user_id, query_key.as_str(), name, &input.access)
-                .await?
+                .await
+                .map_err(Error::from_anyhow)?
                 .ok_or_else(not_found)?,
             false,
         ),

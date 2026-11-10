@@ -1,7 +1,7 @@
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::{href, page};
 use topcoat::view::{View, view};
+use topcoat::{Error, Result};
 
 use super::current_slug_group;
 use crate::app::{portal_page, section};
@@ -13,9 +13,10 @@ pub(super) async fn members(cx: &Cx) -> Result<impl View> {
     if role.is_none() {
         return Err(topcoat::router::error::not_found().into());
     }
-    let users = app_context::<Database>(cx)
+    let users = context::<Database>(cx)
         .users_by_ids(&group.user_ids())
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     Ok(view! {
         portal_page(
             section(
@@ -34,7 +35,7 @@ pub(super) async fn members(cx: &Cx) -> Result<impl View> {
                                     class="portal-link font-medium"
                                     href=(href!(
                                         crate::app::profile::profile,
-                                        crate::app::profile::ProfileUsername(user.username.clone()),
+                                        crate::app::profile::profile_username: user.username.clone(),
                                     ))
                                 >
                                     (user.display_name())

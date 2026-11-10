@@ -2,16 +2,16 @@ mod groups;
 mod user_slug;
 
 pub(in crate::app) use groups::{
-    GroupId as LibraryGroupId, GroupSlug as LibraryGroupSlug, LibraryPath, group_library_path,
+    group_library_path, group_library_tail as library_path, library_group_id, library_group_slug,
 };
 use serde_json::json;
-use topcoat::context::{Cx, app_context, try_request_context};
+use topcoat::context::{Cx, context, try_context};
 use topcoat::router::response::Response;
 use topcoat::router::{Body, Next, href, layer, page};
 use topcoat::view::{Unescaped, View, view};
-use topcoat::{Result, session};
+use topcoat::{Error, Result, session};
 use url::Url;
-pub(in crate::app) use user_slug::{UserSlug, personal_library_root};
+pub(in crate::app) use user_slug::{personal_library_root, user_slug as personal_user_slug};
 
 use crate::app::signed_in_user;
 use crate::database::{self, Database};
@@ -36,23 +36,30 @@ pub(super) async fn library(cx: &Cx) -> Result<impl View + use<>> {
     let user = signed_in_user(cx).await?;
     let token_hash = session::token_hash(cx)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("authenticated browser session disappeared"))?;
-    let access = app_context::<Database>(cx)
-        .web_library_access(app_context::<Dataserver>(cx), user.user_id, &*token_hash)
-        .await?;
-    let config = script_json(&WebLibraryConfig::new(
-        &user,
-        access,
-        href!(crate::app::settings::storage_route).resolve(cx),
-    )?)?;
+        .ok_or_else(|| anyhow::anyhow!("authenticated browser session disappeared"))
+        .map_err(Error::from_anyhow)?;
+    let access = context::<Database>(cx)
+        .web_library_access(context::<Dataserver>(cx), user.user_id, &*token_hash)
+        .await
+        .map_err(Error::from_anyhow)?;
+    let config = script_json(
+        &WebLibraryConfig::new(
+            &user,
+            access,
+            href!(crate::app::settings::storage_route).resolve(cx),
+        )
+        .map_err(Error::from_anyhow)?,
+    )
+    .map_err(Error::from_anyhow)?;
     let menus = script_json(&web_library_menus(
         cx,
         &user,
-        try_request_context::<GroupWebLibrary>(cx).is_some(),
-    ))?;
+        try_context::<GroupWebLibrary>(cx).is_some(),
+    ))
+    .map_err(Error::from_anyhow)?;
 
+    let cx = cx.clone();
     Ok(view! {
-        cx =>
         <main class="h-dvh w-full overflow-hidden">
             <div class="h-full min-w-0 flex-1" id="zotero-web-library"></div>
             <script type="application/json" id="zotero-web-library-config">
@@ -151,7 +158,7 @@ fn web_library_menus(
 ) -> serde_json::Value {
     let profile = href!(
         crate::app::profile::profile,
-        crate::app::profile::ProfileUsername(user.username.clone()),
+        crate::app::profile::profile_username: user.username.clone(),
     )
     .resolve(cx);
     let groups = href!(crate::app::groups::list_groups).resolve(cx);

@@ -12,15 +12,17 @@ mod user;
 mod web;
 
 use jiff::SignedDuration;
-use topcoat::context::{Cx, app_context, memoize, try_request_context};
+use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
+use topcoat::context::{Cx, context, memoize, try_context};
+use topcoat::cookie::CookieLayer;
 use topcoat::router::error::{RedirectError, RewriteError, not_found, redirect};
 use topcoat::router::request::{headers, uri};
 use topcoat::router::response::IntoResponse;
 use topcoat::router::tower::TowerLayer;
 use topcoat::router::{RouterBuilder, RouterBuilderDiscoverExt, Slot, StatusCode, href, layout};
-use topcoat::runtime::RouterBuilderRuntimeExt as _;
+use topcoat::runtime::RuntimeLayer;
 use topcoat::view::{Child, PromotedStr, StaticStr, View, component, error_boundary, view};
-use topcoat::{Result, session};
+use topcoat::{Error, Result, session};
 use tower_http::LatencyUnit;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnResponse, TraceLayer};
 use tracing::Level;
@@ -32,12 +34,14 @@ use crate::id::UserId;
 
 pub(crate) const FLOW_LIFETIME: SignedDuration = SignedDuration::from_mins(15);
 
-pub fn routes() -> RouterBuilder {
-    topcoat::router::module_router!()
-        .runtime()
-        // Shards and explicit-path compatibility routes are registered through
-        // the outer discovery extension.
-        .discover()
+fn routes() -> RouterBuilder {
+    // Shards and explicit-path compatibility routes are registered through
+    // the outer discovery extension.
+    topcoat::router::module_router!().discover()
+}
+
+pub fn router() -> RouterBuilder {
+    routes()
         .layer(TowerLayer::new(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
@@ -52,6 +56,9 @@ pub fn routes() -> RouterBuilder {
                         .latency_unit(LatencyUnit::Millis),
                 ),
         ))
+        .layer(CookieLayer::new())
+        .layer(RuntimeLayer::new())
+        .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
 }
 
 #[memoize]
@@ -63,15 +70,15 @@ async fn memoized_current_user(cx: &Cx) -> Result<Option<UserId>> {
     let user_agent = headers(cx)
         .get("user-agent")
         .and_then(|value| value.to_str().ok());
-    app_context::<Database>(cx)
+    context::<Database>(cx)
         .refresh_browser_session(
-            app_context::<Dataserver>(cx),
+            context::<Dataserver>(cx),
             &*browser_session.token_hash,
             expires,
             user_agent,
         )
         .await
-        .map_err(Into::into)
+        .map_err(Error::from_anyhow)
 }
 
 pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
@@ -79,7 +86,7 @@ pub(crate) async fn current_user(cx: &Cx) -> Result<Option<UserId>> {
         Ok(user_id) => Ok(*user_id),
         Err(error) => {
             tracing::error!(error = %format_args!("{error:#}"), "failed to authenticate request");
-            Err(anyhow::anyhow!("failed to authenticate request").into())
+            Err(topcoat::Error::msg("failed to authenticate request"))
         }
     }
 }
@@ -132,7 +139,7 @@ pub(crate) fn normalized_return_path(value: &str) -> Option<String> {
 
 #[layout]
 async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
-    let web_library_active = try_request_context::<WebLibrary>(cx).is_some();
+    let web_library_active = try_context::<WebLibrary>(cx).is_some();
     let show_portal_navigation = !web_library_active;
     let navigation_user = if show_portal_navigation {
         match current_user(cx).await? {
@@ -224,7 +231,7 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                                                 class="portal-dropdown-link block rounded px-3 py-2 text-sm"
                                                 href=(href!(
                                                     profile::profile,
-                                                    profile::ProfileUsername(user.username.clone()),
+                                                    profile::profile_username: user.username.clone(),
                                                 ))
                                             >
                                                 "My Profile"
@@ -259,6 +266,7 @@ async fn root_layout(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
 
 #[component]
 pub(crate) async fn confirm_button(
+    cx: &Cx,
     label: &str,
     confirmation: &str,
     class: &str,
@@ -278,7 +286,7 @@ pub(crate) async fn confirm_button(
 /// Responsive content boundary shared by portal pages. The Web Library does
 /// not use it because that application owns the entire viewport.
 #[component]
-pub(crate) async fn portal_page(child: Child<'_>) -> Result<impl View> {
+pub(crate) async fn portal_page(cx: &Cx, child: Child<'_>) -> Result<impl View> {
     Ok(view! { <main class="portal-page">(child)</main> })
 }
 
@@ -289,7 +297,11 @@ pub(crate) struct SidebarItem {
 }
 
 #[component]
-pub(crate) async fn sidebar(aria_label: PromotedStr, items: Vec<SidebarItem>) -> Result<impl View> {
+pub(crate) async fn sidebar(
+    cx: &Cx,
+    aria_label: PromotedStr,
+    items: Vec<SidebarItem>,
+) -> Result<impl View> {
     Ok(view! {
         <nav class="portal-sidebar" aria-label=(aria_label)>
             <ul class="portal-sidebar-items">
@@ -316,12 +328,12 @@ pub(crate) async fn sidebar(aria_label: PromotedStr, items: Vec<SidebarItem>) ->
 /// The modern zotero.org settings theme uses the same bordered white surface
 /// for independent sections. Keeping it here prevents pages from drifting.
 #[component]
-pub(crate) async fn section(child: Child<'_>) -> Result<impl View> {
+pub(crate) async fn section(cx: &Cx, child: Child<'_>) -> Result<impl View> {
     Ok(view! { <section class="portal-card">(child)</section> })
 }
 
 #[component]
-pub(crate) async fn success_message(message: &str) -> Result<impl View> {
+pub(crate) async fn success_message(cx: &Cx, message: &str) -> Result<impl View> {
     Ok(view! {
         <p class="portal-alert portal-alert-success mb-6" role="status">(message)</p>
     })
@@ -344,7 +356,6 @@ fn friendly_error_page(cx: &Cx, error: topcoat::Error) -> Result<impl View> {
         _ => "Something went wrong. Please try again",
     };
     Ok(view! {
-        cx =>
         (status)
         <main class="mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16">
             <h1 class="text-4xl font-semibold text-red-800">
@@ -371,10 +382,10 @@ async fn memoized_authenticated_user_summary(
     cx: &Cx,
     user_id: UserId,
 ) -> Result<Option<database::UserSummary>> {
-    app_context::<Database>(cx)
+    context::<Database>(cx)
         .user_by_id(user_id)
         .await
-        .map_err(Into::into)
+        .map_err(Error::from_anyhow)
 }
 
 async fn authenticated_user_summary(
@@ -389,7 +400,7 @@ async fn authenticated_user_summary(
                 error = %format_args!("{error:#}"),
                 "failed to look up authenticated user",
             );
-            Err(anyhow::anyhow!("failed to authenticate request").into())
+            Err(topcoat::Error::msg("failed to authenticate request"))
         }
     }
 }
@@ -398,9 +409,69 @@ async fn authenticated_user_summary(
 mod tests {
     use super::*;
 
-    #[test]
-    fn routes_build() {
-        let _ = routes().build();
+    #[tokio::test]
+    async fn module_routes_preserve_dynamic_segments() {
+        use topcoat::router::request::Request;
+        use topcoat::router::{Body, LayerFn, Method, endpoint, to_bytes};
+
+        let router = routes()
+            .layer(LayerFn::new(None::<&str>, |cx, _body, _next| {
+                Box::pin(async move { endpoint(cx).path().to_string().into_response(cx) })
+            }))
+            .build();
+
+        for (method, path, expected) in [
+            (
+                Method::GET,
+                "/groups/42/research",
+                "/groups/{group_id}/{group_slug}",
+            ),
+            (
+                Method::GET,
+                "/groups/42/settings",
+                "/groups/{group_id}/settings",
+            ),
+            (
+                Method::GET,
+                "/groups/42/research/items",
+                "/groups/{group_id}/{group_slug}/{*library_path}",
+            ),
+            (Method::GET, "/alice/items", "/{user_slug}/items"),
+            (
+                Method::GET,
+                "/alice/items/ABC",
+                "/{user_slug}/items/{*library_path}",
+            ),
+            (
+                Method::GET,
+                "/alice/collections/ABC",
+                "/{user_slug}/{*personal_library_path}",
+            ),
+            (
+                Method::GET,
+                "/settings/keys/edit/abcdefghijklmnopqrstuvwx",
+                "/settings/keys/edit/{key_id}",
+            ),
+            (
+                Method::POST,
+                "/groups/42/invitations/cancel/7",
+                "/groups/{group_id}/invitations/cancel/{invitee_user_id}",
+            ),
+            (Method::GET, "/alice", "/{profile_username}"),
+        ] {
+            let response = router
+                .handle(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            assert_eq!(std::str::from_utf8(&body).unwrap(), expected, "{path}");
+        }
     }
 
     #[test]

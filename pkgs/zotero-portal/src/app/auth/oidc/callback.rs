@@ -1,9 +1,10 @@
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
 use topcoat::router::error::{bad_request, forbidden, see_other};
 use topcoat::router::request::headers;
+use topcoat::router::response::{IntoResponse as _, Response};
 use topcoat::router::{header, href, query_params, route};
-use topcoat::{Result, session};
+use topcoat::{Error, Result, session};
 
 use crate::app::user::complete_desktop_login;
 use crate::database::Database;
@@ -19,11 +20,12 @@ struct CallbackQuery {
 }
 
 #[route(GET)]
-async fn callback(cx: &Cx) -> Result<()> {
+async fn callback(cx: &Cx) -> Result<Response> {
     let query = query_params::<CallbackQuery>(cx)?;
     if let Some(error) = &query.error {
         let description = query.error_description.as_deref().unwrap_or(error);
-        return Err(bad_request(format!("OIDC provider rejected login: {description}")).into());
+        return bad_request(format!("OIDC provider rejected login: {description}"))
+            .into_response(cx);
     }
     let code = query
         .code
@@ -34,8 +36,8 @@ async fn callback(cx: &Cx) -> Result<()> {
         .as_deref()
         .ok_or_else(|| bad_request("missing OIDC state"))?;
 
-    let database = app_context::<Database>(cx);
-    let dataserver = app_context::<Dataserver>(cx);
+    let database = context::<Database>(cx);
+    let dataserver = context::<Dataserver>(cx);
     let flow = cookie_store::<OidcFlow, _>(
         private_cookies(cx)
             .default_http_only(true)
@@ -46,27 +48,32 @@ async fn callback(cx: &Cx) -> Result<()> {
     .parse()?
     .ok_or_else(|| bad_request("missing or invalid OIDC flow cookie"))?;
     if flow.read().state != state {
-        return Err(bad_request("unknown OIDC state").into());
+        return bad_request("unknown OIDC state").into_response(cx);
     }
     if flow.read().expires_at < jiff::Timestamp::now() {
-        return Err(bad_request("OIDC login flow expired").into());
+        return bad_request("OIDC login flow expired").into_response(cx);
     }
     let flow_value = flow.get();
     flow.remove();
     let flow = flow_value;
 
-    let profile = app_context::<Oidc>(cx)
+    let profile = context::<Oidc>(cx)
         .exchange_code(code, &flow)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
         .ok_or_else(forbidden)?;
     let user_id = database
         .provision_user(&profile)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
         .ok_or_else(forbidden)?;
     if let Some(session_token) = flow.session_token.as_deref() {
         complete_desktop_login(database, dataserver, session_token, user_id).await?;
     } else {
-        dataserver.set_unlimited_storage(user_id).await?;
+        dataserver
+            .set_unlimited_storage(user_id)
+            .await
+            .map_err(Error::from_anyhow)?;
     }
     let browser_session = session::start(cx).await?;
     let user_agent = headers(cx)
@@ -80,7 +87,8 @@ async fn callback(cx: &Cx) -> Result<()> {
             browser_session.expires_at.try_into()?,
             user_agent,
         )
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     tracing::info!(
         user_id = %user_id,
         desktop_login = flow.session_token.is_some(),
@@ -88,8 +96,8 @@ async fn callback(cx: &Cx) -> Result<()> {
     );
 
     if flow.session_token.is_some() {
-        Err(see_other(href!(crate::app::user::login::done::done).resolve(cx)).into())
+        see_other(href!(crate::app::user::login::done::done).resolve(cx)).into_response(cx)
     } else {
-        Err(see_other(flow.return_path).into())
+        see_other(flow.return_path).into_response(cx)
     }
 }
