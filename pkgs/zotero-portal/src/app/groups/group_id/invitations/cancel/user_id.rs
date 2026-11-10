@@ -24,7 +24,6 @@ pub(in crate::app::groups) async fn cancel(cx: &Cx) -> Result<SeeOther> {
         return Err(not_found().into());
     }
     Ok(topcoat::router::error::see_other(
-        href!(crate::app::groups::group_id::members_settings, group_id: group.id)
-        .resolve(cx),
+        href!(crate::app::groups::group_id::members_settings, group_id: group.id).resolve(cx),
     ))
 }

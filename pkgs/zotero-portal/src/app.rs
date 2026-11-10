@@ -415,49 +415,68 @@ mod tests {
         use topcoat::router::{Body, LayerFn, Method, endpoint, to_bytes};
 
         let router = routes()
-            .layer(LayerFn::new(None::<&str>, |cx, _body, _next| {
-                Box::pin(async move { endpoint(cx).path().to_string().into_response(cx) })
+            .layer(LayerFn::new(None::<&str>, |cx, body, next| {
+                Box::pin(async move {
+                    if topcoat::router::try_endpoint(cx).is_none() {
+                        return next.run(cx, body).await;
+                    }
+                    assert_eq!(
+                        href!(_web_library::items_root, _web_library::personal_user_slug: "alice")
+                            .resolve(cx),
+                        "/alice/items",
+                    );
+                    assert_eq!(
+                        href!(_web_library::group_library_path,
+                            _web_library::library_group_id: 42,
+                            _web_library::library_group_slug: "research",
+                            _web_library::library_path: ["items", "itemKey", "ABC"],
+                        )
+                        .resolve(cx),
+                        "/groups/42/research/items/itemKey/ABC",
+                    );
+                    format!(
+                        "{}|{:?}",
+                        endpoint(cx).path(),
+                        try_context::<WebLibrary>(cx)
+                    )
+                    .into_response(cx)
+                })
             }))
             .build();
 
-        for (method, path, expected) in [
+        for (method, path, expected, library) in [
+            (Method::GET, "/", "", Some(WebLibrary::Personal)),
             (
                 Method::GET,
                 "/groups/42/research",
                 "/groups/{group_id}/{group_slug}",
+                None,
             ),
             (
                 Method::GET,
                 "/groups/42/settings",
                 "/groups/{group_id}/settings",
+                None,
             ),
             (
                 Method::GET,
                 "/groups/42/research/items",
                 "/groups/{group_id}/{group_slug}/{*library_path}",
-            ),
-            (Method::GET, "/alice/items", "/{user_slug}/items"),
-            (
-                Method::GET,
-                "/alice/items/ABC",
-                "/{user_slug}/items/{*library_path}",
-            ),
-            (
-                Method::GET,
-                "/alice/collections/ABC",
-                "/{user_slug}/{*personal_library_path}",
+                Some(WebLibrary::Group),
             ),
             (
                 Method::GET,
                 "/settings/keys/edit/abcdefghijklmnopqrstuvwx",
                 "/settings/keys/edit/{key_id}",
+                None,
             ),
             (
                 Method::POST,
                 "/groups/42/invitations/cancel/7",
                 "/groups/{group_id}/invitations/cancel/{invitee_user_id}",
+                None,
             ),
-            (Method::GET, "/alice", "/{profile_username}"),
+            (Method::GET, "/alice", "/{profile_username}", None),
         ] {
             let response = router
                 .handle(
@@ -470,7 +489,46 @@ mod tests {
                 .await;
             assert_eq!(response.status(), StatusCode::OK, "{path}");
             let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            assert_eq!(std::str::from_utf8(&body).unwrap(), expected, "{path}");
+            assert_eq!(
+                std::str::from_utf8(&body).unwrap(),
+                format!("{expected}|{library:?}"),
+                "{path}"
+            );
+        }
+
+        for prefix in [
+            "items",
+            "library",
+            "collections",
+            "publications",
+            "search",
+            "tags",
+            "trash",
+        ] {
+            for suffix in ["", "/ABC/details"] {
+                let path = format!("/alice/{prefix}{suffix}");
+                let response = router
+                    .handle(Request::builder().uri(&path).body(Body::empty()).unwrap())
+                    .await;
+                assert_eq!(response.status(), StatusCode::OK, "{path}");
+                let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                let expected = if suffix.is_empty() {
+                    format!("/{{user_slug}}/{prefix}|Some(Personal)")
+                } else {
+                    format!("/{{user_slug}}/{prefix}/{{*library_path}}|Some(Personal)")
+                };
+                assert_eq!(std::str::from_utf8(&body).unwrap(), expected, "{path}");
+            }
+        }
+
+        for path in [
+            "/alice/not-a-web-library-route",
+            "/alice/not-a-web-library-route/deep",
+        ] {
+            let response = router
+                .handle(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         }
     }
 

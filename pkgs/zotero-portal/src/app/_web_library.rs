@@ -1,38 +1,139 @@
-mod groups;
-mod user_slug;
-
-pub(in crate::app) use groups::{
-    group_library_path, group_library_tail as library_path, library_group_id, library_group_slug,
-};
 use serde_json::json;
 use topcoat::context::{Cx, context, try_context};
-use topcoat::router::response::Response;
-use topcoat::router::{Body, Next, href, layer, page};
+use topcoat::router::error::not_found;
+use topcoat::router::{href, page, path_param};
 use topcoat::view::{Unescaped, View, view};
 use topcoat::{Error, Result, session};
 use url::Url;
-pub(in crate::app) use user_slug::{personal_library_root, user_slug as personal_user_slug};
+pub(in crate::app) use user_slug::{items_root, user_slug as personal_user_slug};
 
-use crate::app::signed_in_user;
+pub(in crate::app) use self::{group_id as library_group_id, group_slug as library_group_slug};
+use crate::app::{authenticated_user, signed_in_user};
 use crate::database::{self, Database};
 use crate::dataserver::{Dataserver, WebLibraryAccess};
 use crate::id::UserId;
 
-pub(crate) struct WebLibrary;
-struct GroupWebLibrary;
-
-#[layer]
-async fn web_library_request(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
-    let cx = cx.with(WebLibrary);
-    next.run(&cx, body).await
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WebLibrary {
+    Personal,
+    Group,
 }
 
-#[page]
+path_param!(pub(in crate::app) group_id: u64 else not_found);
+path_param!(pub(in crate::app) group_slug);
+path_param!(pub(in crate::app) *library_path);
+
+#[page("/", with(WebLibrary::Personal))]
 pub(super) async fn landing(cx: &Cx) -> Result<impl View> {
     library(cx).await
 }
 
-pub(super) async fn library(cx: &Cx) -> Result<impl View + use<>> {
+mod user_slug {
+    use topcoat::router::response::Response;
+    use topcoat::router::{Body, Next, layer, module_param};
+
+    use super::*;
+
+    module_param!(pub(in crate::app) user_slug);
+
+    #[layer(with(WebLibrary::Personal))]
+    async fn personal_library_request(cx: &Cx, body: Body, next: Next<'_>) -> Result<Response> {
+        let user = signed_in_user(cx).await?;
+        if user_slug(cx) != user.username {
+            return Err(not_found().into());
+        }
+        next.run(cx, body).await
+    }
+
+    #[page("./items")]
+    pub(in crate::app) async fn items_root(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./items/{*library_path}")]
+    async fn items_path(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./library")]
+    async fn library_root(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./library/{*library_path}")]
+    async fn library_path(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./collections")]
+    async fn collections_root(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./collections/{*library_path}")]
+    async fn collections_path(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./publications")]
+    async fn publications_root(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./publications/{*library_path}")]
+    async fn publications_path(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./search")]
+    async fn search_root(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./search/{*library_path}")]
+    async fn search_path(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./tags")]
+    async fn tags_root(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./tags/{*library_path}")]
+    async fn tags_path(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./trash")]
+    async fn trash_root(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+
+    #[page("./trash/{*library_path}")]
+    async fn trash_path(cx: &Cx) -> Result<impl View> {
+        library(cx).await
+    }
+}
+
+#[page(
+    "/groups/{group_id}/{group_slug}/{*library_path}",
+    with(WebLibrary::Group)
+)]
+pub(in crate::app) async fn group_library_path(cx: &Cx) -> Result<impl View> {
+    let user_id = authenticated_user(cx).await?;
+    let group = context::<Dataserver>(cx)
+        .group(*group_id(cx)?)
+        .await
+        .map_err(Error::from_anyhow)?
+        .ok_or_else(not_found)?;
+    if group.role(user_id).is_none() || group_slug(cx) != group.slug() {
+        return Err(not_found().into());
+    }
+    library(cx).await
+}
+
+async fn library(cx: &Cx) -> Result<impl View + use<>> {
     let user = signed_in_user(cx).await?;
     let token_hash = session::token_hash(cx)
         .await?
@@ -54,7 +155,7 @@ pub(super) async fn library(cx: &Cx) -> Result<impl View + use<>> {
     let menus = script_json(&web_library_menus(
         cx,
         &user,
-        try_context::<GroupWebLibrary>(cx).is_some(),
+        try_context::<WebLibrary>(cx) == Some(&WebLibrary::Group),
     ))
     .map_err(Error::from_anyhow)?;
 
