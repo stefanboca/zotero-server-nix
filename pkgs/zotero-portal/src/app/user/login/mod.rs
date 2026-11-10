@@ -2,8 +2,7 @@ pub(crate) mod done;
 
 use topcoat::context::{Cx, context};
 use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
-use topcoat::router::error::{bad_request, forbidden, redirect, see_other};
-use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::error::{SeeOther, bad_request, forbidden, redirect, see_other};
 use topcoat::router::{href, page, query_params, route};
 use topcoat::view::{View, view};
 use topcoat::{Error, Result, session};
@@ -78,27 +77,27 @@ pub(crate) async fn login(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST)]
-async fn start(cx: &Cx) -> Result<Response> {
+async fn start(cx: &Cx) -> Result<SeeOther> {
     let query = query_params::<LoginQuery>(cx)?;
     let redirect_to = if let Some(dataserver_session) = query.session.as_deref() {
         let database = context::<Database>(cx);
         let dataserver = context::<Dataserver>(cx);
         if let Some(user_id) = current_user(cx).await? {
             complete_desktop_login(database, dataserver, dataserver_session, user_id).await?;
-            return see_other(href!(done::done).resolve(cx)).into_response(cx);
+            return Ok(see_other(href!(done::done).resolve(cx)));
         }
         require_pending_desktop_login(dataserver, dataserver_session).await?;
         "/".to_owned()
     } else {
         let redirect_to = redirect_to(query)?;
         if current_user(cx).await?.is_some() {
-            return see_other(&redirect_to).into_response(cx);
+            return Ok(see_other(&redirect_to));
         }
         redirect_to
     };
 
     let url = begin_oidc_flow(cx, query.session.as_deref(), &redirect_to).await?;
-    see_other(url.as_str()).into_response(cx)
+    Ok(see_other(url.as_str()))
 }
 
 async fn begin_oidc_flow(

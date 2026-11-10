@@ -6,8 +6,7 @@ pub(in crate::app::groups) use members::members as members_settings;
 use serde::{Deserialize, Serialize};
 use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
-use topcoat::router::error::{bad_request, forbidden, not_found, see_other};
-use topcoat::router::response::{IntoResponse as _, Response};
+use topcoat::router::error::{SeeOther, bad_request, forbidden, not_found, see_other};
 use topcoat::router::{Slot, href, layout, page, query_params, route};
 use topcoat::view::{PromotedStr, View, view};
 use topcoat::{Error, Result};
@@ -236,7 +235,7 @@ pub(in crate::app::groups) async fn settings(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST)]
-async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<Response> {
+async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<SeeOther> {
     let group_context = managed_group_settings(cx).await?;
     let name = input.name.as_str();
     let description = input.description.trim();
@@ -255,10 +254,9 @@ async fn save_settings(cx: &Cx, Form(input): Form<GroupDetails>) -> Result<Respo
         group_id = group.id,
         "group settings updated",
     );
-    see_other(
+    Ok(see_other(
         href!(settings, group_id: group.id)
             .query(SettingsQuery { saved: Some(true) })
             .resolve(cx),
-    )
-    .into_response(cx)
+    ))
 }

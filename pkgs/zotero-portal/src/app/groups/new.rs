@@ -1,8 +1,7 @@
 use serde::Deserialize;
 use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
-use topcoat::router::error::see_other;
-use topcoat::router::response::{IntoResponse as _, Response};
+use topcoat::router::error::{SeeOther, see_other};
 use topcoat::router::{href, page, route};
 use topcoat::view::{View, view};
 use topcoat::{Error, Result};
@@ -67,12 +66,14 @@ pub(super) async fn new_group(cx: &Cx) -> Result<impl View> {
 }
 
 #[route(POST)]
-async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result<Response> {
+async fn create_group(cx: &Cx, Form(input): Form<CreateGroup>) -> Result<SeeOther> {
     let user_id = authenticated_user(cx).await?;
     let group_id = context::<Dataserver>(cx)
         .create_private_group(user_id, input.name.as_str())
         .await
         .map_err(Error::from_anyhow)?;
     tracing::info!(user_id = %user_id, group_id, "group created");
-    see_other(href!(library_settings, group_id: group_id).resolve(cx)).into_response(cx)
+    Ok(see_other(
+        href!(library_settings, group_id: group_id).resolve(cx),
+    ))
 }
