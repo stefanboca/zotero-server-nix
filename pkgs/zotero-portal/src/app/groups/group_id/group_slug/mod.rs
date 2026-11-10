@@ -1,35 +1,36 @@
 mod members;
 
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::error::not_found;
-use topcoat::router::{href, page, path_param};
+use topcoat::router::{href, page};
 use topcoat::view::{View, component, view};
+use topcoat::{Error, Result};
 
-use super::GroupId;
+use super::group_id;
 use crate::app::{authenticated_user, confirm_button, portal_page, section};
 use crate::database::Database;
 use crate::dataserver::{Dataserver, Group, GroupRole};
 use crate::id::UserId;
 
-topcoat::router::path_param!(pub(in crate::app) group_slug);
+topcoat::router::module_param!(pub(in crate::app) group_slug);
 
 pub(super) async fn current_slug_group(cx: &Cx) -> Result<(UserId, Group, Option<GroupRole>)> {
     let user_id = authenticated_user(cx).await?;
-    let group_id = *path_param::<GroupId>(cx)?;
+    let group_id = *group_id(cx)?;
     let group = super::group_by_id(cx, group_id)
         .await?
         .ok_or_else(not_found)?;
     let role = group.role(user_id);
     if role.is_none()
-        && app_context::<Database>(cx)
+        && context::<Database>(cx)
             .group_invitation(group_id, user_id)
-            .await?
+            .await
+            .map_err(Error::from_anyhow)?
             .is_none()
     {
         return Err(not_found().into());
     }
-    if path_param::<GroupSlug>(cx) != group.slug() {
+    if group_slug(cx) != group.slug() {
         return Err(not_found().into());
     }
     Ok((user_id, group, role))
@@ -51,9 +52,9 @@ pub(in crate::app) async fn group_overview(cx: &Cx) -> Result<impl View> {
                                 class="portal-link"
                                 href=(href!(
                                     crate::app::_web_library::group_library_path,
-                                    crate::app::_web_library::LibraryGroupId(group.id),
-                                    crate::app::_web_library::LibraryGroupSlug(group.slug()),
-                                    crate::app::_web_library::LibraryPath(["items"]),
+                                    crate::app::_web_library::library_group_id: group.id,
+                                    crate::app::_web_library::library_group_slug: group.slug(),
+                                    crate::app::_web_library::library_path: ["items"],
                                 ))
                             >
                                 "Group Library"
@@ -62,7 +63,7 @@ pub(in crate::app) async fn group_overview(cx: &Cx) -> Result<impl View> {
                                 <span aria-hidden="true">"·"</span>
                                 <a
                                     class="portal-link"
-                                    href=(href!(super::group_settings, GroupId(group.id)))
+                                    href=(href!(super::group_settings, group_id: group.id))
                                 >
                                     "Group Settings"
                                 </a>
@@ -102,9 +103,10 @@ pub(in crate::app) async fn group_overview(cx: &Cx) -> Result<impl View> {
 
 #[component]
 async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Result<impl View> {
-    let owner = app_context::<Database>(cx)
+    let owner = context::<Database>(cx)
         .user_by_id(group.owner)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
         .ok_or_else(not_found)?;
     let registered = group.created.strftime("%Y-%m-%d").to_string();
     let leave_confirmation = format!("Leave “{}”?", group.name);
@@ -118,7 +120,7 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
                         class="portal-link"
                         href=(href!(
                             crate::app::profile::profile,
-                            crate::app::profile::ProfileUsername(owner.username.clone()),
+                            crate::app::profile::profile_username: owner.username.clone(),
                         ))
                     >
                         (owner.display_name())
@@ -136,8 +138,8 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
                         class="portal-link"
                         href=(href!(
                             members::members,
-                            GroupId(group.id),
-                            GroupSlug(group.slug()),
+                            group_id: group.id,
+                            group_slug: group.slug(),
                         ))
                     >
                         (group.user_ids().len())
@@ -148,7 +150,7 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
                 <form
                     class="mt-5"
                     method="post"
-                    action=(href!(super::members::leave_group, GroupId(group.id)))
+                    action=(href!(super::members::leave_group, group_id: group.id))
                 >
                     confirm_button(
                         label: "Leave Group",
@@ -165,7 +167,7 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
                     <div class="mt-3 flex flex-wrap gap-3">
                         <form
                             method="post"
-                            action=(href!(super::accept_invitation, GroupId(group.id)))
+                            action=(href!(super::accept_invitation, group_id: group.id))
                         >
                             <button
                                 class="portal-button portal-button-primary"
@@ -176,7 +178,7 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
                         </form>
                         <form
                             method="post"
-                            action=(href!(super::ignore_invitation, GroupId(group.id)))
+                            action=(href!(super::ignore_invitation, group_id: group.id))
                         >
                             <button
                                 class="portal-button portal-button-secondary"
@@ -194,9 +196,10 @@ async fn group_details(cx: &Cx, group: &Group, role: Option<GroupRole>) -> Resul
 
 #[component]
 async fn recent_group_items(cx: &Cx, group: &Group) -> Result<impl View> {
-    let recently_added = app_context::<Dataserver>(cx)
+    let recently_added = context::<Dataserver>(cx)
         .recent_group_items(group.id)
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     let total = recently_added.total;
     Ok(view! {
         <section class="border-t border-stone-200 py-8">
@@ -244,11 +247,9 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result<impl View> {
                                             class="portal-link font-medium"
                                             href=(href!(
                                                 crate::app::_web_library::group_library_path,
-                                                crate::app::_web_library::LibraryGroupId(group.id),
-                                                crate::app::_web_library::LibraryGroupSlug(group.slug()),
-                                                crate::app::_web_library::LibraryPath(
-                                                    ["items", "itemKey", item.key.as_str()],
-                                                ),
+                                                crate::app::_web_library::library_group_id: group.id,
+                                                crate::app::_web_library::library_group_slug: group.slug(),
+                                                crate::app::_web_library::library_path:  ["items", "itemKey", item.key.as_str()],
                                             ))
                                         >
                                             (title)
@@ -276,9 +277,9 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result<impl View> {
                         class="portal-link"
                         href=(href!(
                             crate::app::_web_library::group_library_path,
-                            crate::app::_web_library::LibraryGroupId(group.id),
-                            crate::app::_web_library::LibraryGroupSlug(group.slug()),
-                            crate::app::_web_library::LibraryPath(["items"]),
+                            crate::app::_web_library::library_group_id: group.id,
+                            crate::app::_web_library::library_group_slug: group.slug(),
+                            crate::app::_web_library::library_path: ["items"],
                         ))
                     >
                         "Group Library"

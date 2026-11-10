@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
 use topcoat::router::error::see_other;
+use topcoat::router::response::{IntoResponse as _, Response};
 use topcoat::router::{href, page, query_params, route};
 use topcoat::view::{PromotedStr, View, component, view};
+use topcoat::{Error, Result};
 
 use super::managed_group_settings;
-use crate::app::groups::group_id::GroupId;
+use crate::app::groups::group_id::group_id;
 use crate::app::{section, success_message};
 use crate::dataserver::Dataserver;
 
@@ -53,7 +54,7 @@ pub(in crate::app::groups) async fn library(cx: &Cx) -> Result<impl View> {
             <form
                 class="space-y-8"
                 method="post"
-                action=(href!(library, GroupId(group.id)))
+                action=(href!(library, group_id: group.id))
             >
                 <fieldset>
                     <legend class="portal-section-heading">"Library Editing"</legend>
@@ -116,6 +117,7 @@ pub(in crate::app::groups) async fn library(cx: &Cx) -> Result<impl View> {
 
 #[component]
 async fn setting_radio(
+    cx: &Cx,
     id: PromotedStr,
     name: PromotedStr,
     value: PromotedStr,
@@ -138,7 +140,7 @@ async fn setting_radio(
 }
 
 #[route(POST)]
-async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<()> {
+async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<Response> {
     let mut group = managed_group_settings(cx).await?.group;
     group.library_editing = match input.library_editing {
         LibraryEditing::Members => "members",
@@ -151,11 +153,14 @@ async fn save_library(cx: &Cx, Form(input): Form<LibrarySettings>) -> Result<()>
         FileEditing::None => "none",
     }
     .to_owned();
-    app_context::<Dataserver>(cx).update_group(&group).await?;
-    Err(see_other(
-        href!(library, GroupId(group.id))
+    context::<Dataserver>(cx)
+        .update_group(&group)
+        .await
+        .map_err(Error::from_anyhow)?;
+    see_other(
+        href!(library, group_id: group.id)
             .query(LibraryQuery { saved: Some(true) })
             .resolve(cx),
     )
-    .into())
+    .into_response(cx)
 }

@@ -1,12 +1,12 @@
 pub(crate) mod done;
 
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::cookie::{Cookies as _, SameSite, cookie_store, private_cookies};
 use topcoat::router::error::{bad_request, forbidden, redirect, see_other};
 use topcoat::router::response::{IntoResponse, Response};
 use topcoat::router::{href, page, query_params, route};
 use topcoat::view::{View, view};
-use topcoat::{Result, session};
+use topcoat::{Error, Result, session};
 
 use crate::app::{FLOW_LIFETIME, current_user, normalized_return_path, portal_page, section};
 use crate::database::Database;
@@ -33,8 +33,8 @@ pub(crate) async fn login(cx: &Cx) -> Result<impl View> {
     let query = query_params::<LoginQuery>(cx)?;
     let user_id = current_user(cx).await?;
     let form_query = if let Some(dataserver_session) = query.session.as_deref() {
-        let database = app_context::<Database>(cx);
-        let dataserver = app_context::<Dataserver>(cx);
+        let database = context::<Database>(cx);
+        let dataserver = context::<Dataserver>(cx);
         if let Some(user_id) = user_id {
             complete_desktop_login(database, dataserver, dataserver_session, user_id).await?;
             return Err(redirect(href!(done::done).resolve(cx)).into());
@@ -81,8 +81,8 @@ pub(crate) async fn login(cx: &Cx) -> Result<impl View> {
 async fn start(cx: &Cx) -> Result<Response> {
     let query = query_params::<LoginQuery>(cx)?;
     let redirect_to = if let Some(dataserver_session) = query.session.as_deref() {
-        let database = app_context::<Database>(cx);
-        let dataserver = app_context::<Dataserver>(cx);
+        let database = context::<Database>(cx);
+        let dataserver = context::<Dataserver>(cx);
         if let Some(user_id) = current_user(cx).await? {
             complete_desktop_login(database, dataserver, dataserver_session, user_id).await?;
             return see_other(href!(done::done).resolve(cx)).into_response(cx);
@@ -106,7 +106,9 @@ async fn begin_oidc_flow(
     dataserver_session: Option<&str>,
     return_path: &str,
 ) -> Result<String> {
-    let authorization = app_context::<Oidc>(cx).begin_authorization()?;
+    let authorization = context::<Oidc>(cx)
+        .begin_authorization()
+        .map_err(Error::from_anyhow)?;
     session::stop(cx).await?;
     let flow = OidcFlow {
         state: authorization.state,
@@ -129,7 +131,13 @@ async fn begin_oidc_flow(
 }
 
 async fn require_pending_desktop_login(dataserver: &Dataserver, session_token: &str) -> Result<()> {
-    if dataserver.login_session_info(session_token).await?.status != "pending" {
+    if dataserver
+        .login_session_info(session_token)
+        .await
+        .map_err(Error::from_anyhow)?
+        .status
+        != "pending"
+    {
         return Err(bad_request("Zotero login session is no longer pending").into());
     }
     Ok(())
@@ -145,10 +153,15 @@ pub(crate) async fn complete_desktop_login(
     // by user even when separate browser sessions log in concurrently.
     let transaction = database
         .lock_user_for_login_completion(user_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("user disappeared during login completion"))?;
+        .await
+        .map_err(Error::from_anyhow)?
+        .ok_or_else(|| anyhow::anyhow!("user disappeared during login completion"))
+        .map_err(Error::from_anyhow)?;
 
-    let info = dataserver.login_session_info(session_token).await?;
+    let info = dataserver
+        .login_session_info(session_token)
+        .await
+        .map_err(Error::from_anyhow)?;
     if info.status != "pending" {
         return Err(bad_request("Zotero login session is no longer pending").into());
     }
@@ -157,8 +170,11 @@ pub(crate) async fn complete_desktop_login(
     }
     dataserver
         .complete_login_session(session_token, user_id, info.access)
-        .await?;
-    dataserver.set_unlimited_storage(user_id).await?;
-    transaction.commit().await?;
-    Ok(())
+        .await
+        .map_err(Error::from_anyhow)?;
+    dataserver
+        .set_unlimited_storage(user_id)
+        .await
+        .map_err(Error::from_anyhow)?;
+    transaction.commit().await.map_err(Error::from_anyhow)
 }

@@ -4,14 +4,13 @@ use std::collections::HashSet;
 
 pub(super) use leave::leave_group;
 use serde::{Deserialize, Serialize};
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::content::Json;
-use topcoat::router::error::{bad_request, forbidden, see_other};
-use topcoat::router::response::{IntoResponse, Response};
+use topcoat::router::error::{SeeOther, bad_request, forbidden, see_other};
 use topcoat::router::{href, route};
+use topcoat::{Error, Result};
 
-use super::{GroupId, current_group};
+use super::{current_group, group_id};
 use crate::database::Database;
 use crate::dataserver::{Dataserver, Group, GroupRole};
 use crate::id::UserId;
@@ -66,10 +65,11 @@ pub(super) async fn managed_group(cx: &Cx) -> Result<Group> {
 }
 
 #[route(GET)]
-async fn members(cx: &Cx) -> Result<Response> {
+async fn members(cx: &Cx) -> Result<SeeOther> {
     let (_, group, _) = current_group(cx).await?;
-    see_other(href!(super::settings::members_settings, GroupId(group.id)).resolve(cx))
-        .into_response(cx)
+    Ok(see_other(
+        href!(super::settings::members_settings, group_id: group.id).resolve(cx),
+    ))
 }
 
 #[route(POST)]
@@ -86,16 +86,18 @@ pub(super) async fn create_member(
         return Err(bad_request("a username or email is required").into());
     }
     let group = managed_group(cx).await?;
-    let target = app_context::<Database>(cx)
+    let target = context::<Database>(cx)
         .user_by_identifier(identifier)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
         .ok_or_else(|| bad_request("no account matched that username or email"))?;
     if group.role(target.user_id).is_some() {
         return Err(bad_request("that account is already a group member").into());
     }
-    app_context::<Dataserver>(cx)
+    context::<Dataserver>(cx)
         .set_group_user(group.id, target.user_id, input.role)
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     tracing::info!(
         group_id = group.id,
         user_id = %target.user_id,
@@ -127,23 +129,26 @@ async fn update_members(cx: &Cx, Json(input): Json<UpdateMembers>) -> Result<Jso
         }
     }
 
-    let dataserver = app_context::<Dataserver>(cx);
+    let dataserver = context::<Dataserver>(cx);
     for update in &input.members {
         match update.role {
             MemberRoleUpdate::Admin => {
                 dataserver
                     .set_group_user(group.id, update.user_id, GroupRole::Admin)
-                    .await?;
+                    .await
+                    .map_err(Error::from_anyhow)?;
             }
             MemberRoleUpdate::Member => {
                 dataserver
                     .set_group_user(group.id, update.user_id, GroupRole::Member)
-                    .await?;
+                    .await
+                    .map_err(Error::from_anyhow)?;
             }
             MemberRoleUpdate::Remove => {
                 dataserver
                     .remove_group_user(group.id, update.user_id)
-                    .await?;
+                    .await
+                    .map_err(Error::from_anyhow)?;
             }
         }
     }

@@ -1,7 +1,7 @@
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::Body;
 use topcoat::router::request::{headers, uri};
+use topcoat::{Error, Result};
 
 use crate::app::authenticated_user;
 use crate::dataserver::{Dataserver, TranslationEndpoint, TranslationResponse};
@@ -17,7 +17,8 @@ pub(super) async fn proxy_translation(
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
     let query = uri(cx).query().map(str::to_owned);
-    Ok(app_context::<Dataserver>(cx)
+    context::<Dataserver>(cx)
         .translate(endpoint, query.as_deref(), content_type.as_deref(), body)
-        .await?)
+        .await
+        .map_err(Error::from_anyhow)
 }

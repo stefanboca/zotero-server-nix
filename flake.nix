@@ -69,7 +69,12 @@
       pkgs = nixpkgsFor.${system};
     in {
       default = pkgs.mkShellNoCC {
-        packages = with pkgs; [sqlx-cli sqruff tailwindcss_4 topcoat-cli];
+        packages = with pkgs; [
+          # sqlx-cli
+          sqruff
+          tailwindcss_4
+          topcoat-cli
+        ];
         env.TAILWIND_CLI = getExe pkgs.tailwindcss_4;
       };
     });

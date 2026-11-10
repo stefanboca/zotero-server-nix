@@ -24,9 +24,7 @@ use database::Database;
 use dataserver::Dataserver;
 use oidc::Oidc;
 pub use provision::provision;
-use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
-use topcoat::cookie::RouterBuilderCookieExt;
-use topcoat::session::{RouterBuilderSessionExt, SessionConfig};
+use topcoat::session::SessionLifetime;
 
 pub async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
     let secrets = config.secrets()?;
@@ -39,18 +37,14 @@ pub async fn serve(config: Arc<Config>) -> anyhow::Result<()> {
         Database::new(config.database.max_connections, secrets.database_url.trim()).await?;
     let dataserver = Dataserver::new(config.clone(), secrets.dataserver_super_password)?;
     let oidc = Oidc::new(config.clone(), secrets.oidc_client_secret).await?;
-    let router = app::routes()
-        .cookies()
-        .sessions(
-            SessionConfig::builder()
-                .lifetime(Duration::from_secs(config.browser_session_lifetime_seconds))
-                .build(),
-        )
-        .app_context(cookie_key)
-        .app_context(database)
-        .app_context(dataserver)
-        .app_context(oidc)
-        .assets(AssetBundle::load().expect("failed to load the Topcoat asset bundle"))
+    let router = app::router()
+        .with(SessionLifetime(Duration::from_secs(
+            config.browser_session_lifetime_seconds,
+        )))
+        .with(cookie_key)
+        .with(database)
+        .with(dataserver)
+        .with(oidc)
         .build();
 
     match config.server_address.scheme() {

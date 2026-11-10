@@ -1,8 +1,8 @@
 use jiff::Timestamp;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::{href, page};
 use topcoat::view::{View, component, view};
-use topcoat::{Result, session};
+use topcoat::{Error, Result, session};
 
 use super::{format_relative_time, format_timestamp, parse_client_timestamp};
 use crate::app::{confirm_button, section, signed_in_user};
@@ -23,14 +23,15 @@ pub(super) async fn security(cx: &Cx) -> Result<impl View> {
 
 #[component]
 async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result<impl View> {
-    let database = app_context::<Database>(cx);
+    let database = context::<Database>(cx);
     let current_handle = session::token_hash(cx)
         .await?
         .map(|hash| database::session_handle(&*hash))
         .unwrap_or_default();
     let mut browser_sessions = database
-        .browser_sessions_for_user(app_context::<Dataserver>(cx), user_id)
-        .await?;
+        .browser_sessions_for_user(context::<Dataserver>(cx), user_id)
+        .await
+        .map_err(Error::from_anyhow)?;
     browser_sessions.sort_by_key(|browser_session| browser_session.handle != current_handle);
     let now = Timestamp::now();
     Ok(view! {
@@ -50,6 +51,7 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result<impl View> {
                         </tr>
                     </thead>
                     <tbody>
+                        #[key(browser_session.handle.as_str())]
                         for browser_session in browser_sessions {
                             let is_current = browser_session.handle == current_handle;
                             let last_active = browser_session.last_seen_at;
@@ -87,7 +89,6 @@ async fn browser_sessions(cx: &Cx, user_id: UserId) -> Result<impl View> {
                                             value=(browser_session.handle.as_str())
                                         >
                                         confirm_button(
-                                            key: browser_session.handle.as_str(),
                                             label: if is_current {
                                                 "Log Out"
                                             } else {
@@ -153,7 +154,10 @@ fn browser_platform(user_agent: Option<&str>) -> String {
 
 #[component]
 async fn applications(cx: &Cx, user_id: UserId) -> Result<impl View> {
-    let access_keys = app_context::<Dataserver>(cx).access_keys(user_id).await?;
+    let access_keys = context::<Dataserver>(cx)
+        .access_keys(user_id)
+        .await
+        .map_err(Error::from_anyhow)?;
     let now = Timestamp::now();
     Ok(view! {
         <div id="applications">
@@ -194,6 +198,7 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result<impl View> {
                             </tr>
                         </thead>
                         <tbody>
+                            #[key(key.key.as_str())]
                             for key in access_keys {
                                 let last_connected = parse_client_timestamp(
                                     key.last_used.as_deref(),
@@ -221,12 +226,13 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result<impl View> {
                                         let key_id = key
                                             .key
                                             .parse::<super::keys::ApiKeyValue>()
-                                            .map_err(anyhow::Error::msg)?;
+                                            .map_err(anyhow::Error::msg)
+                                            .map_err(Error::from_anyhow)?;
                                         <a
                                             class="portal-link"
                                             href=(href!(
                                                 super::keys::edit_key_route,
-                                                super::keys::EditKeyId(key_id),
+                                                super::keys::edit_key_id: key_id,
                                             ))
                                         >
                                             "Edit Key"
@@ -243,7 +249,6 @@ async fn applications(cx: &Cx, user_id: UserId) -> Result<impl View> {
                                                 key.name,
                                             );
                                             confirm_button(
-                                                key: key.key.as_str(),
                                                 label: "Delete Key",
                                                 confirmation: delete_confirmation.as_str(),
                                                 class: "portal-link-danger whitespace-nowrap"

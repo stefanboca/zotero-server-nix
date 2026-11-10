@@ -1,12 +1,12 @@
 use serde::Deserialize;
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::content::Form;
 use topcoat::router::error::{bad_request, forbidden, not_found, see_other};
 use topcoat::router::response::{IntoResponse, Response};
 use topcoat::router::{href, route};
+use topcoat::{Error, Result};
 
-use super::{GroupId, current_group};
+use super::{current_group, group_id};
 use crate::database::Database;
 use crate::dataserver::{Dataserver, GroupRole};
 
@@ -22,10 +22,11 @@ pub(super) async fn transfer_owner(cx: &Cx, Form(input): Form<TransferOwner>) ->
     if actor_role != GroupRole::Owner {
         return Err(forbidden().into());
     }
-    let database = app_context::<Database>(cx);
+    let database = context::<Database>(cx);
     let target = database
         .user_by_identifier(&input.username)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
         .ok_or_else(not_found)?;
     match group.role(target.user_id) {
         Some(GroupRole::Admin | GroupRole::Member) => {}
@@ -34,15 +35,16 @@ pub(super) async fn transfer_owner(cx: &Cx, Form(input): Form<TransferOwner>) ->
         }
         None => return Err(bad_request("the new owner must already be a group member").into()),
     }
-    app_context::<Dataserver>(cx)
+    context::<Dataserver>(cx)
         .set_group_user(group.id, target.user_id, GroupRole::Owner)
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     tracing::info!(
         group_id = group.id,
         previous_owner_id = %actor_id,
         new_owner_id = %target.user_id,
         "group ownership transferred",
     );
-    see_other(href!(super::settings::members_settings, GroupId(group.id)).resolve(cx))
+    see_other(href!(super::settings::members_settings, group_id: group.id).resolve(cx))
         .into_response(cx)
 }

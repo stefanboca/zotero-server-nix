@@ -2,15 +2,15 @@ mod edit;
 mod r#new;
 mod revoke;
 
-pub(super) use edit::{EditKeyId, edit_key as edit_key_route};
+pub(super) use edit::{edit_key as edit_key_route, edit_key_id};
 pub(super) use r#new::new_key as new_key_route;
 pub(super) use revoke::revoke_key;
 use serde::Deserialize;
-use topcoat::Result;
-use topcoat::context::{Cx, app_context, memoize};
+use topcoat::context::{Cx, context, memoize};
 use topcoat::router::error::not_found;
 use topcoat::router::href;
 use topcoat::view::{PromotedStr, View, component, view};
+use topcoat::{Error, Result};
 
 use crate::app::confirm_button;
 use crate::dataserver::{
@@ -64,10 +64,10 @@ impl std::str::FromStr for ApiKeyValue {
 #[memoize]
 async fn memoized_access_key(cx: &Cx, user_id: UserId, key: [u8; 24]) -> Result<Option<ApiKey>> {
     let key = std::str::from_utf8(&key).expect("ApiKeyValue contains only ASCII");
-    app_context::<Dataserver>(cx)
+    context::<Dataserver>(cx)
         .access_key(user_id, key)
         .await
-        .map_err(Into::into)
+        .map_err(Error::from_anyhow)
 }
 
 async fn editor_key(
@@ -86,7 +86,7 @@ async fn editor_key(
                 error = %format_args!("{error:#}"),
                 "failed to load API key",
             );
-            Err(anyhow::anyhow!("failed to load API key").into())
+            Err(topcoat::Error::msg("failed to load API key"))
         }
     }
 }
@@ -113,6 +113,7 @@ fn default_access() -> ApiKeyAccess {
 
 #[component]
 pub(super) async fn key_editor(
+    cx: &Cx,
     user_id: UserId,
     key_value: Option<&ApiKeyValue>,
 ) -> Result<impl View> {
@@ -287,9 +288,10 @@ async fn specific_group_permissions(
     // The sibling fields component starts the memoized key lookup while this
     // component loads the user's groups. Awaiting the shared key afterward
     // preserves parallel I/O without a page-level join.
-    let groups = app_context::<Dataserver>(cx)
+    let groups = context::<Dataserver>(cx)
         .groups_for_user(user_id)
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     let access_key = editor_key(cx, user_id, key_value).await?;
     let access = access_key
         .as_ref()
@@ -331,12 +333,12 @@ async fn specific_group_permissions(
                         "You do not currently belong to any groups."
                     </p>
                 }
+                #[key(group.id)]
                 for (group, permission) in groups {
                     let radio_name = format!("group-{}", group.id);
                     <div data-key-group=(group.name.as_str())>
                         <p>(group.name.as_str())</p>
                         permission_radios(
-                            key: group.id,
                             name: radio_name.as_str(),
                             group_id: Some(group.id),
                             selected: permission
@@ -353,6 +355,7 @@ async fn specific_group_permissions(
 
 #[component]
 async fn permission_checkbox(
+    cx: &Cx,
     id: PromotedStr,
     label: PromotedStr,
     description: PromotedStr,
@@ -371,7 +374,12 @@ async fn permission_checkbox(
 }
 
 #[component]
-async fn permission_radios(name: &str, group_id: Option<u64>, selected: &str) -> Result<impl View> {
+async fn permission_radios(
+    cx: &Cx,
+    name: &str,
+    group_id: Option<u64>,
+    selected: &str,
+) -> Result<impl View> {
     Ok(view! {
         <div
             class="mt-3 space-y-2"

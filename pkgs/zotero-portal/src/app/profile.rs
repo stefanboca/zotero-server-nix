@@ -1,8 +1,8 @@
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::error::not_found;
-use topcoat::router::{href, page, path_param};
+use topcoat::router::{href, page};
 use topcoat::view::{View, component, view};
+use topcoat::{Error, Result};
 
 use crate::app::{authenticated_user, portal_page, section};
 use crate::database::Database;
@@ -15,10 +15,11 @@ topcoat::router::path_param!(pub(super) profile_username);
 #[page("/{profile_username}")]
 pub(super) async fn profile(cx: &Cx) -> Result<impl View> {
     let actor_id = authenticated_user(cx).await?;
-    let username = path_param::<ProfileUsername>(cx);
-    let user = app_context::<Database>(cx)
+    let username = profile_username(cx);
+    let user = context::<Database>(cx)
         .user_by_identifier(username)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
         .filter(|user| user.username == username)
         .ok_or_else(not_found)?;
     Ok(view! {
@@ -37,7 +38,7 @@ pub(super) async fn profile(cx: &Cx) -> Result<impl View> {
                                 class="portal-link"
                                 href=(href!(
                                     crate::app::_web_library::personal_library_root,
-                                    crate::app::_web_library::UserSlug(user.username.clone()),
+                                    crate::app::_web_library::personal_user_slug: user.username.clone(),
                                 ))
                             >
                                 "Library"
@@ -53,9 +54,10 @@ pub(super) async fn profile(cx: &Cx) -> Result<impl View> {
 
 #[component]
 async fn profile_groups(cx: &Cx, actor_id: UserId, profile_user_id: UserId) -> Result<impl View> {
-    let mut groups = app_context::<Dataserver>(cx)
+    let mut groups = context::<Dataserver>(cx)
         .groups_for_user(actor_id)
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     groups.retain(|group| group.role(profile_user_id).is_some());
     groups.sort_by_key(|left| left.name.to_lowercase());
     Ok(view! {
@@ -73,8 +75,8 @@ async fn profile_groups(cx: &Cx, actor_id: UserId, profile_user_id: UserId) -> R
                                 class="portal-link font-medium"
                                 href=(href!(
                                     crate::app::groups::group_overview,
-                                    crate::app::groups::GroupId(group.id),
-                                    crate::app::groups::GroupSlug(group.slug()),
+                                    crate::app::groups::group_id_param: group.id,
+                                    crate::app::groups::group_slug_param: group.slug(),
                                 ))
                             >
                                 (group.name.as_str())

@@ -1,13 +1,13 @@
 mod group_id;
 mod r#new;
 
-pub(in crate::app) use group_id::{GroupId, GroupSlug, group_overview};
+pub(in crate::app) use group_id::{group_id as group_id_param, group_overview, group_slug_param};
 use serde::Deserialize;
-use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::{Cx, context};
 use topcoat::router::{href, page};
 use topcoat::runtime::{shard, signal};
 use topcoat::view::{View, ViewExt as _, component, view};
+use topcoat::{Error, Result};
 
 use crate::app::{portal_page, section, signed_in_user};
 use crate::database::{Database, GroupInvitation};
@@ -85,14 +85,18 @@ pub(super) async fn list_groups(cx: &Cx) -> Result<impl View> {
 #[component]
 async fn groups_list(cx: &Cx) -> Result<impl View> {
     let user = signed_in_user(cx).await?;
-    let dataserver = app_context::<Dataserver>(cx);
-    let groups = dataserver.groups_for_user(user.user_id).await?;
+    let dataserver = context::<Dataserver>(cx);
+    let groups = dataserver
+        .groups_for_user(user.user_id)
+        .await
+        .map_err(Error::from_anyhow)?;
     let total = groups.len();
     Ok(view! {
         if !groups.is_empty() {
             <div class="mt-5 border-t border-stone-300">
+                #[key(group.id)]
                 for group in groups.iter().take(GROUPS_PER_PAGE) {
-                    group_card(key: group.id, group: group, user_id: user.user_id)
+                    group_card(group: group, user_id: user.user_id)
                 }
                 if total > GROUPS_PER_PAGE {
                     more_groups(offset: GROUPS_PER_PAGE)
@@ -129,13 +133,15 @@ async fn groups_page(cx: &Cx, offset: String, load: bool) -> Result<impl View> {
     }
     let user = signed_in_user(cx).await?;
     let offset = offset.parse::<usize>()?;
-    let groups = app_context::<Dataserver>(cx)
+    let groups = context::<Dataserver>(cx)
         .groups_for_user(user.user_id)
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     let next_offset = offset.saturating_add(GROUPS_PER_PAGE);
     Ok(view! {
+        #[key(group.id)]
         for group in groups.iter().skip(offset).take(GROUPS_PER_PAGE) {
-            group_card(key: group.id, group: group, user_id: user.user_id)
+            group_card(group: group, user_id: user.user_id)
         }
         if next_offset < groups.len() {
             more_groups(offset: next_offset)
@@ -145,7 +151,7 @@ async fn groups_page(cx: &Cx, offset: String, load: bool) -> Result<impl View> {
 }
 
 #[component]
-async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
+async fn group_card(cx: &Cx, group: &Group, user_id: UserId) -> Result<impl View> {
     let role = group.role(user_id).unwrap_or(GroupRole::Member);
     let member_count = group.user_ids().len();
     let slug = group.slug();
@@ -156,8 +162,8 @@ async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
                     class="portal-link"
                     href=(href!(
                         group_id::group_overview,
-                        group_id::GroupId(group.id),
-                        group_id::GroupSlug(slug.clone()),
+                        group_id::group_id: group.id,
+                        group_id::group_slug_param: slug.clone(),
                     ))
                 >
                     (group.name.as_str())
@@ -167,9 +173,9 @@ async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
                 class="portal-link mt-1 inline-block text-sm"
                 href=(href!(
                     crate::app::_web_library::group_library_path,
-                    crate::app::_web_library::LibraryGroupId(group.id),
-                    crate::app::_web_library::LibraryGroupSlug(slug),
-                    crate::app::_web_library::LibraryPath(["items"]),
+                    crate::app::_web_library::library_group_id: group.id,
+                    crate::app::_web_library::library_group_slug: slug,
+                    crate::app::_web_library::library_path: ["items"],
                 ))
             >
                 "Group Library"
@@ -180,7 +186,7 @@ async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
                         class="portal-link"
                         href=(href!(
                             group_id::group_settings,
-                            group_id::GroupId(group.id),
+                            group_id::group_id: group.id,
                         ))
                     >
                         "Manage Profile"
@@ -190,7 +196,7 @@ async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
                         class="portal-link"
                         href=(href!(
                             group_id::members_settings,
-                            group_id::GroupId(group.id),
+                            group_id::group_id: group.id,
                         ))
                     >
                         "Manage Members"
@@ -200,7 +206,7 @@ async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
                         class="portal-link"
                         href=(href!(
                             group_id::library_settings,
-                            group_id::GroupId(group.id),
+                            group_id::group_id: group.id,
                         ))
                     >
                         "Manage Library"
@@ -221,9 +227,10 @@ async fn group_card(group: &Group, user_id: UserId) -> Result<impl View> {
 
 #[component]
 async fn incoming_invitations(cx: &Cx, user_id: UserId) -> Result<impl View> {
-    let invitations = app_context::<Database>(cx)
+    let invitations = context::<Database>(cx)
         .group_invitations_for_user(user_id)
-        .await?;
+        .await
+        .map_err(Error::from_anyhow)?;
     if invitations.is_empty() {
         return Ok(view! {}.boxed());
     }
@@ -231,11 +238,9 @@ async fn incoming_invitations(cx: &Cx, user_id: UserId) -> Result<impl View> {
         section(
             <h2 class="portal-section-heading">"Group Invitations"</h2>
             <div class="mt-4 divide-y divide-stone-200">
+                #[key(invitation.group_id)]
                 for invitation in invitations {
-                    incoming_invitation(
-                        key: invitation.group_id,
-                        invitation: invitation
-                    )
+                    incoming_invitation(invitation: invitation)
                 }
             </div>
         )
@@ -245,9 +250,10 @@ async fn incoming_invitations(cx: &Cx, user_id: UserId) -> Result<impl View> {
 
 #[component]
 async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result<impl View> {
-    let Some(group) = app_context::<Dataserver>(cx)
+    let Some(group) = context::<Dataserver>(cx)
         .group(invitation.group_id)
-        .await?
+        .await
+        .map_err(Error::from_anyhow)?
     else {
         return Ok(view! {}.boxed());
     };
@@ -260,8 +266,8 @@ async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result<imp
                     class="portal-link font-semibold"
                     href=(href!(
                         group_id::group_overview,
-                        group_id::GroupId(group.id),
-                        group_id::GroupSlug(group.slug()),
+                        group_id::group_id: group.id,
+                        group_id::group_slug_param: group.slug(),
                     ))
                 >
                     (group.name.as_str())
@@ -275,7 +281,7 @@ async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result<imp
                     method="post"
                     action=(href!(
                         group_id::accept_invitation,
-                        group_id::GroupId(group.id),
+                        group_id::group_id: group.id,
                     ))
                 >
                     <button
@@ -289,7 +295,7 @@ async fn incoming_invitation(cx: &Cx, invitation: GroupInvitation) -> Result<imp
                     method="post"
                     action=(href!(
                         group_id::ignore_invitation,
-                        group_id::GroupId(group.id),
+                        group_id::group_id: group.id,
                     ))
                 >
                     <button
