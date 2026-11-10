@@ -647,8 +647,8 @@ in {
         group = "zotero-dataserver";
         phpPackage = package.php;
         phpOptions = {
-          log_errors = true;
-          short_open_tag = true;
+          log_errors = "on";
+          short_open_tag = "on";
         };
         settings =
           cfg.phpfpm.settings
