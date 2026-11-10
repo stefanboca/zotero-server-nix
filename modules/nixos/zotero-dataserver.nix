@@ -646,10 +646,10 @@ in {
         user = "zotero-dataserver";
         group = "zotero-dataserver";
         phpPackage = package.php;
-        phpOptions = ''
-          log_errors = on
-          short_open_tag = on
-        '';
+        phpOptions = {
+          log_errors = true;
+          short_open_tag = true;
+        };
         settings =
           cfg.phpfpm.settings
           // {
