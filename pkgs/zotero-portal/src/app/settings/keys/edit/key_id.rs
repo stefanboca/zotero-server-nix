@@ -6,7 +6,9 @@ use topcoat::view::{View, view};
 use super::super::{ApiKeyValue, key_editor};
 use crate::app::signed_in_user;
 
-topcoat::router::module_param!(pub(in crate::app::settings) key_id: ApiKeyValue else not_found);
+topcoat::router::module_param!(
+    pub(in crate::app::settings) key_id: ApiKeyValue else not_found
+);
 
 #[page]
 pub(in crate::app::settings) async fn edit_key(cx: &Cx) -> Result<impl View> {

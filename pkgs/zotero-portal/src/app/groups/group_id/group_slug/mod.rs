@@ -249,7 +249,11 @@ async fn recent_group_items(cx: &Cx, group: &Group) -> Result<impl View> {
                                                 crate::app::_web_library::group_library_path,
                                                 crate::app::_web_library::library_group_id: group.id,
                                                 crate::app::_web_library::library_group_slug: group.slug(),
-                                                crate::app::_web_library::library_path:  ["items", "itemKey", item.key.as_str()],
+                                                crate::app::_web_library::library_path: [
+                                                    "items",
+                                                    "itemKey",
+                                                    item.key.as_str(),
+                                                ],
                                             ))
                                         >
                                             (title)

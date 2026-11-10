@@ -38,7 +38,9 @@ pub(super) async fn profile(cx: &Cx) -> Result<impl View> {
                                 class="portal-link"
                                 href=(href!(
                                     crate::app::_web_library::personal_library_root,
-                                    crate::app::_web_library::personal_user_slug: user.username.clone(),
+                                    crate::app::_web_library::personal_user_slug: user.username.clone(
+
+                                    ),
                                 ))
                             >
                                 "Library"

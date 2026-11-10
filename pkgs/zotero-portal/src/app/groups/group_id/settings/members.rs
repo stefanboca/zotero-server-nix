@@ -93,7 +93,9 @@ async fn members_shard(cx: &Cx, refresh: bool) -> Result<impl View> {
                                             class="portal-link"
                                             href=(href!(
                                                 crate::app::profile::profile,
-                                                crate::app::profile::profile_username: member.username.clone(),
+                                                crate::app::profile::profile_username: member.username.clone(
+
+                                                ),
                                             ))
                                         >
                                             (member.username.as_str())
@@ -201,7 +203,9 @@ async fn member_invitations(cx: &Cx, group_id: u64) -> Result<impl View> {
                                             class="portal-link"
                                             href=(href!(
                                                 crate::app::profile::profile,
-                                                crate::app::profile::profile_username: invitation.invitee.username.clone(),
+                                                crate::app::profile::profile_username: invitation.invitee.username.clone(
+
+                                                ),
                                             ))
                                         >
                                             (invitation.invitee.username.as_str())
