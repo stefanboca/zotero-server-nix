@@ -51,7 +51,10 @@
       default = {
         type = "app";
         program = getExe vm.config.system.build.vm;
-        meta.description = "Run a development Zotero backend with a mock OIDC provider in a VM";
+        meta = {
+          passthru = {inherit (vm.config.system.build) vm;};
+          description = "Run a development Zotero backend with a mock OIDC provider in a VM";
+        };
       };
       sqlx-prepare = {
         type = "app";

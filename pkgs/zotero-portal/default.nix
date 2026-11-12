@@ -9,7 +9,7 @@
   inherit (lib.meta) getExe;
   inherit (lib.strings) hasPrefix;
 in
-  rustPlatform.buildRustPackage {
+  rustPlatform.buildRustPackage (finalAttrs: {
     pname = "zotero-portal";
     version = "0.1.0";
 
@@ -38,13 +38,35 @@ in
       CARGO_BUILD_TARGET="${stdenv.hostPlatform.rust.rustcTarget}" topcoat asset bundle --release --bin zotero-portal --out $out/bin/assets
     '';
 
-    postInstall = ''
-      install -Dm644 secretspec.toml $out/share/zotero-portal/secretspec.toml
-    '';
+    passthru = {
+      support = stdenv.mkDerivation {
+        pname = "${finalAttrs.pname}-support";
+        inherit (finalAttrs) version;
+
+        src = toSource {
+          root = ./.;
+          fileset = unions [
+            ./migrations
+            ./secretspec.toml
+          ];
+        };
+
+        phases = ["installPhase"];
+
+        installPhase = ''
+          runHook preInstall
+
+          install -Dm644 $src/secretspec.toml $out/share/zotero-portal/secretspec.toml
+          cp -r $src/migrations $out/share/zotero-portal/
+
+          runHook postInstall
+        '';
+      };
+    };
 
     meta = {
       description = "Local account and administration portal for Zotero Dataserver";
       license = lib.licenses.agpl3Only;
       mainProgram = "zotero-portal";
     };
-  }
+  })

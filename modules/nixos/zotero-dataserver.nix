@@ -731,7 +731,13 @@ in {
         description = "Provision Zotero Dataserver credentials and database";
         requires = ["mysql.service"];
         after = ["mysql.service"];
-        environment = portalLoggingEnvironment // {XDG_STATE_HOME = "%S/zotero-dataserver";};
+        environment =
+          portalLoggingEnvironment
+          // {
+            XDG_STATE_HOME = "%S/zotero-dataserver";
+            SECRETSPEC_FILE = "${cfg.portal.package.support}/share/zotero-portal/secretspec.toml";
+          };
+        path = with pkgs; [secretspec sqlx-cli];
         serviceConfig =
           restartOnFailure
           // {
@@ -740,13 +746,15 @@ in {
             StateDirectory = "zotero-dataserver";
             StateDirectoryMode = "0700";
             UMask = "0077";
-            WorkingDirectory = "${cfg.portal.package}/share/zotero-portal";
             LoadCredential = "DATABASE_URL:${portalDatabaseUrlFile}";
             User = "zotero-portal";
             Group = "zotero-portal";
           };
         script = ''
-          ${getExe cfg.portal.package} provision --state-directory "$STATE_DIRECTORY"
+          secretspec check --no-prompt --provider "file:$STATE_DIRECTORY/zotero-dataserver" \
+            --profile production --scope generated --reason "generate secrets"
+          secretspec run --profile production --scope database --reason "migrate database" -- \
+            sqlx migrate run --source ${cfg.portal.package.support}/share/zotero-portal/migrations
         '';
       };
 
@@ -918,10 +926,10 @@ in {
           NODE_ENV = "attachment-proxy";
           NODE_CONFIG_DIR = "/etc/zotero-dataserver/attachment-proxy";
           XDG_STATE_HOME = "%S/zotero-attachment-proxy";
+          SECRETSPEC_FILE = "${cfg.portal.package.support}/share/zotero-portal/secretspec.toml";
         };
         serviceConfig = {
-          ExecStart = "${getExe pkgs.secretspec} run --file ${cfg.portal.package}/share/zotero-portal/secretspec.toml --reason 'start attachment-proxy' --profile production --scope attachment-proxy -- ${getExe cfg.attachment-proxy.package}";
-          WorkingDirectory = "${cfg.portal.package}/share/zotero-portal";
+          ExecStart = "${getExe pkgs.secretspec} run --profile production --scope attachment-proxy --reason 'start attachment-proxy' -- ${getExe cfg.attachment-proxy.package}";
           LoadCredential = [
             "ATTACHMENT_PROXY_SECRET:${credentialFiles.attachmentProxySecret}"
             "AWS_ACCESS_KEY_ID:${credentialFiles.s3AccessKeyId}"
